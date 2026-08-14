@@ -116,3 +116,62 @@ has no symbol table; `large_blob.bin` has a flag planted at offset 190,000,000.
   down one path only. Depth cap of 2 bounds the damage and the report states what unwrap
   did, but a genuine polyglot CTF challenge could still be mis-analyzed. Revisit if it
   shows up in practice.
+
+---
+
+## M1 — Preflight & Dependency Detection
+
+**Status:** complete. 62/62 checks green in `./tools/run-tests.sh`.
+
+### Decisions made during M1
+
+- **D7 is applied in two tiers, not one.** Deviation D7 says a missing optional tool is a
+  hard error. Applied literally to every tool, a plain ELF crackme scan would abort
+  because a .NET decompiler is absent — not what D7's "predictable runtime" intent was
+  for. So the registry splits:
+  - `PF_CORE_TOOLS` (the v3 seven) and `PF_ALWAYS_TOOLS` (rabin2, checksec, objdump,
+    readelf, strace, floss, upx — needed on every run) hard-fail at startup.
+  - `PF_CONDITIONAL_TOOLS` (Java/.NET/Python decompilers, 7z, unsquashfs) fail hard via
+    `pf_require_tool()` at the moment a target actually routes to them, with the same
+    "re-run install.sh" message.
+  Flagged for review — if the intent really was "all-or-nothing at startup", moving the
+  conditional set into `PF_ALWAYS_TOOLS` is a one-line change.
+
+- **All missing tools are reported at once**, not one per run. Reporting the first miss
+  and exiting means N frustrating re-runs on a fresh box.
+
+- **Install hints are full commands, not package names.** The registry's third field was
+  originally a package name rendered as `apt install <pkg>`, which produced
+  `apt install flare-floss (pip, in a venv)` — advice that does not work. It now carries a
+  complete command per tool, so FLOSS prints its venv recipe verbatim.
+
+- **`PF_OPT_ROOT` makes the Ghidra install-root scan configurable** (default `/opt`).
+  Without it, a Ghidra present on the build machine makes the "Ghidra absent" test pass
+  for the wrong reason — which it did, until the harness caught it.
+
+- **Ghidra version detection reads `application.properties`**, falling back to parsing the
+  install directory name (`ghidra_11.1.2_PUBLIC`), then to assuming 11.x with a printed
+  notice. Never silently guesses.
+
+- **Multiple `/opt` installs resolve newest-first** via `sort -rV`, with a notice naming
+  the one chosen. Alphabetical order would pick 10.4 over 11.2.1.
+
+- **`systemd-run` is probed, not just located.** v4 §4.3 requires this: presence on PATH
+  says nothing about whether systemd is running, a user session exists, or cgroup
+  delegation is permitted. The probe runs a real `MemoryMax=64M /bin/true` scope, tries
+  `--user` then system scope, and on failure records the report notice that bounding is
+  best-effort VSZ via `ulimit -v`. On this build container it correctly detects
+  systemd-run as present-but-unusable.
+
+- **`binwalk` version detection needs three strategies.** v3 (Rust) supports `--version`;
+  v2.x (Python) rejects it and prints `Binwalk v2.3.3` in its help banner; the Python
+  module also exposes `__version__`. All three are tried before falling back to legacy
+  parsing with a notice. The comparison is numeric on the major version, never a `"3."`
+  substring match, per v3 §4 item 9.
+
+### Verification harness
+
+`tools/run-tests.sh` now covers lint, corpus integrity, M0 and M1 — 62 checks. Each
+milestone appends a section, so later work re-runs all earlier gates. Fake Ghidra trees
+and masked-PATH fixtures mean missing-tool and version-selection scenarios are testable
+without uninstalling anything or downloading Ghidra.

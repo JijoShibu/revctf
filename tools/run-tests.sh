@@ -1,0 +1,383 @@
+#!/usr/bin/env bash
+#
+# run-tests.sh — verification harness for revctf's milestone gates.
+#
+# The execution masterplan names a verification step for every milestone and stresses
+# actually running it before advancing. This script is that, made repeatable: each
+# milestone adds a section, and every later run re-checks all the earlier ones, so a
+# regression in M1 shows up while building M4.
+#
+#   ./tools/run-tests.sh            # everything
+#   ./tools/run-tests.sh m0 m1      # selected sections
+#
+# Requires a built corpus: ./tools/build-test-corpus.sh
+set -uo pipefail
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+RC="$ROOT/revctf"
+CORPUS="$ROOT/test-corpus"
+FIXTURES="${TMPDIR:-/tmp}/revctf-test-fixtures"
+
+PASS=0; FAIL=0; SKIP=0
+declare -a FAILURES=()
+
+# Isolate every run from the developer's real ~/.revctf
+export REVCTF_HOME="$FIXTURES/home"
+
+# ======================================================================================
+# Assertions
+# ======================================================================================
+ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; PASS=$((PASS+1)); }
+no()   { printf '  \033[31mFAIL\033[0m  %s\n         %s\n' "$1" "$2"; FAIL=$((FAIL+1)); FAILURES+=("$1"); }
+skip() { printf '  \033[33mSKIP\033[0m  %s (%s)\n' "$1" "$2"; SKIP=$((SKIP+1)); }
+section() { printf '\n\033[1m--- %s ---\033[0m\n' "$1"; }
+
+# assert_exit <desc> <expected-exit> <cmd...>
+assert_exit() {
+    local desc="$1" want="$2"; shift 2
+    local out got
+    out=$("$@" 2>&1); got=$?
+    if [[ $got -eq $want ]]; then
+        ok "$desc"
+    else
+        no "$desc" "exit $got, wanted $want: ${out:0:160}"
+    fi
+}
+
+# assert_match <desc> <extended-regex> <cmd...>
+assert_match() {
+    local desc="$1" re="$2"; shift 2
+    local out
+    out=$("$@" 2>&1)
+    if grep -Eq -- "$re" <<< "$out"; then
+        ok "$desc"
+    else
+        no "$desc" "output did not match /$re/: ${out:0:200}"
+    fi
+}
+
+# assert_no_match <desc> <extended-regex> <cmd...>
+assert_no_match() {
+    local desc="$1" re="$2"; shift 2
+    local out
+    out=$("$@" 2>&1)
+    if grep -Eq -- "$re" <<< "$out"; then
+        no "$desc" "unexpectedly matched /$re/"
+    else
+        ok "$desc"
+    fi
+}
+
+have_corpus() { [[ -f $CORPUS/crackme ]]; }
+
+# ======================================================================================
+# Fixtures
+# ======================================================================================
+# A fake Ghidra tree, so discovery and version selection are testable without a real
+# 400MB install (and on a box where Ghidra genuinely is not available).
+mk_fake_ghidra() {
+    local root="$1" version="$2"
+    mkdir -p "$root/support" "$root/Ghidra"
+    printf '#!/bin/sh\necho "fake analyzeHeadless $*"\n' > "$root/support/analyzeHeadless"
+    chmod +x "$root/support/analyzeHeadless"
+    printf 'application.name=Ghidra\napplication.version=%s\n' "$version" \
+        > "$root/Ghidra/application.properties"
+}
+
+# Build a PATH containing everything except the named commands, so a missing-tool
+# scenario can be exercised without uninstalling anything.
+mk_masked_path() {
+    local mask=",$1," dir="$FIXTURES/maskedpath-$2" p f b
+    rm -rf "$dir"; mkdir -p "$dir"
+    for p in /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
+        [[ -d $p ]] || continue
+        for f in "$p"/*; do
+            b="${f##*/}"
+            [[ $mask == *",$b,"* ]] && continue
+            [[ -e "$dir/$b" ]] || ln -sf "$f" "$dir/$b" 2>/dev/null
+        done
+    done
+    printf '%s' "$dir"
+}
+
+setup_fixtures() {
+    rm -rf "$FIXTURES"; mkdir -p "$FIXTURES/home"
+    mk_fake_ghidra "$FIXTURES/ghidra_11.1.2_PUBLIC" 11.1.2
+    mk_fake_ghidra "$FIXTURES/ghidra_10.3_PUBLIC"   10.3
+    # A separate root holding two generations, for the /opt-scan and newest-wins tests.
+    mk_fake_ghidra "$FIXTURES/optroot/ghidra_10.4_PUBLIC"   10.4
+    mk_fake_ghidra "$FIXTURES/optroot/ghidra_11.2.1_PUBLIC" 11.2.1
+    # Point discovery away from the real /opt so a Ghidra installed on the build box
+    # cannot make the "Ghidra absent" tests silently pass.
+    export PF_OPT_ROOT="$FIXTURES/empty-opt"
+    mkdir -p "$FIXTURES/empty-opt"
+}
+
+# ======================================================================================
+# Sections
+# ======================================================================================
+test_lint() {
+    section "lint (shellcheck -S style)"
+    if ! command -v shellcheck >/dev/null 2>&1; then
+        skip "shellcheck" "not installed"; return
+    fi
+    local out
+    out=$(cd "$ROOT" && shellcheck -S style revctf install.sh lib/*.sh tools/*.sh 2>&1)
+    if [[ -z $out ]]; then
+        ok "0 findings across all shell files"
+    else
+        no "shellcheck findings" "$(head -6 <<< "$out")"
+    fi
+}
+
+test_m0() {
+    section "M0 — CLI surface, dispatch, config"
+
+    assert_exit "revctf -h prints usage"          0 "$RC" -h
+    assert_exit "revctf --version"                0 "$RC" --version
+    assert_exit "no args prints usage"            0 "$RC"
+    assert_match "usage lists every flag group"   'AGENCY & INTERACTIVITY' "$RC" -h
+
+    assert_exit "unknown subcommand rejected"     1 "$RC" frobnicate
+    assert_exit "unknown option rejected"         1 "$RC" scan "$ROOT/README.md" --nope
+    assert_exit "missing target rejected"         1 "$RC" scan
+    assert_exit "nonexistent target rejected"     1 "$RC" scan /no/such/file
+    assert_exit "two targets rejected"            1 "$RC" scan "$ROOT/README.md" "$ROOT/install.sh"
+    assert_exit "flag without its value"          1 "$RC" scan "$ROOT/README.md" --output
+    assert_exit "non-numeric --timeout"           1 "$RC" scan "$ROOT/README.md" --timeout abc
+    assert_exit "zero --timeout"                  1 "$RC" scan "$ROOT/README.md" --timeout 0
+    assert_exit "non-numeric --jobs-light"        1 "$RC" scan "$ROOT/README.md" --jobs-light x
+    assert_exit "malformed --maxmem-ghidra"       1 "$RC" scan "$ROOT/README.md" --maxmem-ghidra 99Q
+    assert_exit "invalid --flag-format ERE"       1 "$RC" scan "$ROOT/README.md" --flag-format 'a[b'
+    assert_exit "unreadable --ghidra-script"      1 "$RC" scan "$ROOT/README.md" --ghidra-script /no/such.py
+    assert_exit "--light + --force conflict"      1 "$RC" scan "$ROOT/README.md" --light-decompile --force-full-decompile
+    assert_exit "--skip-ghidra + --force"         1 "$RC" scan "$ROOT/README.md" --skip-ghidra --force-full-decompile
+    assert_exit "missing --config rejected"       1 "$RC" scan "$ROOT/README.md" --config /no/such/config
+
+    # v5 §3.3 / §3.4: these warn, they must not be fatal.
+    assert_match "-i + -y warns, --yes wins" 'mutually exclusive' \
+        "$RC" scan "$ROOT/README.md" -i -y --skip-ghidra
+    assert_match "--sandbox + --skip-ltrace notice" 'no-op with --skip-ltrace' \
+        "$RC" scan "$ROOT/README.md" --sandbox --skip-ltrace --skip-ghidra
+
+    # --- config file: allowlist + precedence ---
+    local cfg="$REVCTF_HOME/config"
+    mkdir -p "$REVCTF_HOME"
+    cat > "$cfg" <<'EOF'
+output_dir = /tmp/from-config
+tui        = 0
+bogus_key  = 1
+a line with no equals sign
+EOF
+    assert_match "config: unknown key warned"    "ignoring unknown key 'bogus_key'" \
+        "$RC" scan "$ROOT/README.md" --skip-ghidra
+    assert_match "config: malformed line warned" 'ignoring malformed line' \
+        "$RC" scan "$ROOT/README.md" --skip-ghidra
+    assert_match "config: value applied"         'output *: /tmp/from-config' \
+        "$RC" scan "$ROOT/README.md" --skip-ghidra --verbose
+    assert_match "config: CLI flag overrides it" 'output *: /tmp/from-cli' \
+        "$RC" scan "$ROOT/README.md" --skip-ghidra --verbose --output /tmp/from-cli
+    rm -f "$cfg"
+    assert_exit "absent default config is fine"  0 "$RC" scan "$ROOT/README.md" --skip-ghidra
+
+    # --- display mode selection (v6 §10) ---
+    assert_match "piped output -> line mode" 'display *: line' \
+        "$RC" scan "$ROOT/README.md" --skip-ghidra --verbose
+    if command -v script >/dev/null 2>&1; then
+        assert_match "TTY -> tui mode" 'display *: tui' \
+            script -qec "$RC scan $ROOT/README.md --skip-ghidra --verbose" /dev/null
+        assert_match "TTY + --no-tui -> line mode" 'display *: line' \
+            script -qec "$RC scan $ROOT/README.md --skip-ghidra --verbose --no-tui" /dev/null
+    else
+        skip "TTY display-mode tests" "no 'script' command"
+    fi
+
+    # --- symlink resolution (install.sh puts revctf on PATH as a symlink) ---
+    local linkdir="$FIXTURES/linkbin"
+    mkdir -p "$linkdir"; ln -sf "$RC" "$linkdir/revctf"
+    assert_exit "runs correctly through a symlink" 0 "$linkdir/revctf" scan "$ROOT/README.md" --skip-ghidra
+}
+
+test_m1() {
+    section "M1 — preflight & dependency detection"
+
+    # --- Ghidra discovery: all three documented paths ---
+    assert_match "Ghidra via GHIDRA_HOME" 'ghidra +: 11\.1\.2' \
+        env GHIDRA_HOME="$FIXTURES/ghidra_11.1.2_PUBLIC" \
+        "$RC" scan "$ROOT/README.md" --verbose
+    assert_match "Ghidra via PATH" 'ghidra +: 11\.1\.2' \
+        env PATH="$FIXTURES/ghidra_11.1.2_PUBLIC/support:$PATH" \
+        "$RC" scan "$ROOT/README.md" --verbose
+
+    # --- version -> post-script generation (v3 §1) ---
+    assert_match "11.x selects the PyGhidra script" 'ghidra script +: pyghidra' \
+        env GHIDRA_HOME="$FIXTURES/ghidra_11.1.2_PUBLIC" \
+        "$RC" scan "$ROOT/README.md" --verbose
+    assert_match "10.x selects the Jython script" 'ghidra script +: jython' \
+        env GHIDRA_HOME="$FIXTURES/ghidra_10.3_PUBLIC" \
+        "$RC" scan "$ROOT/README.md" --verbose
+
+    # --- discovery under $PF_OPT_ROOT, newest generation winning ---
+    assert_match "Ghidra found by scanning the install root" 'ghidra +: 11\.2\.1' \
+        env -u GHIDRA_HOME PF_OPT_ROOT="$FIXTURES/optroot" \
+        "$RC" scan "$ROOT/README.md" --verbose
+    assert_match "newest of several installs is chosen" 'Multiple Ghidra installs' \
+        env -u GHIDRA_HOME PF_OPT_ROOT="$FIXTURES/optroot" \
+        "$RC" scan "$ROOT/README.md" --verbose
+
+    # --- Ghidra genuinely absent ---
+    local nog; nog=$(mk_masked_path "analyzeHeadless" nog)
+    assert_match "missing Ghidra -> actionable error" 'Ghidra not found' \
+        env -u GHIDRA_HOME PATH="$nog" "$RC" scan "$ROOT/README.md"
+    assert_exit  "missing Ghidra -> exit 1" 1 \
+        env -u GHIDRA_HOME PATH="$nog" "$RC" scan "$ROOT/README.md"
+    assert_exit  "--skip-ghidra runs without it" 0 \
+        env -u GHIDRA_HOME "$RC" scan "$ROOT/README.md" --skip-ghidra
+
+    # --- missing tools: core vs install.sh-managed, with the right advice each time ---
+    local nocore; nocore=$(mk_masked_path "radare2,rabin2" nocore)
+    assert_match "missing core tool named" 'radare2 +— stage 8' \
+        env PATH="$nocore" "$RC" scan "$ROOT/README.md" --skip-ghidra
+    assert_match "missing core tool -> apt hint" 'install: apt install radare2' \
+        env PATH="$nocore" "$RC" scan "$ROOT/README.md" --skip-ghidra
+    assert_exit  "missing core tool -> exit 1" 1 \
+        env PATH="$nocore" "$RC" scan "$ROOT/README.md" --skip-ghidra
+
+    local nofloss; nofloss=$(mk_masked_path "floss" nofloss)
+    assert_match "missing D7 tool -> points at install.sh" 're-run it \(while online\)' \
+        env PATH="$nofloss" "$RC" scan "$ROOT/README.md" --skip-ghidra
+    # FLOSS is pip-in-a-venv, not apt — the hint must not say "apt install".
+    assert_no_match "FLOSS hint is not an apt line" 'install: apt install flare-floss' \
+        env PATH="$nofloss" "$RC" scan "$ROOT/README.md" --skip-ghidra
+    assert_match "FLOSS hint gives the venv recipe" 'venv .*flare-floss' \
+        env PATH="$nofloss" "$RC" scan "$ROOT/README.md" --skip-ghidra
+
+    # --- binwalk: numeric major comparison, never a "3." substring test (v3 §4.9) ---
+    assert_match "binwalk version detected + branch chosen" \
+        'binwalk +: [0-9]+\.[0-9.]+ \(major [0-9]+ -> (v3\+|legacy) parsing\)' \
+        "$RC" scan "$ROOT/README.md" --skip-ghidra --verbose
+
+    # --- disk space ---
+    assert_match "disk space reported" 'free disk +: [0-9]+MB' \
+        "$RC" scan "$ROOT/README.md" --skip-ghidra --verbose
+    assert_exit  "insufficient disk -> exit 1" 1 \
+        env PF_MIN_DISK_MB=99999999 "$RC" scan "$ROOT/README.md" --skip-ghidra
+
+    # --- systemd-run probe reports one of the two documented modes (v4 §4.3) ---
+    assert_match "memory-bounding mode reported" \
+        'memory bounding +: (systemd-run \(RSS\)|ulimit -v \(VSZ, best-effort\))' \
+        "$RC" scan "$ROOT/README.md" --skip-ghidra --verbose
+}
+
+test_corpus() {
+    section "test corpus integrity"
+    if ! have_corpus; then
+        skip "corpus checks" "run ./tools/build-test-corpus.sh first"; return
+    fi
+
+    local n
+    n=$(strings -a "$CORPUS/planted_flag" | grep -c 'flag{pl41nt3xt')
+    if [[ $n -ge 1 ]]; then
+        ok "planted_flag exposes its flag to strings"
+    else
+        no "planted_flag" "flag not visible to strings"
+    fi
+
+    n=$(strings -a "$CORPUS/packed_upx" | grep -c 'flag{cr4ckm3')
+    if [[ $n -eq 0 ]]; then
+        ok "packed_upx hides its flag while packed"
+    else
+        no "packed_upx" "flag visible without unpacking"
+    fi
+
+    if command -v upx >/dev/null 2>&1; then
+        cp "$CORPUS/packed_upx" "$FIXTURES/rt" 2>/dev/null
+        if upx -d -q "$FIXTURES/rt" >/dev/null 2>&1 &&
+           strings -a "$FIXTURES/rt" | grep -q 'flag{cr4ckm3'; then
+            ok "packed_upx round-trips through upx -d"
+        else
+            no "packed_upx" "unpack did not recover the flag"
+        fi
+        cp "$CORPUS/packed_upx_broken" "$FIXTURES/rtb" 2>/dev/null
+        if upx -d -q "$FIXTURES/rtb" >/dev/null 2>&1; then
+            no "packed_upx_broken" "expected unpack to fail"
+        else
+            ok "packed_upx_broken fails to unpack (deliberate)"
+        fi
+    else
+        skip "upx round-trip" "upx not installed"
+    fi
+
+    n=$(strings -a "$CORPUS/stack_string" | grep -c 'flag{st4ck')
+    if [[ $n -eq 0 ]]; then
+        ok "stack_string is invisible to strings"
+    else
+        no "stack_string" "flag was contiguous in the binary"
+    fi
+
+    for f in b64_flag rot13_flag hex_flag; do
+        n=$(strings -a "$CORPUS/$f" | grep -c 'flag{')
+        if [[ $n -eq 0 ]]; then
+            ok "$f contains no plaintext flag"
+        else
+            no "$f" "a plaintext flag leaked into the binary"
+        fi
+    done
+
+    n=$(strings -a "$CORPUS/hex_noise_noflag" | grep -c 'flag{')
+    if [[ $n -eq 0 ]]; then
+        ok "hex_noise_noflag is a clean negative control"
+    else
+        no "hex_noise_noflag" "control sample contains a flag"
+    fi
+
+    n=$(nm "$CORPUS/crackme" 2>/dev/null | grep -c domain_main_init)
+    if [[ $n -ge 1 ]]; then
+        ok "crackme carries the domain_main_init near-miss symbol"
+    else
+        no "crackme" "near-miss symbol missing; \\bmain\\b test is toothless"
+    fi
+
+    if nm "$CORPUS/crackme_stripped" 2>&1 | grep -q 'no symbols'; then
+        ok "crackme_stripped has no symbol table"
+    else
+        no "crackme_stripped" "still has symbols; entry0 fallback untested"
+    fi
+
+    n=$(dd if="$CORPUS/large_blob.bin" bs=1 skip=190000000 count=24 status=none 2>/dev/null)
+    if [[ $n == 'flag{str34m3d_fr0m_d33p}' ]]; then
+        ok "large_blob.bin has its deep planted flag"
+    else
+        no "large_blob.bin" "planted flag not at offset 190000000"
+    fi
+}
+
+# ======================================================================================
+main() {
+    local -a want=("$@")
+    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1)
+
+    printf '\033[1mrevctf verification harness\033[0m\n'
+    printf 'repo: %s\n' "$ROOT"
+    setup_fixtures
+
+    local s
+    for s in "${want[@]}"; do
+        case "$s" in
+            lint)   test_lint   ;;
+            corpus) test_corpus ;;
+            m0)     test_m0     ;;
+            m1)     test_m1     ;;
+            *)      printf 'unknown section: %s\n' "$s" >&2 ;;
+        esac
+    done
+
+    printf '\n\033[1m%d passed, %d failed, %d skipped\033[0m\n' "$PASS" "$FAIL" "$SKIP"
+    if [[ $FAIL -gt 0 ]]; then
+        printf 'failed:\n'; printf '  - %s\n' "${FAILURES[@]}"
+        return 1
+    fi
+    return 0
+}
+
+main "$@"

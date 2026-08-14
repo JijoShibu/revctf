@@ -359,14 +359,24 @@ cmd_scan() {
         _msg "  interactive : ${OPT[interactive]}   assume-yes: ${OPT[assume_yes]}"
     fi
 
-    # --- M1+ wiring lands here ---------------------------------------------------
-    # source "$REVCTF_LIB/preflight.sh"; preflight_run   || return 1
-    # source "$REVCTF_LIB/tier.sh";      tier_resolve
+    # --- M1: preflight -----------------------------------------------------------
+    # shellcheck source=lib/preflight.sh
+    source "$REVCTF_LIB/preflight.sh" || die "cannot load $REVCTF_LIB/preflight.sh"
+
+    local out_hint="${OPT[output_dir]:-.}"
+    preflight_run "$out_hint" "${OPT[skip_ghidra]}" || return 1
+
+    if [[ ${OPT[verbose]} -eq 1 ]]; then
+        preflight_summary >&2
+    fi
+
+    # --- M2+ wiring lands here ---------------------------------------------------
+    # source "$REVCTF_LIB/tier.sh";  tier_resolve            # M5
     # [[ ${OPT[dry_run]} -eq 1 ]] && { tier_report; return 0; }
-    # ... stage pipeline (M2/M3), flag scan + report (M4)
+    # stage pipeline (M2/M3), flag scan + report (M4)
     # -----------------------------------------------------------------------------
 
-    printf 'revctf: scan pipeline not yet implemented (M0 scaffold).\n' >&2
+    printf 'revctf: preflight passed; scan pipeline not yet implemented (M1).\n' >&2
     printf 'revctf: target accepted: %s (%s)\n' \
         "$TARGET" "$([[ -d $TARGET ]] && printf 'directory / batch mode' || printf 'single file')" >&2
     return 0
