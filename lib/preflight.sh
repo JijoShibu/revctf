@@ -203,8 +203,40 @@ pf_find_ghidra() {
 # ======================================================================================
 # 4. Version detection
 # ======================================================================================
-# Ghidra's generation picks the post-script: 11.x+ ships PyGhidra, 10.x and earlier use
-# Jython (v3 §1). The version lives in application.properties next to the install root.
+# Which runtime executes a .py post-script?
+#
+# v3 §1 says "11.x+ -> PyGhidra, 10.x and earlier -> Jython". That boundary is WRONG, and
+# it was verified wrong against a real install: Ghidra 11.2.1 still bundles Jython and
+# runs .py post-scripts under Jython 2.7.3 (probe output:
+# `python_version=2.7.3 ... [OpenJDK 64-Bit Server VM]`). PyGhidra only became the bundled
+# default in 11.3, where Jython was removed. Selecting by version alone would hand a
+# Python-3 script to a Python-2 interpreter on 11.0-11.2 and die on the first f-string.
+#
+# So the install is probed for the runtime it actually ships, and the version comparison
+# is only a fallback for an unrecognisable layout.
+pf_detect_ghidra_runtime() {
+    local root="$1"
+    local has_py=0 has_jy=0
+    [[ -d $root/Ghidra/Features/PyGhidra ]] && has_py=1
+    [[ -d $root/Ghidra/Features/Jython   ]] && has_jy=1
+
+    if [[ $has_py -eq 1 && $has_jy -eq 0 ]]; then
+        PF_GHIDRA_SCRIPT_KIND="pyghidra"; return 0
+    fi
+    if [[ $has_jy -eq 1 && $has_py -eq 0 ]]; then
+        PF_GHIDRA_SCRIPT_KIND="jython";   return 0
+    fi
+    if [[ $has_py -eq 1 && $has_jy -eq 1 ]]; then
+        # Both present means PyGhidra was added to a Jython-era install deliberately.
+        PF_GHIDRA_SCRIPT_KIND="pyghidra"
+        pf_note "This Ghidra ships both PyGhidra and Jython; using the PyGhidra post-script. Override with --ghidra-script."
+        return 0
+    fi
+    return 1   # neither found — caller falls back to the version comparison
+}
+
+# The version itself still gets detected: it goes in the report header, and it is the
+# fallback runtime signal when the feature probe above finds nothing recognisable.
 pf_detect_ghidra_version() {
     [[ -n $PF_GHIDRA_HEADLESS ]] || return 1
 
@@ -223,22 +255,30 @@ pf_detect_ghidra_version() {
         ver=$(basename "$root" | sed -n 's/.*[_-]\([0-9][0-9]*\.[0-9][^_-]*\).*/\1/p')
     fi
 
+    [[ -n $ver ]] && PF_VERSION[ghidra]="$ver"
+    PF_GHIDRA_MAJOR="${ver%%.*}"
+    [[ $PF_GHIDRA_MAJOR =~ ^[0-9]+$ ]] || PF_GHIDRA_MAJOR="unknown"
+
+    # Preferred signal: what the install actually ships.
+    pf_detect_ghidra_runtime "$root" && return 0
+
+    # Fallback: version comparison, with the CORRECTED 11.3 boundary (see the comment on
+    # pf_detect_ghidra_runtime — 11.0-11.2 are Jython, not PyGhidra).
     if [[ -z $ver ]]; then
-        # Unknown generation: prefer the modern script, since 11.x has been current for
-        # some time, but say so rather than silently guessing.
-        PF_GHIDRA_MAJOR="unknown"
-        PF_GHIDRA_SCRIPT_KIND="pyghidra"
-        pf_note "Could not determine the Ghidra version; assuming 11.x (PyGhidra). Use --ghidra-script to override."
+        PF_GHIDRA_SCRIPT_KIND="jython"
+        pf_note "Could not determine the Ghidra version or runtime; assuming Jython. Use --ghidra-script to override."
         return 0
     fi
 
-    PF_VERSION[ghidra]="$ver"
-    PF_GHIDRA_MAJOR="${ver%%.*}"
-    if [[ $PF_GHIDRA_MAJOR =~ ^[0-9]+$ ]] && [[ $PF_GHIDRA_MAJOR -ge 11 ]]; then
+    local major="${ver%%.*}" minor
+    minor="${ver#*.}"; minor="${minor%%.*}"
+    [[ $minor =~ ^[0-9]+$ ]] || minor=0
+    if [[ $major =~ ^[0-9]+$ ]] && { [[ $major -gt 11 ]] || { [[ $major -eq 11 ]] && [[ $minor -ge 3 ]]; }; }; then
         PF_GHIDRA_SCRIPT_KIND="pyghidra"
     else
         PF_GHIDRA_SCRIPT_KIND="jython"
     fi
+    pf_note "Ghidra $ver has no recognisable PyGhidra/Jython feature directory; selected the $PF_GHIDRA_SCRIPT_KIND post-script by version."
     return 0
 }
 

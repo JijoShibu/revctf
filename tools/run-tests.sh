@@ -75,13 +75,18 @@ have_corpus() { [[ -f $CORPUS/crackme ]]; }
 # ======================================================================================
 # A fake Ghidra tree, so discovery and version selection are testable without a real
 # 400MB install (and on a box where Ghidra genuinely is not available).
+# mk_fake_ghidra <root> <version> [runtime-feature...]
+# Runtime features are directory names under Ghidra/Features (PyGhidra, Jython). Passing
+# none produces an install with neither, which exercises the version-comparison fallback.
 mk_fake_ghidra() {
-    local root="$1" version="$2"
+    local root="$1" version="$2"; shift 2
     mkdir -p "$root/support" "$root/Ghidra"
     printf '#!/bin/sh\necho "fake analyzeHeadless $*"\n' > "$root/support/analyzeHeadless"
     chmod +x "$root/support/analyzeHeadless"
     printf 'application.name=Ghidra\napplication.version=%s\n' "$version" \
         > "$root/Ghidra/application.properties"
+    local feat
+    for feat in "$@"; do mkdir -p "$root/Ghidra/Features/$feat"; done
 }
 
 # Build a PATH containing everything except the named commands, so a missing-tool
@@ -102,11 +107,19 @@ mk_masked_path() {
 
 setup_fixtures() {
     rm -rf "$FIXTURES"; mkdir -p "$FIXTURES/home"
-    mk_fake_ghidra "$FIXTURES/ghidra_11.1.2_PUBLIC" 11.1.2
-    mk_fake_ghidra "$FIXTURES/ghidra_10.3_PUBLIC"   10.3
-    # A separate root holding two generations, for the /opt-scan and newest-wins tests.
-    mk_fake_ghidra "$FIXTURES/optroot/ghidra_10.4_PUBLIC"   10.4
-    mk_fake_ghidra "$FIXTURES/optroot/ghidra_11.2.1_PUBLIC" 11.2.1
+    # Runtime matrix. The version boundary in v3 §1 is wrong (verified against a real
+    # install: 11.2.1 ships Jython and runs .py under Jython 2.7.3), so these fixtures
+    # pin the corrected behaviour: probe the shipped feature dir first, version only as
+    # a fallback with the boundary at 11.3.
+    mk_fake_ghidra "$FIXTURES/ghidra_11.1.2_PUBLIC" 11.1.2 Jython            # 11.x + Jython
+    mk_fake_ghidra "$FIXTURES/ghidra_10.3_PUBLIC"   10.3   Jython            # 10.x + Jython
+    mk_fake_ghidra "$FIXTURES/ghidra_11.3_PUBLIC"   11.3   PyGhidra          # 11.3+ PyGhidra
+    mk_fake_ghidra "$FIXTURES/ghidra_both_PUBLIC"   11.2.1 Jython PyGhidra   # both installed
+    mk_fake_ghidra "$FIXTURES/ghidra_bare11_PUBLIC" 11.1.2                   # neither -> version
+    mk_fake_ghidra "$FIXTURES/ghidra_bare113_PUBLIC" 11.3                    # neither -> version
+    # A separate root holding two generations, for the install-root scan and newest-wins.
+    mk_fake_ghidra "$FIXTURES/optroot/ghidra_10.4_PUBLIC"   10.4   Jython
+    mk_fake_ghidra "$FIXTURES/optroot/ghidra_11.2.1_PUBLIC" 11.2.1 Jython
     # Point discovery away from the real /opt so a Ghidra installed on the build box
     # cannot make the "Ghidra absent" tests silently pass.
     export PF_OPT_ROOT="$FIXTURES/empty-opt"
@@ -209,12 +222,30 @@ test_m1() {
         env PATH="$FIXTURES/ghidra_11.1.2_PUBLIC/support:$PATH" \
         "$RC" scan "$ROOT/README.md" --verbose
 
-    # --- version -> post-script generation (v3 §1) ---
-    assert_match "11.x selects the PyGhidra script" 'ghidra script +: pyghidra' \
+    # --- post-script runtime selection ---
+    # Regression guard for a real bug: v3 §1's "11.x+ -> PyGhidra" boundary would hand a
+    # Python-3 script to Jython 2.7 on Ghidra 11.0-11.2. Selection now probes the shipped
+    # feature directory, with a corrected 11.3 version fallback.
+    assert_match "11.x shipping Jython -> jython script" 'ghidra script +: jython' \
         env GHIDRA_HOME="$FIXTURES/ghidra_11.1.2_PUBLIC" \
         "$RC" scan "$ROOT/README.md" --verbose
-    assert_match "10.x selects the Jython script" 'ghidra script +: jython' \
+    assert_match "10.x shipping Jython -> jython script" 'ghidra script +: jython' \
         env GHIDRA_HOME="$FIXTURES/ghidra_10.3_PUBLIC" \
+        "$RC" scan "$ROOT/README.md" --verbose
+    assert_match "11.3 shipping PyGhidra -> pyghidra script" 'ghidra script +: pyghidra' \
+        env GHIDRA_HOME="$FIXTURES/ghidra_11.3_PUBLIC" \
+        "$RC" scan "$ROOT/README.md" --verbose
+    assert_match "both runtimes -> pyghidra" 'ghidra script +: pyghidra' \
+        env GHIDRA_HOME="$FIXTURES/ghidra_both_PUBLIC" \
+        "$RC" scan "$ROOT/README.md" --verbose
+    assert_match "both runtimes -> notice explains the choice" 'ships both PyGhidra and Jython' \
+        env GHIDRA_HOME="$FIXTURES/ghidra_both_PUBLIC" \
+        "$RC" scan "$ROOT/README.md" --verbose
+    assert_match "no feature dir, 11.1.2 -> version fallback picks jython" 'ghidra script +: jython' \
+        env GHIDRA_HOME="$FIXTURES/ghidra_bare11_PUBLIC" \
+        "$RC" scan "$ROOT/README.md" --verbose
+    assert_match "no feature dir, 11.3 -> version fallback picks pyghidra" 'ghidra script +: pyghidra' \
+        env GHIDRA_HOME="$FIXTURES/ghidra_bare113_PUBLIC" \
         "$RC" scan "$ROOT/README.md" --verbose
 
     # --- discovery under $PF_OPT_ROOT, newest generation winning ---
@@ -353,9 +384,61 @@ test_corpus() {
 }
 
 # ======================================================================================
+# Real-Ghidra checks. Skipped entirely when no install is present, so the harness stays
+# useful on a box without one.
+test_ghidra() {
+    section "real Ghidra (skipped if absent)"
+
+    local gh=""
+    if [[ -n ${GHIDRA_HOME:-} && -x ${GHIDRA_HOME}/support/analyzeHeadless ]]; then
+        gh="$GHIDRA_HOME/support/analyzeHeadless"
+    else
+        gh=$(find "${PF_OPT_ROOT_REAL:-/opt}" -maxdepth 3 -name analyzeHeadless -type f 2>/dev/null | sort -rV | head -1)
+    fi
+    if [[ -z $gh ]]; then
+        skip "real Ghidra checks" "no Ghidra install found"; return
+    fi
+
+    local root; root="$(cd -- "$(dirname -- "$gh")/.." && pwd)"
+    printf '  using: %s\n' "$root"
+
+    # Detection must agree with what the install actually ships.
+    local shipped=""
+    [[ -d $root/Ghidra/Features/PyGhidra ]] && shipped="pyghidra"
+    [[ -d $root/Ghidra/Features/Jython   ]] && shipped="jython"
+    if [[ -n $shipped ]]; then
+        assert_match "detected runtime matches the shipped feature dir" \
+            "ghidra script +: $shipped" \
+            env GHIDRA_HOME="$root" "$RC" scan "$ROOT/README.md" --verbose
+    else
+        skip "runtime agreement" "install ships neither feature dir"
+    fi
+
+    if ! have_corpus; then
+        skip "headless analysis" "corpus not built"; return
+    fi
+
+    # The real thing: headless import + analysis, with the throwaway project deleted.
+    local proj="$FIXTURES/ghidraproj" out
+    rm -rf "$proj"; mkdir -p "$proj"
+    out=$(timeout 900 "$gh" "$proj" HarnessProj \
+            -import "$CORPUS/crackme" -deleteProject 2>&1)
+    if grep -q 'Analysis succeeded' <<< "$out"; then
+        ok "headless analysis succeeds on the corpus crackme"
+    else
+        no "headless analysis" "$(tail -3 <<< "$out")"
+    fi
+    if [[ -z $(find "$proj" -name '*.rep' -o -name '*.gpr' 2>/dev/null) ]]; then
+        ok "-deleteProject leaves no project behind"
+    else
+        no "-deleteProject" "project artifacts survived in $proj"
+    fi
+}
+
+# ======================================================================================
 main() {
     local -a want=("$@")
-    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1)
+    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 ghidra)
 
     printf '\033[1mrevctf verification harness\033[0m\n'
     printf 'repo: %s\n' "$ROOT"
@@ -368,6 +451,7 @@ main() {
             corpus) test_corpus ;;
             m0)     test_m0     ;;
             m1)     test_m1     ;;
+            ghidra) test_ghidra ;;
             *)      printf 'unknown section: %s\n' "$s" >&2 ;;
         esac
     done

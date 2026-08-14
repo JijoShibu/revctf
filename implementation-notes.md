@@ -61,12 +61,22 @@ came up **while building**.
   `install.sh` must use the venv form, not `pip install --break-system-packages`.
   Verified working: floss 3.1.1.
 
-- **Ghidra is not installable in the cloud build sandbox** — GitHub releases return
-  HTTP 403 there. Everything else in the toolchain installs fine (`binwalk`, `ltrace`,
-  `radare2`/`rabin2`, `checksec`, `upx`, `7z`, `unsquashfs`, `objdump`, `readelf`,
-  `strace`, `file`, `strings`, `hexdump`, FLOSS). Consequence: `stage_ghidra.sh` and the
-  two Python post-scripts are the only components that cannot be executed during
-  development and must be verified on the Kali VM.
+- **Ghidra IS installable in the build sandbox — via the release-asset host.**
+  `github.com/.../releases/latest` returns HTTP 403, which initially looked like a hard
+  block. But `release-assets.githubusercontent.com` is reachable, so a direct release-asset
+  URL works:
+
+  ```bash
+  curl -sL https://github.com/NationalSecurityAgency/ghidra/releases/download/\
+  Ghidra_11.2.1_build/ghidra_11.2.1_PUBLIC_20241105.zip -o ghidra.zip
+  unzip -q ghidra.zip -d /opt
+  ```
+
+  Ghidra 11.2.1 + OpenJDK 21 now run headless analysis in the sandbox (verified: 25
+  functions recovered from the corpus crackme, `Analysis succeeded`, exit 0). M3's Ghidra
+  stage can be genuinely tested rather than written blind. Blocked hosts for reference:
+  `deb.debian.org`, `kali.download`, Maven Central, Docker Hub, `download.docker.com`.
+  Reachable: PyPI, npm, `archive.ubuntu.com`, and the GitHub asset hosts.
 
 ---
 
@@ -175,3 +185,41 @@ has no symbol table; `large_blob.bin` has a flag planted at offset 190,000,000.
 milestone appends a section, so later work re-runs all earlier gates. Fake Ghidra trees
 and masked-PATH fixtures mean missing-tool and version-selection scenarios are testable
 without uninstalling anything or downloading Ghidra.
+
+---
+
+## M1 revision — Ghidra post-script runtime selection
+
+**A real bug, caught only because Ghidra became testable.**
+
+v3 §1 and v4 specify "Ghidra 11.x+ -> PyGhidra script, 10.x and earlier -> Jython script",
+and M1 originally implemented exactly that. It is wrong.
+
+A probe post-script run against a real Ghidra 11.2.1 install reports:
+
+```
+REVCTF-PROBE: python_version=2.7.3 (tags/v2.7.3:5f29801fe, ...) [OpenJDK 64-Bit Server VM]
+REVCTF-PROBE: program=crackme
+REVCTF-PROBE: function_count=25
+```
+
+Ghidra 11.2.1 **still bundles Jython** (`Ghidra/Features/Jython` is present, PyGhidra is
+not) and executes `.py` post-scripts under Jython 2.7.3. PyGhidra only became the bundled
+default in **11.3**, where Jython was removed. The original rule would have handed a
+Python-3 script to a Python-2 interpreter on Ghidra 11.0, 11.1 and 11.2 — failing on the
+first f-string, for every user on those versions.
+
+**Fix.** `pf_detect_ghidra_runtime()` probes the install for the runtime it actually ships
+(`Ghidra/Features/PyGhidra` vs `Ghidra/Features/Jython`) and only falls back to a version
+comparison — with the boundary corrected to 11.3 — when neither directory is recognisable.
+Both-present resolves to PyGhidra with a printed notice, since that combination means
+someone installed PyGhidra deliberately.
+
+The harness pins all six cases (11.x+Jython, 10.x+Jython, 11.3+PyGhidra, both, and the two
+version-fallback paths), plus a `ghidra` section that runs real headless analysis and
+confirms `-deleteProject` leaves nothing behind. That section self-skips when no Ghidra is
+installed, so the harness stays useful elsewhere.
+
+**Generalisable lesson:** the masterplans' version boundaries are estimates, not verified
+facts. The tier boundaries (3.8GB / 2.5GB) carry the same caveat, already flagged in
+v4 §10 — treat them the same way once M5 can measure them.
