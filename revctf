@@ -370,16 +370,85 @@ cmd_scan() {
         preflight_summary >&2
     fi
 
-    # --- M2+ wiring lands here ---------------------------------------------------
-    # source "$REVCTF_LIB/tier.sh";  tier_resolve            # M5
-    # [[ ${OPT[dry_run]} -eq 1 ]] && { tier_report; return 0; }
-    # stage pipeline (M2/M3), flag scan + report (M4)
-    # -----------------------------------------------------------------------------
+    # --- M2: stage framework + Phase-1 light stages ------------------------------
+    local m
+    for m in stage stage_triage stage_file stage_strings stage_binwalk \
+             stage_hexdump stage_checksec stage_objdump; do
+        # shellcheck source=/dev/null
+        source "$REVCTF_LIB/$m.sh" || die "cannot load $REVCTF_LIB/$m.sh"
+    done
 
-    printf 'revctf: preflight passed; scan pipeline not yet implemented (M1).\n' >&2
-    printf 'revctf: target accepted: %s (%s)\n' \
-        "$TARGET" "$([[ -d $TARGET ]] && printf 'directory / batch mode' || printf 'single file')" >&2
+    # --- M5 lands here: tier resolution + --dry-run short-circuit ------------------
+    # source "$REVCTF_LIB/tier.sh"; tier_resolve
+    # [[ ${OPT[dry_run]} -eq 1 ]] && { tier_report; return 0; }
+
+    if [[ -d $TARGET ]]; then
+        printf 'revctf: batch mode is not yet implemented (M7); pass a single file for now.\n' >&2
+        return 1
+    fi
+
+    scan_one_file "$TARGET"
+}
+
+# resolve_output_dir <target> — ./revctf-reports/<basename>-<timestamp>/ unless --output
+# was given (v6 §8).
+resolve_output_dir() {
+    local target="$1" base stamp
+    if [[ -n ${OPT[output_dir]} ]]; then
+        printf '%s' "${OPT[output_dir]}"
+        return 0
+    fi
+    base="$(basename -- "$target")"
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    printf './revctf-reports/%s-%s' "$base" "$stamp"
+}
+
+# scan_one_file <path> — Stage 0 then the Phase-1 light stages.
+# Phases 2 and 3 (heavy extras, Ghidra) land in M3; report assembly lands in M4.
+scan_one_file() {
+    local target="$1" outdir
+    outdir="$(resolve_output_dir "$target")"
+
+    stage_begin_file "$target" "$outdir" || {
+        die "could not create the working or output directory for $target"; }
+
+    # Minimal cleanup for M2. Full SIGINT abort semantics come in M9 (v5 §4.5); this is
+    # enough that an interrupted run does not strand a temp directory.
+    trap 'stage_end_file; exit 130' INT TERM
+
+    stage_run triage   "classifying and unwrapping the target" stage_triage
+    stage_run file     "identifying the file type"             stage_file
+    stage_run strings  "extracting printable strings"          stage_strings
+    stage_run binwalk  "scanning for embedded files"           stage_binwalk
+    stage_run hexdump  "capturing a hex view"                  stage_hexdump
+    stage_run checksec "reading mitigations and metadata"      stage_checksec
+    stage_run objdump  "cross-checking with binutils"          stage_objdump
+
+    # --- M3 stages and M4 report assembly land here -------------------------------
+    m2_interim_summary
+
+    trap - INT TERM
+    stage_end_file
     return 0
+}
+
+# Interim stdout summary, replaced by lib/report.sh in M4. It exists so M2 is verifiable
+# on its own rather than only once the report layer arrives.
+m2_interim_summary() {
+    local s status note
+    printf '\n'
+    printf 'revctf %s — %s\n' "$REVCTF_VERSION" "$RUN_ORIGINAL"
+    printf 'format: %s   captures: %s\n' "$RUN_FORMAT" "$RUN_OUTDIR"
+    [[ $RUN_TARGET != "$RUN_ORIGINAL" ]] && printf 'analysed: %s (unwrapped)\n' "$RUN_TARGET"
+    printf '\n%-10s  %-8s  %5s  %10s  %s\n' STAGE STATUS SECS BYTES NOTE
+    for s in "${STAGE_ORDER[@]}"; do
+        status="${STAGE_STATUS[$s]:-?}"
+        note="${STAGE_NOTE[$s]:-}"
+        printf '%-10s  %-8s  %5s  %10s  %s\n' \
+            "$s" "$status" "${STAGE_SECS[$s]:-0}" \
+            "$(st_file_size "${STAGE_OUT[$s]:-/dev/null}")" "$note"
+    done
+    printf '\n(M2: light static stages only — heavy stages M3, report M4)\n'
 }
 
 # ======================================================================================

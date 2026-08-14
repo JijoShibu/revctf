@@ -223,3 +223,75 @@ installed, so the harness stays useful elsewhere.
 **Generalisable lesson:** the masterplans' version boundaries are estimates, not verified
 facts. The tier boundaries (3.8GB / 2.5GB) carry the same caveat, already flagged in
 v4 §10 — treat them the same way once M5 can measure them.
+
+---
+
+## M2 — Triage/Unwrap Layer + Light Static Stages
+
+**Status:** complete. 95/95 checks green (25 of them M2's).
+
+### Decisions made during M2
+
+- **`lib/stage.sh` added — not in v6 §12's layout.** The execution masterplan calls the
+  per-stage function pattern "load-bearing" and says to get it right once because every
+  later stage reuses it. Copying that pattern into 13 stage files would defeat the point,
+  so the contract lives in one framework file: run context (`RUN_*`), result recording
+  (`STAGE_*`), `stage_capture()`, `stage_run()`'s error boundary, and the time-bound
+  constants from v6 §7.4.
+
+- **Only `lib/stage.sh` writes the `STAGE_*` arrays.** Stages that run their tool directly
+  rather than through `stage_capture()` (binwalk, full hexdump) call
+  `stage_record_exec()`. A stage never needs to know the array names, and the report layer
+  has one place to look.
+
+- **`empty` is a distinct status from `ok`.** A stage that succeeds but produces nothing
+  is recorded as `empty` with a note, so M4's report can say "this stage found nothing"
+  instead of rendering a blank section — the M4 DoD explicitly asks for that distinction.
+
+- **Failure messages name the signal.** A tool killed by SIGSEGV exits 139; `_st_signal_note()`
+  turns that into "(killed by SIGSEGV)". The report's whole premise is being readable by a
+  beginner, and "exited 139" is not.
+
+- **`st_strip_ansi()` filters coloured tool output.** v6 §10 requires the report file to be
+  plain text in every display mode. checksec 2.6.0 colours unconditionally — it ignores
+  both `NO_COLOR` and `TERM=dumb` — and radare2 will too. Escape codes in a capture make it
+  unreadable in an editor and break grep. It is a filter in a pipe, so the
+  streaming-to-disk discipline is preserved. A harness check asserts no capture contains
+  an escape sequence.
+
+- **checksec is captured twice**, human-readable and `--format=json`. The table is what a
+  person reads; the JSON line is what a later tool or a diff between runs can use.
+
+- **objdump disassembly is capped at 4000 lines.** A full `-d` of a large binary runs to
+  hundreds of megabytes. radare2 (M3) and Ghidra go deeper; this stage exists as an
+  independent cross-check, and a disagreement between parsers is itself the finding.
+
+### Build-environment findings
+
+- **binwalk 2.x rejects the `--` end-of-options marker** — it treats `--` as a filename and
+  fails with `Cannot open file --` (exit 3). Same for `upx`. Since `stage_begin_file()`
+  absolutises the target, no path can ever be mistaken for an option, so `--` is simply
+  omitted for those two. Every other tool in the pipeline accepts it and keeps it.
+
+### Verified behaviour
+
+- All seven Phase-1 stages produce output on an ELF; captures are plain text.
+- Classification is correct across the corpus: elf, pe, java, pyc, archive. Format-
+  inappropriate stages (checksec, objdump on a .jar) **skip with a note** rather than
+  failing — an important distinction for the report.
+- `packed_upx` is unpacked by Stage 0 and the previously-hidden `flag{cr4ckm3_s0lv3d}`
+  appears in the strings capture. The original file is byte-identical afterwards.
+- `packed_upx_broken` marks triage failed, preserves upx's real "checksum error"
+  diagnostic, and **the remaining stages still run** — the v5 §4.1 isolate-and-continue
+  guarantee, tested rather than assumed.
+- Streaming holds: the 220MB `large_blob.bin` scans with peak RSS of ~103MB, well under
+  the 256MB assertion. Nothing is buffered in a Bash variable.
+
+### Open questions carried forward
+
+- **Archive members are extracted but not yet analysed individually.** Stage 0 collects
+  them into `TRIAGE_MEMBERS` and caps the list at 50; the orchestrator that walks them as
+  their own targets belongs with batch mode (M7). Until then an archive gets a
+  member listing, not per-member analysis.
+- **`_triage_unwrap_pyinstaller` needs `pyinstxtractor`**, which is not packaged. It fails
+  cleanly with an install hint today; `install.sh` should vendor it in M6.

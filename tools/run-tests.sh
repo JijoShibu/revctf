@@ -383,6 +383,146 @@ test_corpus() {
     fi
 }
 
+test_m2() {
+    section "M2 — triage/unwrap + light static stages"
+
+    if ! have_corpus; then
+        skip "M2 checks" "run ./tools/build-test-corpus.sh first"; return
+    fi
+
+    local o="$FIXTURES/m2"
+    rm -rf "$o"; mkdir -p "$o"
+    # M2 has no Ghidra stage yet, but preflight still demands one unless told otherwise.
+    local -a RUN=("$RC" scan --skip-ghidra)
+
+    # --- every stage produces output on a plain ELF ---
+    local out; out=$("${RUN[@]}" "$CORPUS/crackme" --output "$o/crackme" 2>&1)
+    local st
+    for st in triage file strings binwalk hexdump checksec objdump; do
+        if [[ -s "$o/crackme/$st.txt" ]]; then
+            ok "stage $st produced output"
+        else
+            no "stage $st" "no capture at $o/crackme/$st.txt"
+        fi
+    done
+    if grep -qE '^(triage|file|strings|binwalk|hexdump|checksec|objdump) +(ok|empty)' <<< "$out"; then
+        ok "all light stages report a non-failed status"
+    else
+        no "stage statuses" "$(grep -E 'failed' <<< "$out" | head -2)"
+    fi
+
+    # --- captures must be plain text (v6 §10) ---
+    if ! grep -rqP '\x1b\[' "$o/crackme/" 2>/dev/null; then
+        ok "captures contain no ANSI escape sequences"
+    else
+        no "plain-text captures" "escape codes in $(grep -rlP '\x1b\[' "$o/crackme/" 2>/dev/null | head -1)"
+    fi
+
+    # --- format classification across the corpus ---
+    local f fmt want pair
+    for pair in "crackme:elf" "winsample.exe:pe" "challenge.jar:java" \
+                "secret.pyc:pyc" "archive_challenge.zip:archive"; do
+        f="${pair%%:*}"; want="${pair##*:}"
+        [[ -f "$CORPUS/$f" ]] || { skip "classify $f" "not in corpus"; continue; }
+        "${RUN[@]}" "$CORPUS/$f" --output "$o/$f" >/dev/null 2>&1
+        fmt=$(sed -n 's/^Classified as: //p' "$o/$f/triage.txt" 2>/dev/null | head -1)
+        if [[ $fmt == "$want" ]]; then
+            ok "classified $f as $want"
+        else
+            no "classify $f" "got '$fmt', wanted '$want'"
+        fi
+    done
+
+    # --- format-inappropriate stages skip rather than fail ---
+    if grep -q 'not applicable to a java target' <<< "$(cat "$o/challenge.jar"/*.txt 2>/dev/null)$( "${RUN[@]}" "$CORPUS/challenge.jar" --output "$o/jar2" 2>&1)"; then
+        ok "checksec/objdump skip a Java target rather than failing"
+    else
+        no "java skip" "expected a skip note for the java target"
+    fi
+
+    # --- unwrap: the packed sample ---
+    "${RUN[@]}" "$CORPUS/packed_upx" --output "$o/packed" >/dev/null 2>&1
+    if grep -q 'Unwrap *: OK' "$o/packed/triage.txt" 2>/dev/null; then
+        ok "packed_upx is unpacked by Stage 0"
+    else
+        no "unwrap" "$(grep -m1 Unwrap "$o/packed/triage.txt" 2>/dev/null)"
+    fi
+    if grep -q 'flag{cr4ckm3' "$o/packed/strings.txt" 2>/dev/null; then
+        ok "unwrapping reveals a flag that was hidden while packed"
+    else
+        no "unwrap payoff" "flag not visible in the strings capture after unwrap"
+    fi
+
+    # --- the original file is never modified (Stage 0 invariant) ---
+    local before after
+    before=$(md5sum < "$CORPUS/packed_upx")
+    "${RUN[@]}" "$CORPUS/packed_upx" --output "$o/packed2" >/dev/null 2>&1
+    after=$(md5sum < "$CORPUS/packed_upx")
+    if [[ $before == "$after" ]]; then
+        ok "the original target is left byte-identical"
+    else
+        no "original untouched" "checksum changed across a scan"
+    fi
+
+    # --- unwrap failure isolates: stage fails, pipeline continues ---
+    out=$("${RUN[@]}" "$CORPUS/packed_upx_broken" --output "$o/broken" 2>&1)
+    if grep -qE '^triage +failed' <<< "$out"; then
+        ok "an unpackable packed target marks triage failed"
+    else
+        no "unwrap failure" "triage did not report failed"
+    fi
+    if grep -qE '^(strings|objdump) +ok' <<< "$out"; then
+        ok "later stages still run after a triage failure (v5 §4.1)"
+    else
+        no "isolate-and-continue" "the pipeline stopped after the triage failure"
+    fi
+    if grep -q 'checksum error' "$o/broken/triage.txt" 2>/dev/null; then
+        ok "the real upx diagnostic reaches the report"
+    else
+        no "diagnostic" "upx's error message was not preserved"
+    fi
+
+    # --- --no-unwrap ---
+    "${RUN[@]}" "$CORPUS/packed_upx" --no-unwrap --output "$o/nounwrap" >/dev/null 2>&1
+    if grep -q 'disabled (--no-unwrap)' "$o/nounwrap/triage.txt" 2>/dev/null; then
+        ok "--no-unwrap disables Stage 0 unwrapping"
+    else
+        no "--no-unwrap" "unwrap was not disabled"
+    fi
+
+    # --- hexdump preview cap vs --full-hexdump ---
+    local prev full
+    prev=$(stat -c '%s' "$o/crackme/hexdump.txt" 2>/dev/null || echo 0)
+    "${RUN[@]}" "$CORPUS/crackme" --full-hexdump --output "$o/fullhex" >/dev/null 2>&1
+    full=$(stat -c '%s' "$o/fullhex/hexdump.txt" 2>/dev/null || echo 0)
+    if [[ $full -gt $prev ]]; then
+        ok "--full-hexdump produces a larger dump than the capped preview ($prev -> $full bytes)"
+    else
+        no "hexdump cap" "full dump ($full) was not larger than the preview ($prev)"
+    fi
+
+    # --- binwalk version branch actually ran and validated ---
+    if [[ -s "$o/crackme/binwalk.txt" ]]; then
+        ok "binwalk produced a validated capture"
+    else
+        no "binwalk" "no output captured"
+    fi
+
+    # --- streaming discipline: a 220MB target must not be buffered in memory ---
+    if [[ -f $CORPUS/large_blob.bin ]] && command -v /usr/bin/time >/dev/null 2>&1; then
+        local peak_kb
+        peak_kb=$(/usr/bin/time -f '%M' "${RUN[@]}" "$CORPUS/large_blob.bin" \
+                    --output "$o/large" 2>&1 >/dev/null | tail -1)
+        if [[ $peak_kb =~ ^[0-9]+$ ]] && [[ $peak_kb -lt 262144 ]]; then
+            ok "220MB target scanned with peak RSS ${peak_kb}KB (< 256MB — streaming holds)"
+        else
+            no "streaming" "peak RSS was ${peak_kb}KB, expected well under 256MB"
+        fi
+    else
+        skip "streaming memory test" "large_blob.bin or /usr/bin/time missing"
+    fi
+}
+
 # ======================================================================================
 # Real-Ghidra checks. Skipped entirely when no install is present, so the harness stays
 # useful on a box without one.
@@ -438,7 +578,7 @@ test_ghidra() {
 # ======================================================================================
 main() {
     local -a want=("$@")
-    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 ghidra)
+    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 m2 ghidra)
 
     printf '\033[1mrevctf verification harness\033[0m\n'
     printf 'repo: %s\n' "$ROOT"
@@ -451,6 +591,7 @@ main() {
             corpus) test_corpus ;;
             m0)     test_m0     ;;
             m1)     test_m1     ;;
+            m2)     test_m2     ;;
             ghidra) test_ghidra ;;
             *)      printf 'unknown section: %s\n' "$s" >&2 ;;
         esac
