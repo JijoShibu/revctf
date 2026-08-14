@@ -135,7 +135,8 @@ test_lint() {
         skip "shellcheck" "not installed"; return
     fi
     local out
-    out=$(cd "$ROOT" && shellcheck -S style revctf install.sh lib/*.sh tools/*.sh 2>&1)
+    out=$(cd "$ROOT" && shellcheck -S style revctf install.sh lib/*.sh tools/*.sh \
+              .claude/cloud-setup.sh 2>&1)
     if [[ -z $out ]]; then
         ok "0 findings across all shell files"
     else
