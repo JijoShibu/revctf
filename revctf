@@ -1,0 +1,389 @@
+#!/usr/bin/env bash
+#
+# revctf — automated reverse-engineering CTF analysis pipeline
+#
+# Build reference: revctfmasterplan_v6.md (consolidates v3/v4/v5 + execution masterplan).
+# Milestone: M0 — foundation & scaffolding.
+#
+# NOTE ON `set -e`: deliberately NOT used at the top level. Masterplan v5 §4.1 specifies
+# stage-level isolate-and-continue — a failing stage must be diagnosed and skipped, never
+# allowed to abort the run. Error handling is done per-stage via ERR traps in lib/.
+set -uo pipefail
+
+REVCTF_VERSION="0.1.0-dev"
+
+# --- Resolve our own location (works through a symlink on PATH, per install.sh) --------
+__revctf_self="${BASH_SOURCE[0]}"
+while [[ -L $__revctf_self ]]; do
+    __revctf_link=$(readlink "$__revctf_self")
+    if [[ $__revctf_link == /* ]]; then
+        __revctf_self=$__revctf_link
+    else
+        __revctf_self="$(dirname "$__revctf_self")/$__revctf_link"
+    fi
+done
+REVCTF_ROOT="$(cd -- "$(dirname -- "$__revctf_self")" && pwd)"
+unset __revctf_self __revctf_link
+
+REVCTF_LIB="$REVCTF_ROOT/lib"
+REVCTF_SCRIPTS="$REVCTF_ROOT/scripts"
+REVCTF_HOME="${REVCTF_HOME:-$HOME/.revctf}"
+export REVCTF_VERSION REVCTF_ROOT REVCTF_LIB REVCTF_SCRIPTS REVCTF_HOME
+
+# ======================================================================================
+# Option state
+# ======================================================================================
+# Three-level precedence (v6 §9): built-in defaults -> ~/.revctf/config -> CLI flags.
+# CLI flags are recorded in CLI_SET as they are parsed, then re-applied after the config
+# file loads, so a config value can never silently override an explicit flag.
+
+declare -A OPT=(
+    [output_dir]=""                 # empty => ./revctf-reports/<basename>-<timestamp>/
+    [timeout]=10                    # v3 §3 / v6 §1: ltrace timeout, seconds
+    [flag_scan]=1
+    [flag_format]=""
+    [full_hexdump]=0
+    [skip_ltrace]=0
+    [skip_ghidra]=0
+    [no_unwrap]=0
+    [unwrap_depth]=2
+    [light_decompile]=0
+    [force_full_decompile]=0
+    [ghidra_script]=""
+    [jobs_light]=""                 # empty => tier-resolved (v6 §5)
+    [jobs_ghidra]=""
+    [maxmem_ghidra]=""
+    [auto_swap]=1
+    [sandbox]=0
+    [interactive]=0
+    [assume_yes]=0
+    [tui]=1
+    [summary_only]=0
+    [dry_run]=0
+    [verbose]=0
+    [debug]=0
+    [stages_disabled]=""            # comma-separated stage names (v6 §8)
+)
+declare -A CLI_SET=()
+
+# Keys a config file is permitted to set (v6 §9 — allowlist validation).
+CONFIG_ALLOWED="output_dir timeout flag_scan flag_format full_hexdump skip_ltrace \
+skip_ghidra no_unwrap unwrap_depth light_decompile force_full_decompile ghidra_script \
+jobs_light jobs_ghidra maxmem_ghidra auto_swap sandbox tui stages_disabled"
+
+CONFIG_PATH="$REVCTF_HOME/config"
+SUBCOMMAND=""
+TARGET=""
+
+# ======================================================================================
+# Bootstrap-phase messaging
+# ======================================================================================
+# lib/errorlog.sh (M9) replaces these once loaded; they exist so M0/M1 failures before
+# the libraries are sourced still produce a clean message rather than a bare shell error.
+_msg()  { printf '%s\n' "$*" >&2; }
+die()   { printf 'revctf: error: %s\n' "$*" >&2; exit 1; }
+warn()  { printf 'revctf: warning: %s\n' "$*" >&2; }
+
+usage() {
+    cat <<'EOF'
+revctf — automated reverse-engineering CTF analysis pipeline
+
+USAGE
+    revctf scan <file|dir> [options]
+    revctf --help | --version
+
+  Runs a staged Kali toolchain against a challenge file (or every file in a
+  directory) and writes a plain-text report with flag candidates at the top.
+
+OUTPUT & REPORTING
+    --output DIR          Report directory  [default: ./revctf-reports/<name>-<ts>/]
+    --summary-only        Lead with flags + one-line-per-stage status
+    --dry-run             Print resolved tier/concurrency/ceilings, run no tools
+
+FLAG DETECTION
+    --no-flag-scan        Disable flag-pattern detection entirely
+    --flag-format REGEX   Add a custom High-confidence pattern
+                          (e.g. --flag-format 'HTB\{.*?\}')
+
+ANALYSIS DEPTH / STAGE CONTROL
+    --full-hexdump        Dump the whole file instead of the 512-byte preview
+    --skip-ltrace         Skip the ltrace stage
+    --skip-ghidra         Skip Ghidra; radare2 disassembly substitutes
+    --no-unwrap           Disable the triage/unwrap pre-stage (packers, archives,
+                          managed and Python artifacts)
+    --light-decompile     Substitute radare2 disassembly for Ghidra's decompile
+    --force-full-decompile
+                          Force full Ghidra decompile even on Tier C / after an OOM
+    --ghidra-script PATH  Override automatic Ghidra post-script selection
+
+RESOURCE TUNING
+    --timeout SECONDS     ltrace timeout  [default: 10]
+    --jobs-light N        Override tier's Phase-1 concurrency
+    --jobs-ghidra N       Override tier's Phase-2/3 concurrency
+    --maxmem-ghidra M     Override tier's Ghidra MAXMEM (e.g. 1024M)
+    --no-auto-swap        Never auto-create a swap file on a low-RAM host
+
+SANDBOXING
+    --sandbox             Run ltrace inside a network-isolated Docker container
+
+AGENCY & INTERACTIVITY
+    -i, --interactive     Pause before each stage: Continue / Skip stage /
+                          Skip file / Abort
+    -y, --yes             Auto-accept every prompt (CI-safe; overrides -i)
+
+DISPLAY & CONFIG
+    --no-tui              Disable the live stage table; use line-mode output
+    --config PATH         Use an alternate config file
+                          [default: ~/.revctf/config]
+
+DIAGNOSTICS
+    --verbose             Human-readable stage trace on stderr
+    --debug               Full command trace to <output>/<name>.debug.log
+    -h, --help            Show this help
+        --version         Show version
+
+EXAMPLES
+    revctf scan ./crackme
+    revctf scan ./challenges/ --summary-only
+    revctf scan ./bin --flag-format 'picoCTF\{.*?\}' --sandbox
+    revctf scan ./packed.exe --no-unwrap --verbose
+    revctf scan ./big.elf --dry-run
+
+Persistent state lives in ~/.revctf/ (config, error.log).
+EOF
+}
+
+# ======================================================================================
+# Helpers
+# ======================================================================================
+set_opt() { OPT["$1"]="$2"; CLI_SET["$1"]=1; }
+
+need_value() {
+    # $1 = flag name, $2 = number of remaining argv entries
+    [[ $2 -ge 2 ]] || die "$1 requires a value (see 'revctf --help')"
+}
+
+is_uint() { [[ $1 =~ ^[0-9]+$ ]]; }
+
+# ======================================================================================
+# Argument parsing
+# ======================================================================================
+parse_args() {
+    if [[ $# -eq 0 ]]; then
+        usage
+        exit 0
+    fi
+
+    # Global-only forms, valid without a subcommand.
+    case "$1" in
+        -h|--help)  usage; exit 0 ;;
+        --version)  printf 'revctf %s\n' "$REVCTF_VERSION"; exit 0 ;;
+        -*)         die "unknown option '$1' (a subcommand must come first; try 'revctf --help')" ;;
+    esac
+
+    SUBCOMMAND="$1"; shift
+    case "$SUBCOMMAND" in
+        scan) ;;
+        *)    die "unknown subcommand '$SUBCOMMAND' (only 'scan' is supported)" ;;
+    esac
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            # --- output & reporting ---
+            --output)       need_value "$1" $#; set_opt output_dir "$2"; shift 2 ;;
+            --summary-only) set_opt summary_only 1; shift ;;
+            --dry-run)      set_opt dry_run 1; shift ;;
+
+            # --- flag detection ---
+            --no-flag-scan) set_opt flag_scan 0; shift ;;
+            --flag-format)  need_value "$1" $#; set_opt flag_format "$2"; shift 2 ;;
+
+            # --- analysis depth / stage control ---
+            --full-hexdump)         set_opt full_hexdump 1; shift ;;
+            --skip-ltrace)          set_opt skip_ltrace 1; shift ;;
+            --skip-ghidra)          set_opt skip_ghidra 1; shift ;;
+            --no-unwrap)            set_opt no_unwrap 1; shift ;;
+            --light-decompile)      set_opt light_decompile 1; shift ;;
+            --force-full-decompile) set_opt force_full_decompile 1; shift ;;
+            --ghidra-script)        need_value "$1" $#; set_opt ghidra_script "$2"; shift 2 ;;
+
+            # --- resource tuning ---
+            --timeout)       need_value "$1" $#; set_opt timeout "$2"; shift 2 ;;
+            --jobs-light)    need_value "$1" $#; set_opt jobs_light "$2"; shift 2 ;;
+            --jobs-ghidra)   need_value "$1" $#; set_opt jobs_ghidra "$2"; shift 2 ;;
+            --maxmem-ghidra) need_value "$1" $#; set_opt maxmem_ghidra "$2"; shift 2 ;;
+            --no-auto-swap)  set_opt auto_swap 0; shift ;;
+
+            # --- sandboxing ---
+            --sandbox) set_opt sandbox 1; shift ;;
+
+            # --- agency & interactivity ---
+            -i|--interactive) set_opt interactive 1; shift ;;
+            -y|--yes)         set_opt assume_yes 1; shift ;;
+
+            # --- display & config ---
+            --no-tui) set_opt tui 0; shift ;;
+            --config) need_value "$1" $#; CONFIG_PATH="$2"; CLI_SET[config_path]=1; shift 2 ;;
+
+            # --- diagnostics ---
+            --verbose) set_opt verbose 1; shift ;;
+            --debug)   set_opt debug 1; shift ;;
+
+            -h|--help) usage; exit 0 ;;
+            --version) printf 'revctf %s\n' "$REVCTF_VERSION"; exit 0 ;;
+
+            --) shift; break ;;
+            -*) die "unknown option '$1' (try 'revctf --help')" ;;
+            *)
+                [[ -z $TARGET ]] || die "only one target may be given (got '$TARGET' and '$1')"
+                TARGET="$1"; shift ;;
+        esac
+    done
+
+    # Any remaining positional after `--`
+    while [[ $# -gt 0 ]]; do
+        [[ -z $TARGET ]] || die "only one target may be given (got '$TARGET' and '$1')"
+        TARGET="$1"; shift
+    done
+}
+
+# ======================================================================================
+# Config file (v6 §9)
+# ======================================================================================
+load_config() {
+    [[ -r $CONFIG_PATH ]] || {
+        # An explicitly-requested config that does not exist is an error; the default
+        # one simply being absent is not.
+        [[ -n ${CLI_SET[config_path]:-} ]] && die "config file not readable: $CONFIG_PATH"
+        return 0
+    }
+
+    local lineno=0 line key value
+    while IFS= read -r line || [[ -n $line ]]; do
+        lineno=$((lineno + 1))
+        line="${line%%#*}"                       # strip comments
+        line="${line#"${line%%[![:space:]]*}"}"  # ltrim
+        line="${line%"${line##*[![:space:]]}"}"  # rtrim
+        [[ -z $line ]] && continue
+
+        if [[ $line != *=* ]]; then
+            warn "$CONFIG_PATH:$lineno: ignoring malformed line (expected key=value)"
+            continue
+        fi
+
+        key="${line%%=*}"; value="${line#*=}"
+        key="${key%"${key##*[![:space:]]}"}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%\"}"; value="${value#\"}"
+        value="${value%\'}"; value="${value#\'}"
+
+        if [[ " $CONFIG_ALLOWED " != *" $key "* ]]; then
+            warn "$CONFIG_PATH:$lineno: ignoring unknown key '$key'"
+            continue
+        fi
+
+        # Config loses to an explicit CLI flag.
+        [[ -n ${CLI_SET[$key]:-} ]] && continue
+        OPT["$key"]="$value"
+    done < "$CONFIG_PATH"
+}
+
+# ======================================================================================
+# Validation
+# ======================================================================================
+validate_opts() {
+    [[ -n $TARGET ]] || die "no target given — usage: revctf scan <file|dir>"
+    [[ -e $TARGET ]] || die "target not found: $TARGET"
+    [[ -r $TARGET ]] || die "target not readable: $TARGET"
+
+    if ! is_uint "${OPT[timeout]}" || [[ ${OPT[timeout]} -eq 0 ]]; then
+        die "--timeout must be a positive integer (got '${OPT[timeout]}')"
+    fi
+    if ! is_uint "${OPT[unwrap_depth]}"; then
+        die "unwrap_depth must be a non-negative integer (got '${OPT[unwrap_depth]}')"
+    fi
+
+    local k
+    for k in jobs_light jobs_ghidra; do
+        [[ -z ${OPT[$k]} ]] && continue
+        if ! is_uint "${OPT[$k]}" || [[ ${OPT[$k]} -eq 0 ]]; then
+            die "--${k//_/-} must be a positive integer (got '${OPT[$k]}')"
+        fi
+    done
+
+    if [[ -n ${OPT[maxmem_ghidra]} ]] && ! [[ ${OPT[maxmem_ghidra]} =~ ^[0-9]+[MmGg]?$ ]]; then
+        die "--maxmem-ghidra must look like 1024M or 2G (got '${OPT[maxmem_ghidra]}')"
+    fi
+
+    if [[ -n ${OPT[ghidra_script]} && ! -r ${OPT[ghidra_script]} ]]; then
+        die "--ghidra-script not readable: ${OPT[ghidra_script]}"
+    fi
+
+    if [[ -n ${OPT[flag_format]} ]]; then
+        printf '' | grep -Eq -- "${OPT[flag_format]}" 2>/dev/null
+        [[ $? -le 1 ]] || die "--flag-format is not a valid ERE: ${OPT[flag_format]}"
+    fi
+
+    # --- documented conflicts (v5 §3.3, §3.4) ---
+    if [[ ${OPT[interactive]} -eq 1 && ${OPT[assume_yes]} -eq 1 ]]; then
+        warn "--interactive and --yes are mutually exclusive; --yes wins, continuing non-interactively"
+        OPT[interactive]=0
+    fi
+    if [[ ${OPT[sandbox]} -eq 1 && ${OPT[skip_ltrace]} -eq 1 ]]; then
+        warn "--sandbox is a no-op with --skip-ltrace (the sandbox only ever wraps ltrace)"
+    fi
+    if [[ ${OPT[light_decompile]} -eq 1 && ${OPT[force_full_decompile]} -eq 1 ]]; then
+        die "--light-decompile and --force-full-decompile are mutually exclusive"
+    fi
+    if [[ ${OPT[skip_ghidra]} -eq 1 && ${OPT[force_full_decompile]} -eq 1 ]]; then
+        die "--skip-ghidra and --force-full-decompile are mutually exclusive"
+    fi
+
+    # A TUI needs a terminal; fall back silently rather than emitting escape codes
+    # into a pipe (v6 §10).
+    if [[ ${OPT[tui]} -eq 1 && ! -t 1 ]]; then
+        OPT[tui]=0
+    fi
+}
+
+# ======================================================================================
+# Subcommand: scan
+# ======================================================================================
+cmd_scan() {
+    if [[ ${OPT[verbose]} -eq 1 ]]; then
+        _msg "revctf $REVCTF_VERSION"
+        _msg "  target      : $TARGET"
+        _msg "  config      : ${CONFIG_PATH}$([[ -r $CONFIG_PATH ]] || printf ' (absent)')"
+        _msg "  output      : ${OPT[output_dir]:-<auto>}"
+        _msg "  display     : $([[ ${OPT[tui]} -eq 1 ]] && printf tui || printf line)"
+        _msg "  interactive : ${OPT[interactive]}   assume-yes: ${OPT[assume_yes]}"
+    fi
+
+    # --- M1+ wiring lands here ---------------------------------------------------
+    # source "$REVCTF_LIB/preflight.sh"; preflight_run   || return 1
+    # source "$REVCTF_LIB/tier.sh";      tier_resolve
+    # [[ ${OPT[dry_run]} -eq 1 ]] && { tier_report; return 0; }
+    # ... stage pipeline (M2/M3), flag scan + report (M4)
+    # -----------------------------------------------------------------------------
+
+    printf 'revctf: scan pipeline not yet implemented (M0 scaffold).\n' >&2
+    printf 'revctf: target accepted: %s (%s)\n' \
+        "$TARGET" "$([[ -d $TARGET ]] && printf 'directory / batch mode' || printf 'single file')" >&2
+    return 0
+}
+
+# ======================================================================================
+# Entry
+# ======================================================================================
+main() {
+    parse_args "$@"
+    load_config
+    validate_opts
+
+    case "$SUBCOMMAND" in
+        scan) cmd_scan ;;
+        *)    die "unhandled subcommand '$SUBCOMMAND'" ;;
+    esac
+}
+
+main "$@"

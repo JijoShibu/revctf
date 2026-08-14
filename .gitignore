@@ -1,0 +1,12 @@
+# Analysis output
+revctf-reports/
+*.debug.log
+
+# Local test corpus — deliberately uncommitted (execution masterplan M0)
+test-corpus/
+
+# Scratch / temp
+tmp/
+*.tmp
+*.swp
+.DS_Store
