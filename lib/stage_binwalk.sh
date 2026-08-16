@@ -32,7 +32,10 @@ stage_binwalk() {
         cmd=(binwalk "$RUN_TARGET")
     fi
 
-    timeout -k 5 "$ST_T_BINWALK" "${cmd[@]}" >"$out" 2>"$err" || rc=$?
+    # Via st_run_bounded so Ctrl+C is honoured immediately — running the tool in the
+    # foreground made this stage swallow an interrupt for its whole 70s duration on a
+    # large target.
+    st_run_bounded "$ST_T_BINWALK" "$out" "$err" -- "${cmd[@]}" || rc=$?
 
     stage_record_exec "$name" "${cmd[*]}" "$rc"
 

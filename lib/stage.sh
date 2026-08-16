@@ -41,6 +41,11 @@
 declare -g  RUN_ORIGINAL="" RUN_TARGET="" RUN_FORMAT="other"
 declare -g  RUN_WORKDIR=""  RUN_OUTDIR=""
 # shellcheck disable=SC2034
+declare -g  ST_OUTDIR_PREEXISTING=0 ST_SAVED_UMASK=""
+# PID of the tool currently running under stage_capture(), or empty. The abort handler
+# needs this: see the comment in stage_capture().
+declare -g  ST_CHILD_PID=""
+# shellcheck disable=SC2034
 declare -gA STAGE_STATUS=() STAGE_NOTE=() STAGE_OUT=() STAGE_ERR=()
 # shellcheck disable=SC2034
 declare -gA STAGE_RC=()     STAGE_SECS=() STAGE_CMD=()
@@ -76,10 +81,33 @@ stage_begin_file() {
     RUN_OUTDIR="$2"
 
     RUN_WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/revctf-work.XXXXXX")" || return 1
-    mkdir -p "$RUN_OUTDIR" || return 1
-    # v4 §5: reports can describe a sensitive binary, so permissions are explicit rather
-    # than inherited from the invoking user's umask.
-    chmod 700 "$RUN_WORKDIR" "$RUN_OUTDIR" 2>/dev/null
+    chmod 700 "$RUN_WORKDIR" 2>/dev/null
+
+    # v4 §5 wants the output directory at 700 — but only for a directory revctf creates.
+    # Silently tightening a directory the user already had is a destructive surprise: point
+    # --output at a shared or published location and revctf would lock everyone else out of
+    # it. So the mode is set on creation and a pre-existing directory is left alone.
+    if [[ -d $RUN_OUTDIR ]]; then
+        ST_OUTDIR_PREEXISTING=1
+    else
+        ST_OUTDIR_PREEXISTING=0
+        mkdir -p "$RUN_OUTDIR" || return 1
+        chmod 700 "$RUN_OUTDIR" 2>/dev/null
+    fi
+
+    # Fail fast and clearly when the destination is unwritable. Without this, every stage
+    # fails individually with a redirection error and the user is told "strings exited 1"
+    # rather than "the output directory is not writable".
+    if [[ ! -w $RUN_OUTDIR ]]; then
+        printf 'revctf: output directory is not writable: %s\n' "$RUN_OUTDIR" >&2
+        return 1
+    fi
+
+    # Captures can quote strings, symbols and decompiled logic from the analysed binary, so
+    # they are created 0600 rather than inheriting the invoking user's umask (v4 §5). The
+    # umask is scoped to this run only.
+    ST_SAVED_UMASK="$(umask)"
+    umask 077
 
     STAGE_STATUS=(); STAGE_NOTE=(); STAGE_OUT=(); STAGE_ERR=()
     STAGE_RC=();     STAGE_SECS=(); STAGE_CMD=(); STAGE_ORDER=()
@@ -89,6 +117,7 @@ stage_begin_file() {
 stage_end_file() {
     [[ -n $RUN_WORKDIR && -d $RUN_WORKDIR ]] && rm -rf "$RUN_WORKDIR"
     RUN_WORKDIR=""
+    [[ -n $ST_SAVED_UMASK ]] && { umask "$ST_SAVED_UMASK"; ST_SAVED_UMASK=""; }
     return 0
 }
 
@@ -129,6 +158,26 @@ stage_err_path() { printf '%s/%s.stderr' "$RUN_OUTDIR" "$1"; }
 #   - classifies an empty-but-successful run as `empty` rather than `ok`, so the report
 #     can say "this stage found nothing" instead of showing a blank section (M4 DoD)
 #
+# st_run_bounded <timeout> <stdout-file> <stderr-file> -- <command> [args...]
+#
+# The one place any external tool is actually launched. Backgrounding it and `wait`-ing is
+# what makes the run interruptible: bash defers a trap until the current FOREGROUND command
+# finishes, so a tool run in the foreground swallows Ctrl+C for its entire duration —
+# measured at 70 seconds for a binwalk over a 220MB target, during which revctf looked
+# hung. `wait` is interruptible, so the handler fires at once and can kill the child.
+#
+# Sets ST_CHILD_PID for the duration. Returns the command's exit status; never exits.
+st_run_bounded() {
+    local tmo="$1" out="$2" err="$3"; shift 3
+    [[ ${1:-} == "--" ]] && shift
+    local rc=0
+    timeout -k 5 "$tmo" "$@" >"$out" 2>"$err" &
+    ST_CHILD_PID=$!
+    wait "$ST_CHILD_PID" || rc=$?
+    ST_CHILD_PID=""
+    return "$rc"
+}
+
 # Returns the command's exit status. Never exits.
 stage_capture() {
     local name="$1" tmo="$2"; shift 2
@@ -146,8 +195,19 @@ stage_capture() {
     start=$SECONDS
     # `timeout -k` sends SIGKILL if the tool ignores SIGTERM. Output redirection happens
     # here, in the caller's shell, so the tool writes directly to the file descriptor.
-    timeout -k 5 "$tmo" "$@" >"$out" 2>"$err"
-    rc=$?
+    #
+    # The tool is backgrounded and waited on rather than run in the foreground, for one
+    # specific reason: bash defers a trap until the current FOREGROUND command finishes.
+    # With a foreground tool, Ctrl+C during a `strings` over a 220MB target did not stop
+    # it — the signal was noted, `strings` ran to completion, and only then did the handler
+    # fire, leaving the tool as an orphan. `wait` is interruptible, so the handler runs
+    # immediately and can kill the recorded PID.
+    #
+    # This matters far more from M3 on: ltrace and strace EXECUTE the challenge binary, and
+    # an orphan there is untrusted code still running after the user believes they stopped
+    # the scan.
+    rc=0
+    st_run_bounded "$tmo" "$out" "$err" -- "$@" || rc=$?
     end=$SECONDS
 
     STAGE_RC[$name]=$rc
@@ -223,7 +283,7 @@ stage_write() {
 # cannot leak into the next stage.
 stage_run() {
     local name="$1" label="$2" fn="$3"
-    local rc=0
+    local rc=0 started=$SECONDS
 
     _st_register "$name"
     : "${STAGE_STATUS[$name]:=pending}"
@@ -234,6 +294,13 @@ stage_run() {
 
     # Local boundary. `|| rc=$?` keeps a non-zero return from propagating anywhere.
     "$fn" || rc=$?
+
+    # Time every stage here rather than only in stage_capture(). Stages that run their own
+    # tool (binwalk, the full hexdump, triage) never went through stage_capture, so their
+    # STAGE_SECS key was simply absent and the summary's `:-0` default printed a
+    # convincing but fabricated "0" — a 70-second binwalk over a 220MB target reported as
+    # instant. An elapsed time measured at the boundary is correct for every stage.
+    STAGE_SECS["$name"]=$(( SECONDS - started ))
 
     # A stage that returned non-zero without recording why still gets a status, so the
     # report never shows a silently missing section.
@@ -283,3 +350,18 @@ st_strip_ansi() { sed -E 's/\x1b\[[0-9;?]*[a-zA-Z]//g; s/\x1b\][^\x07]*\x07//g';
 # True when the resolved format is one the dynamic stages can trace. v3 §5 step 8 gates
 # ltrace on ELF; strace inherits the same gate for the same reason.
 st_is_elf() { [[ $RUN_FORMAT == elf ]]; }
+
+# stage_kill_child — terminate the tool stage_capture() is currently waiting on.
+# Called by the entry script's SIGINT/SIGTERM handler. `timeout` forwards the signal to
+# the process it manages, so the tool itself goes down with it.
+stage_kill_child() {
+    [[ -n $ST_CHILD_PID ]] || return 0
+    kill -TERM "$ST_CHILD_PID" 2>/dev/null
+    local waited=0
+    while kill -0 "$ST_CHILD_PID" 2>/dev/null && [[ $waited -lt 20 ]]; do
+        sleep 0.1; waited=$(( waited + 1 ))
+    done
+    kill -KILL "$ST_CHILD_PID" 2>/dev/null
+    ST_CHILD_PID=""
+    return 0
+}

@@ -295,3 +295,49 @@ v4 §10 — treat them the same way once M5 can measure them.
   member listing, not per-member analysis.
 - **`_triage_unwrap_pyinstaller` needs `pyinstxtractor`**, which is not packaged. It fails
   cleanly with an install hint today; `install.sh` should vendor it in M6.
+
+---
+
+## QA review (pre-M3)
+
+**Status:** 16 defects found by adversarial testing against a live build, all fixed.
+Harness: 95 -> **122 checks, all green**, with a new `qa` section pinning every finding.
+Full write-up in `QA-REVIEW.md`.
+
+The three that mattered most, and what they teach:
+
+- **A config value could abort the shell inside a stage** (`full_hexdump = on`). Ten config
+  booleans are consumed in `-eq` tests — arithmetic context — where `set -u` treats a
+  non-numeric word as a variable name and exits outright. `stage_run`'s boundary cannot
+  catch that, so the isolate-and-continue guarantee was silently void. *Lesson: `set -u`
+  plus arithmetic context is the one place a "safe" Bash idiom can still kill the process.
+  Every externally-supplied value is now coerced before it can reach one.*
+
+- **Stage timings were fabricated.** `STAGE_SECS` was written only by `stage_capture`, so
+  every stage running its own tool reported `0s` — a 72-second binwalk looked instant,
+  hidden behind a `${…:-0}` default. *Lesson: a default that makes a missing value look
+  plausible is worse than one that makes it look broken. Timing moved to `stage_run`, the
+  boundary every stage passes through.*
+
+- **Ctrl+C was ignored for 77 seconds and orphaned the tool.** Bash defers a trap until the
+  foreground command finishes. Every tool now launches through `st_run_bounded`, which
+  backgrounds it and `wait`s (interruptible), recording the PID so the handler can kill it.
+  *This is load-bearing for M3: ltrace and strace execute the challenge binary, and an
+  orphan there is untrusted code still running after the user thinks they stopped.*
+
+### Known limitation, documented rather than fixed
+
+`SIGINT` cannot be trapped when revctf is backgrounded from a **non-interactive** shell.
+POSIX requires the shell to set SIGINT to ignored for such jobs (`SigIgn: …6` in
+`/proc/<pid>/status`), and bash will not install a trap for a signal ignored on entry. Not
+fixable from inside bash. `SIGTERM` is trapped and takes the identical path; `--help` says
+so. Interactive Ctrl+C is unaffected.
+
+### Carried into M3 as design constraints
+
+- Bound the flag-scan regex cost — `--flag-format` is validated for syntax but not for
+  catastrophic backtracking over a multi-megabyte capture.
+- Decide whether `--sandbox` should cover `strace`. v5 scopes it to `ltrace`, but `strace`
+  executes the challenge binary just as directly; the design predates the stage.
+- Stages have time bounds but no output-size bounds. A long-but-not-timed-out stage can
+  still fill the disk.

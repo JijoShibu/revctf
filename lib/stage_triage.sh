@@ -22,6 +22,10 @@
 
 TRIAGE_MAX_DEPTH="${TRIAGE_MAX_DEPTH:-2}"
 
+# Largest total uncompressed size revctf will extract from one container, in KB.
+# Default 2GB — comfortably above a real firmware image, well below a bomb.
+TRIAGE_MAX_EXPAND_KB="${TRIAGE_MAX_EXPAND_KB:-2097152}"
+
 # Read by lib/report.sh and the orchestrator; shellcheck cannot see across sourced files.
 # shellcheck disable=SC2034
 declare -g TRIAGE_UNWRAPPED=0        # 1 when RUN_TARGET != RUN_ORIGINAL
@@ -35,15 +39,28 @@ declare -ga TRIAGE_MEMBERS=()        # extracted members worth analysing separat
 # (a .jar is "Zip archive data" to older file(1); a .NET assembly is just "PE32+").
 _triage_classify() {
     local t="$1" desc magic
-    desc=$(file -b "$t" 2>/dev/null)
+    # Every probe here is bounded. v6 §7.4 bounds each analysis stage, but Stage 0 ran
+    # entirely unbounded, so a malformed container or a huge target could wedge the
+    # pre-stage with nothing to stop it (the RSS watchdog is not until M9).
+    desc=$(timeout -k 2 "$ST_T_LIGHT" file -b "$t" 2>/dev/null)
 
     # First four bytes, as hex, for the cases `file` does not disambiguate.
-    magic=$(head -c 4 "$t" 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    magic=$(head -c 4 -- "$t" 2>/dev/null | od -An -tx1 | tr -d ' \n')
 
     case "$magic" in
-        cafebabe)  printf 'java';  return 0 ;;   # raw .class
-        7f454c46)  # ELF — but a Go/Rust binary is still ELF, so no further branching
+        7f454c46)  # ELF — a Go or Rust binary is still ELF, so no further branching.
                    printf 'elf';   return 0 ;;
+        cafebabe)
+            # 0xCAFEBABE is BOTH a Java .class and a Mach-O universal (fat) binary. Java
+            # wins only when file(1) does not say otherwise; deciding on the magic alone
+            # sent every fat Mach-O down the Java decompiler path.
+            case "$desc" in
+                *"Mach-O"*) printf 'macho' ;;
+                *)          printf 'java'  ;;
+            esac
+            return 0 ;;
+        cafed00d|bebafeca|cffaedfe|feedface|feedfacf)
+            printf 'macho'; return 0 ;;
     esac
 
     case "$desc" in
@@ -67,24 +84,50 @@ _triage_classify() {
 # `rabin2 -I` reports it, which is cheaper and more reliable than parsing headers here.
 _triage_is_dotnet() {
     local t="$1"
-    rabin2 -I "$t" 2>/dev/null | grep -qiE '^(lang|bintype).*(cil|dotnet|\.net)' && return 0
-    strings -a "$t" 2>/dev/null | grep -qm1 '_CorExeMain\|mscoree.dll' && return 0
+    timeout -k 2 "$ST_T_LIGHT" rabin2 -I "$t" 2>/dev/null \
+        | grep -qiE '^(lang|bintype).*(cil|dotnet|\.net)' && return 0
+    # Bounded: an unbounded `strings` over a large target was one of Stage 0's stalls.
+    timeout -k 2 "$ST_T_LIGHT" strings -a "$t" 2>/dev/null \
+        | grep -qm1 '_CorExeMain\|mscoree\.dll' && return 0
     return 1
 }
 
 _triage_zip_has_classes() {
     command -v 7z >/dev/null 2>&1 || return 1
-    7z l -ba "$1" 2>/dev/null | grep -qm1 '\.class$'
+    timeout -k 2 "$ST_T_LIGHT" 7z l -ba "$1" 2>/dev/null | grep -qm1 '\.class$'
 }
 
 # ======================================================================================
 # Packer detection
 # ======================================================================================
+# _triage_packer <target> <format>
+#
+# Two rules learned the hard way:
+#
+#  1. Never run this on a container. A tar or zip holding a UPX-packed member contains the
+#     `UPX!` bytes verbatim, so a whole-file grep declared the *archive* packed, aborted
+#     extraction, and told the user their plain tar was an unreadable packed binary.
+#
+#  2. Never grep the whole file even for a non-container. UPX's marker lives in the stub at
+#     the very start and in the trailer at the very end; a match in the middle is somebody
+#     else's data. Scanning only the two ends is both correct and far cheaper on a 220MB
+#     target.
 _triage_packer() {
-    local t="$1"
-    if upx -t "$t" >/dev/null 2>&1; then printf 'upx'; return 0; fi
-    # `upx -t` fails on a packed-but-corrupt image too, so fall back to the stub marker.
-    if grep -qa 'UPX!' "$t" 2>/dev/null; then printf 'upx'; return 0; fi
+    local t="$1" fmt="${2:-other}"
+
+    case "$fmt" in
+        archive|java|pyc) printf ''; return 1 ;;
+    esac
+
+    if timeout -k 5 "$ST_T_UNWRAP" upx -t "$t" >/dev/null 2>&1; then
+        printf 'upx'; return 0
+    fi
+    # `upx -t` also fails on a packed-but-corrupt image, so fall back to the stub marker —
+    # but only in the first and last 4KB.
+    if head -c 4096 -- "$t" 2>/dev/null | grep -qa 'UPX!' ||
+       tail -c 4096 -- "$t" 2>/dev/null | grep -qa 'UPX!'; then
+        printf 'upx'; return 0
+    fi
     printf ''
     return 1
 }
@@ -111,7 +154,10 @@ _triage_unwrap_upx() {
         # upx prints a listing table before the real message, so pick the diagnostic
         # line rather than flattening the whole thing into one unreadable blob.
         local msg
-        msg=$(grep -aoiEm1 '(exception|error)[^\n]*' <<< "$err" | head -c 120)
+        # `[^\n]` in a POSIX ERE means "not backslash, not the letter n" — not "not
+        # newline" — so the old pattern truncated at the first `n`. grep is already
+        # line-oriented, so matching the whole line is both simpler and correct.
+        msg=$(grep -aiEm1 '(exception|error)' <<< "$err" | head -c 160)
         [[ -z $msg ]] && msg=$(grep -av '^[[:space:]]*$' <<< "$err" | tail -1 | head -c 120)
         TRIAGE_FAIL_REASON="upx -d exited $rc — ${msg:-no diagnostic output}"
         rm -f "$copy"
@@ -129,6 +175,28 @@ _triage_unwrap_archive() {
 
     local dir="$RUN_WORKDIR/extracted"
     mkdir -p "$dir" || { TRIAGE_FAIL_REASON="could not create the extraction directory"; return 1; }
+
+    # Decompression-bomb guard. A 1MB zip expanding to 1GB is a standard CTF trick and was
+    # extracted here unbounded: measured, a 1,043,752-byte input wrote 1,048,584 KB into
+    # the work directory with no check of either the expansion or the free space.
+    #
+    # 7z reports the uncompressed total in its listing, so the cost is known before a byte
+    # is written. Two bounds apply: an absolute cap, and available disk with headroom.
+    local declared_kb avail_kb
+    declared_kb=$(timeout -k 2 "$ST_T_LIGHT" 7z l -ba -slt -- "$RUN_TARGET" 2>/dev/null \
+        | awk -F' = ' '/^Size = [0-9]+$/ { total += $2 } END { printf "%d", total/1024 }')
+    [[ $declared_kb =~ ^[0-9]+$ ]] || declared_kb=0
+
+    if [[ $declared_kb -gt $TRIAGE_MAX_EXPAND_KB ]]; then
+        TRIAGE_FAIL_REASON="container expands to $(( declared_kb / 1024 ))MB, over the $(( TRIAGE_MAX_EXPAND_KB / 1024 ))MB limit (raise TRIAGE_MAX_EXPAND_KB to override)"
+        return 1
+    fi
+
+    avail_kb=$(df -Pk "$RUN_WORKDIR" 2>/dev/null | awk 'NR==2 {print $4}')
+    if [[ $avail_kb =~ ^[0-9]+$ ]] && [[ $declared_kb -gt $(( avail_kb / 2 )) ]]; then
+        TRIAGE_FAIL_REASON="container expands to $(( declared_kb / 1024 ))MB but only $(( avail_kb / 1024 ))MB is free on $(dirname "$RUN_WORKDIR")"
+        return 1
+    fi
 
     if ! timeout -k 5 "$ST_T_UNWRAP" 7z x -y -o"$dir" -- "$RUN_TARGET" >/dev/null 2>&1; then
         TRIAGE_FAIL_REASON="7z could not extract this container"
@@ -160,13 +228,14 @@ _triage_unwrap_pyinstaller() {
 
     # PyInstaller archives are readable by python's own tooling when pyinstxtractor is
     # unavailable, but extraction quality differs enough that the dedicated tool wins.
-    if command -v pyinstxtractor >/dev/null 2>&1; then
-        ( cd "$dir" && timeout -k 5 "$ST_T_UNWRAP" pyinstxtractor "$RUN_TARGET" >/dev/null 2>&1 )
-    elif python3 -c 'import PyInstaller' >/dev/null 2>&1; then
+    if ! command -v pyinstxtractor >/dev/null 2>&1; then
         TRIAGE_FAIL_REASON="pyinstxtractor is not installed"
         return 1
-    else
-        TRIAGE_FAIL_REASON="pyinstxtractor is not installed"
+    fi
+    local rc=0
+    ( cd "$dir" && timeout -k 5 "$ST_T_UNWRAP" pyinstxtractor "$RUN_TARGET" >/dev/null 2>&1 ) || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        TRIAGE_FAIL_REASON="pyinstxtractor exited $rc"
         return 1
     fi
 
@@ -182,8 +251,11 @@ _triage_unwrap_pyinstaller() {
     return 0
 }
 
+# PyInstaller's marker lives in the bootloader's trailing archive, so the tail is where to
+# look. Bounded, and restricted to the last 1MB so a passing mention of "PyInstaller"
+# elsewhere in a large binary does not reroute the whole pipeline.
 _triage_is_pyinstaller() {
-    grep -qam1 'pyi-\|PyInstaller\|MEIPASS' "$1" 2>/dev/null
+    tail -c 1048576 -- "$1" 2>/dev/null | grep -qam1 'MEI\|pyi-bootloader\|_MEIPASS'
 }
 
 # ======================================================================================
@@ -222,7 +294,7 @@ stage_triage() {
     fi
 
     # --- packers first: a packed archive is still packed ---
-    packer=$(_triage_packer "$RUN_ORIGINAL")
+    packer=$(_triage_packer "$RUN_ORIGINAL" "$RUN_FORMAT")
     if [[ -n $packer ]]; then
         printf 'Packer       : %s detected\n' "$packer" >> "$out"
         if _triage_unwrap_upx; then
@@ -270,24 +342,34 @@ stage_triage() {
                 return 0
             fi
             ;;
-        pe|dotnet)
+        pe|dotnet|elf)
             if _triage_is_pyinstaller "$RUN_ORIGINAL"; then
-                RUN_FORMAT="pyinstaller"
-                printf 'Detected     : PyInstaller bundle\n' >> "$out"
+                printf 'Detected     : PyInstaller bundle (%s host)\n' "$RUN_FORMAT" >> "$out"
                 if _triage_unwrap_pyinstaller; then
-                    printf 'Unwrap       : recovered %d bytecode file(s)\n' "${#TRIAGE_MEMBERS[@]}" >> "$out"
+                    # Only now is the target really "a PyInstaller bundle" as far as
+                    # routing is concerned. Reclassifying *before* the unwrap meant that a
+                    # failed extraction — the normal case, since pyinstxtractor is not
+                    # packaged anywhere — left RUN_FORMAT=pyinstaller, which silently made
+                    # checksec, objdump and (in M3) ltrace/strace skip a perfectly good
+                    # native binary, while the stage still reported "ok".
+                    RUN_FORMAT="pyinstaller"
+                    printf 'Unwrap       : recovered %d bytecode file(s)\n' \
+                        "${#TRIAGE_MEMBERS[@]}" >> "$out"
                 else
-                    printf 'Unwrap       : FAILED — %s\n' "$TRIAGE_FAIL_REASON" >> "$out"
+                    {
+                        printf 'Unwrap       : FAILED — %s\n' "$TRIAGE_FAIL_REASON"
+                        printf '\n'
+                        printf 'This looks like a PyInstaller bundle but its Python payload\n'
+                        printf 'could not be extracted, so the sections below analyse the\n'
+                        printf 'bootloader rather than the program logic. Install\n'
+                        printf 'pyinstxtractor and re-run to see the real code.\n'
+                    } >> "$out"
+                    # Keep the native format so the native stages still run on the host.
+                    stage_write "$name" failed
+                    stage_set_status "$name" failed \
+                        "PyInstaller payload not extracted: $TRIAGE_FAIL_REASON"
+                    return 0
                 fi
-            fi
-            ;;
-        elf)
-            if _triage_is_pyinstaller "$RUN_ORIGINAL"; then
-                RUN_FORMAT="pyinstaller"
-                printf 'Detected     : PyInstaller bundle (ELF host)\n' >> "$out"
-                _triage_unwrap_pyinstaller \
-                    && printf 'Unwrap       : recovered %d bytecode file(s)\n' "${#TRIAGE_MEMBERS[@]}" >> "$out" \
-                    || printf 'Unwrap       : FAILED — %s\n' "$TRIAGE_FAIL_REASON" >> "$out"
             fi
             ;;
     esac

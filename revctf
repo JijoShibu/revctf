@@ -71,6 +71,16 @@ CONFIG_ALLOWED="output_dir timeout flag_scan flag_format full_hexdump skip_ltrac
 skip_ghidra no_unwrap unwrap_depth light_decompile force_full_decompile ghidra_script \
 jobs_light jobs_ghidra maxmem_ghidra auto_swap sandbox tui stages_disabled"
 
+# Of those, which are booleans and which are integers. Both groups are consumed in `-eq`
+# tests, which is arithmetic context — and under `set -u` a non-numeric word there is
+# evaluated as a variable name and aborts the shell outright. A config line as ordinary as
+# `tui = yes` would therefore kill the run, and `full_hexdump = on` would kill it *inside a
+# stage*, where `set -e`-free isolate-and-continue cannot save it. So every value from a
+# config file is coerced or rejected before it can reach an arithmetic test.
+CONFIG_BOOL_KEYS="flag_scan full_hexdump skip_ltrace skip_ghidra no_unwrap \
+light_decompile force_full_decompile auto_swap sandbox tui"
+CONFIG_INT_KEYS="timeout unwrap_depth jobs_light jobs_ghidra"
+
 CONFIG_PATH="$REVCTF_HOME/config"
 SUBCOMMAND=""
 TARGET=""
@@ -141,6 +151,17 @@ DIAGNOSTICS
     --debug               Full command trace to <output>/<name>.debug.log
     -h, --help            Show this help
         --version         Show version
+
+EXIT STATUS
+    0   scan completed, every stage succeeded
+    2   scan completed, but one or more stages failed (see the report)
+    1   the scan could not run: bad arguments, missing tools, unwritable output
+    130 interrupted (Ctrl+C); 143 on SIGTERM, 129 on SIGHUP
+
+  NOTE  When revctf is backgrounded from a script (revctf scan x &), POSIX
+        requires the shell to make it ignore SIGINT, so Ctrl+C-style aborts
+        cannot be trapped there. Send SIGTERM instead. Interactive Ctrl+C
+        works normally.
 
 EXAMPLES
     revctf scan ./crackme
@@ -284,6 +305,35 @@ load_config() {
 
         # Config loses to an explicit CLI flag.
         [[ -n ${CLI_SET[$key]:-} ]] && continue
+
+        # Coerce/validate before the value can reach an arithmetic test.
+        if [[ " $CONFIG_BOOL_KEYS " == *" $key "* ]]; then
+            case "${value,,}" in
+                1|yes|true|on|enabled)   value=1 ;;
+                0|no|false|off|disabled) value=0 ;;
+                *)  warn "$CONFIG_PATH:$lineno: '$key' expects a yes/no value (got '$value'); using the default"
+                    continue ;;
+            esac
+        elif [[ " $CONFIG_INT_KEYS " == *" $key "* ]]; then
+            if ! is_uint "$value"; then
+                warn "$CONFIG_PATH:$lineno: '$key' expects a whole number (got '$value'); using the default"
+                continue
+            fi
+        elif [[ $key == output_dir || $key == ghidra_script ]]; then
+            # README documents `output_dir = ~/ctf/reports`. A config file is read, not
+            # sourced, so `~` would otherwise be taken literally and create a directory
+            # actually named "~".
+            # The config file is read, not sourced, so this is the only place `~` gets
+            # expanded. Compared character-wise to keep a literal tilde out of a path
+            # context. README documents `output_dir = ~/ctf/reports`, which would
+            # otherwise create a directory actually named "~".
+            if [[ ${value:0:1} == '~' ]]; then
+                if [[ ${#value} -eq 1 || ${value:1:1} == '/' ]]; then
+                    value="$HOME${value:1}"
+                fi
+            fi
+        fi
+
         OPT["$key"]="$value"
     done < "$CONFIG_PATH"
 }
@@ -295,6 +345,28 @@ validate_opts() {
     [[ -n $TARGET ]] || die "no target given — usage: revctf scan <file|dir>"
     [[ -e $TARGET ]] || die "target not found: $TARGET"
     [[ -r $TARGET ]] || die "target not readable: $TARGET"
+
+    # Reject anything that is not a regular file or a directory. A FIFO blocks forever on
+    # the first read, and a character device like /dev/zero or /dev/urandom is an infinite
+    # stream — either wedges the pipeline until an internal timeout fires, after having
+    # written an unbounded capture to disk. Neither is ever a real CTF target.
+    if [[ ! -f $TARGET && ! -d $TARGET ]]; then
+        local kind="special file"
+        [[ -p $TARGET ]] && kind="named pipe (FIFO)"
+        [[ -c $TARGET ]] && kind="character device"
+        [[ -b $TARGET ]] && kind="block device"
+        [[ -S $TARGET ]] && kind="socket"
+        die "target is a $kind, not a regular file: $TARGET"
+    fi
+
+    # A boolean that is not 0/1 would abort the shell the moment it reaches an `-eq` test,
+    # which under `set -u` cannot be caught by the stage error boundary. Config values are
+    # already coerced in load_config(); this is the belt-and-braces check.
+    local b
+    for b in $CONFIG_BOOL_KEYS interactive assume_yes summary_only dry_run verbose debug; do
+        [[ ${OPT[$b]} == 0 || ${OPT[$b]} == 1 ]] \
+            || die "internal: option '$b' has a non-boolean value '${OPT[$b]}'"
+    done
 
     if ! is_uint "${OPT[timeout]}" || [[ ${OPT[timeout]} -eq 0 ]]; then
         die "--timeout must be a positive integer (got '${OPT[timeout]}')"
@@ -360,7 +432,7 @@ cmd_scan() {
     fi
 
     # --- M1: preflight -----------------------------------------------------------
-    # shellcheck source=lib/preflight.sh
+    # shellcheck source=/dev/null
     source "$REVCTF_LIB/preflight.sh" || die "cannot load $REVCTF_LIB/preflight.sh"
 
     local out_hint="${OPT[output_dir]:-.}"
@@ -390,6 +462,36 @@ cmd_scan() {
     scan_one_file "$TARGET"
 }
 
+# _abort_run <signal-name> — abort handler for INT, TERM and HUP.
+#
+# Exits 128+N for the signal received, the shell convention (130 for INT, 143 for TERM,
+# 129 for HUP), so a supervisor can tell how the run was stopped.
+#
+# HUP is trapped because without it a dropped SSH session or a closed terminal killed the
+# scan outright: no cleanup, work directory stranded, and on M3+ the traced challenge
+# binary left running.
+#
+# KNOWN LIMIT — SIGINT cannot be caught when revctf is started as a background job from a
+# NON-INTERACTIVE shell (`revctf scan x &` inside a script or CI runner). POSIX requires
+# the shell to set SIGINT and SIGQUIT to ignored for such jobs, and bash will not install a
+# trap for a signal that was ignored on entry; the process shows `SigIgn: …6` in
+# /proc/<pid>/status. This is not fixable from inside bash. Use SIGTERM to stop a
+# backgrounded revctf — it is trapped and behaves identically. Interactive Ctrl+C is
+# unaffected, because the terminal delivers SIGINT to the foreground process group.
+_abort_run() {
+    local sig="${1:-INT}" num=2
+    case "$sig" in INT) num=2 ;; TERM) num=15 ;; HUP) num=1 ;; esac
+    trap - INT TERM HUP EXIT
+    printf '\nrevctf: %s received — cleaning up\n' "SIG$sig" >&2
+    # Kill the tool the current stage is waiting on, by its recorded PID. Signalling the
+    # process group (`kill -- -$$`) was the obvious alternative and is wrong here: revctf
+    # is only a process-group leader when a job-control shell made it one, so from a script
+    # or a CI runner `-$$` names either nothing or, worse, somebody else's group.
+    stage_kill_child
+    stage_end_file
+    exit $(( 128 + num ))
+}
+
 # resolve_output_dir <target> — ./revctf-reports/<basename>-<timestamp>/ unless --output
 # was given (v6 §8).
 resolve_output_dir() {
@@ -410,11 +512,24 @@ scan_one_file() {
     outdir="$(resolve_output_dir "$target")"
 
     stage_begin_file "$target" "$outdir" || {
-        die "could not create the working or output directory for $target"; }
+        die "could not prepare the working or output directory for $target"; }
 
-    # Minimal cleanup for M2. Full SIGINT abort semantics come in M9 (v5 §4.5); this is
-    # enough that an interrupted run does not strand a temp directory.
-    trap 'stage_end_file; exit 130' INT TERM
+    # Cleanup. Full SIGINT abort semantics come in M9 (v5 §4.5); this is the minimum that
+    # leaves nothing behind.
+    #
+    # EXIT matters as much as INT/TERM: without it, any path that ends the shell without
+    # reaching stage_end_file — a `die`, or a `set -u` abort inside a stage — strands the
+    # work directory. That was observed leaking a directory per crash.
+    #
+    # The INT handler also kills the whole process group before exiting. `stage_capture`
+    # runs its tool as a child, and a bare `exit` left it running: a Ctrl+C during a
+    # `strings` over a large target left orphaned processes behind. This matters more from
+    # M3 on, where ltrace and strace *execute the challenge binary* — an orphan there is a
+    # piece of untrusted code still running after the user thinks they stopped it.
+    trap 'stage_end_file' EXIT
+    trap '_abort_run INT'  INT
+    trap '_abort_run TERM' TERM
+    trap '_abort_run HUP'  HUP
 
     stage_run triage   "classifying and unwrapping the target" stage_triage
     stage_run file     "identifying the file type"             stage_file
@@ -427,8 +542,23 @@ scan_one_file() {
     # --- M3 stages and M4 report assembly land here -------------------------------
     m2_interim_summary
 
-    trap - INT TERM
+    # Exit status distinguishes "ran, all stages fine" from "ran, some stages failed".
+    # Both are successful runs under v5 §4.1's isolate-and-continue rule, but a script or
+    # CI job driving revctf had no way to tell them apart — every scan exited 0 even when
+    # every stage had failed. Hard errors (bad arguments, missing tools, unwritable output)
+    # keep exit 1; a completed scan with at least one failed stage now exits 2.
+    local s failed=0
+    for s in "${STAGE_ORDER[@]}"; do
+        [[ ${STAGE_STATUS[$s]:-} == failed ]] && failed=$(( failed + 1 ))
+    done
+
+    trap - INT TERM HUP EXIT
     stage_end_file
+
+    if [[ $failed -gt 0 ]]; then
+        printf 'revctf: completed with %d stage(s) failed\n' "$failed" >&2
+        return 2
+    fi
     return 0
 }
 

@@ -19,10 +19,14 @@ stage_hexdump() {
                 "--full-hexdump needs about ${need_mb}MB but only ${PF_DISK_FREE_MB}MB is free"
             return 0
         fi
-        printf '=== Full hex dump (%s) ===\n' "$(st_human_size "$size")" > "$out"
-        local rc=0
-        timeout -k 5 "$ST_T_LIGHT" hexdump -C -- "$RUN_TARGET" \
-            >> "$out" 2>"$(stage_err_path "$name")" || rc=$?
+        local rc=0 tmp="$RUN_WORKDIR/hexdump.full"
+        st_run_bounded "$ST_T_LIGHT" "$tmp" "$(stage_err_path "$name")" \
+            -- hexdump -C -- "$RUN_TARGET" || rc=$?
+        {
+            printf '=== Full hex dump (%s) ===\n' "$(st_human_size "$size")"
+            cat "$tmp" 2>/dev/null
+        } > "$out"
+        rm -f "$tmp"
         stage_record_exec "$name" "hexdump -C $RUN_TARGET" "$rc"
         if [[ $rc -eq 0 ]]; then
             stage_write "$name" ok

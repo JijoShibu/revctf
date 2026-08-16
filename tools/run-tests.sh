@@ -524,6 +524,225 @@ test_m2() {
     fi
 }
 
+# Regression guards for the QA review. Every check here corresponds to a defect that was
+# reproduced against a real build — they exist so none of them can come back.
+test_qa() {
+    section "QA regressions"
+
+    if ! have_corpus; then
+        skip "QA regressions" "run ./tools/build-test-corpus.sh first"; return
+    fi
+
+    local o="$FIXTURES/qa"; rm -rf "$o"; mkdir -p "$o"
+    local cfg="$o/cfg" out
+
+    # --- QA-1 (critical): a config boolean written as a word aborted the shell under
+    # `set -u`. `full_hexdump = on` did it from INSIDE a stage, where isolate-and-continue
+    # cannot catch it, and stranded the work directory.
+    printf 'tui = yes\n' > "$cfg"
+    assert_exit "config boolean 'yes' is accepted, not fatal" 0 \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --config "$cfg" --output "$o/c1"
+    printf 'full_hexdump = on\n' > "$cfg"
+    assert_exit "config boolean 'on' does not kill a stage" 0 \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --config "$cfg" --output "$o/c2"
+    printf 'tui = banana\n' > "$cfg"
+    assert_match "an invalid boolean warns and falls back" 'expects a yes/no value' \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --config "$cfg" --output "$o/c3"
+    printf 'timeout = soon\n' > "$cfg"
+    assert_match "an invalid integer warns and falls back" 'expects a whole number' \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --config "$cfg" --output "$o/c4"
+
+    # --- QA-2: no work directory may survive any exit path (there was no EXIT trap).
+    rm -rf /tmp/revctf-work.* 2>/dev/null
+    printf 'tui = banana\n' > "$cfg"
+    "$RC" scan "$CORPUS/crackme" --skip-ghidra --config "$cfg" --output "$o/c5" >/dev/null 2>&1
+    if [[ $(find /tmp -maxdepth 1 -name 'revctf-work.*' 2>/dev/null | wc -l) -eq 0 ]]; then
+        ok "no work directory is stranded on exit"
+    else
+        no "work dir leak" "revctf-work.* survived the run"
+        rm -rf /tmp/revctf-work.* 2>/dev/null
+    fi
+
+    # --- QA-3 (high): a container holding a UPX-packed member was itself declared packed,
+    # which aborted extraction and reported a plain tar as an unreadable packed binary.
+    tar cf "$o/container.tar" -C "$CORPUS" packed_upx planted_flag 2>/dev/null
+    out=$("$RC" scan "$o/container.tar" --skip-ghidra --output "$o/tar" 2>&1)
+    if grep -qE '^triage +ok' <<< "$out"; then
+        ok "a tar containing a UPX member is not mistaken for a packed binary"
+    else
+        no "UPX over-detection" "$(grep -m1 '^triage' <<< "$out")"
+    fi
+    if grep -q 'Routing' "$o/tar/triage.txt" 2>/dev/null; then
+        ok "the triage Routing section is still written for a container"
+    else
+        no "missing Routing section" "triage.txt has no Routing block"
+    fi
+
+    # --- QA-4 (medium): Mach-O universal binaries share magic 0xCAFEBABE with Java
+    # .class, and were being routed to the Java decompiler.
+    python3 -c "
+import struct
+d = struct.pack('>II', 0xCAFEBABE, 1) + struct.pack('>IIIII', 7, 3, 4096, 4096, 12) + b'\0'*4096
+open('$o/fat.macho','wb').write(d)" 2>/dev/null
+    assert_match "Mach-O universal is not misclassified as Java" 'format: macho' \
+        "$RC" scan "$o/fat.macho" --skip-ghidra --output "$o/macho"
+
+    # --- QA-5 (high): STAGE_SECS was only written by stage_capture, so every other stage
+    # reported a fabricated 0 — a 71-second binwalk showed as instant.
+    if [[ -f $CORPUS/large_blob.bin ]]; then
+        out=$("$RC" scan "$CORPUS/large_blob.bin" --skip-ghidra --output "$o/secs" 2>&1)
+        local bw
+        bw=$(grep -E '^binwalk ' <<< "$out" | awk '{print $3}')
+        if [[ ${bw:-0} -gt 0 ]]; then
+            ok "stage timing is real, not fabricated (binwalk reported ${bw}s)"
+        else
+            no "fabricated timing" "binwalk on a 220MB target reported ${bw}s"
+        fi
+    else
+        skip "timing check" "large_blob.bin missing"
+    fi
+
+    # --- QA-6 (medium): captures are 0600, per v4 §5. They were inheriting umask (0644).
+    rm -rf "$o/perm"
+    "$RC" scan "$CORPUS/crackme" --skip-ghidra --output "$o/perm" >/dev/null 2>&1
+    if [[ $(stat -c '%a' "$o/perm/strings.txt" 2>/dev/null) == 600 ]]; then
+        ok "capture files are 0600"
+    else
+        no "capture permissions" "got $(stat -c '%a' "$o/perm/strings.txt" 2>/dev/null), want 600"
+    fi
+    if [[ $(stat -c '%a' "$o/perm" 2>/dev/null) == 700 ]]; then
+        ok "a created output directory is 0700"
+    else
+        no "output dir permissions" "got $(stat -c '%a' "$o/perm" 2>/dev/null), want 700"
+    fi
+
+    # --- QA-7 (medium): revctf silently chmodded a pre-existing --output directory to 700,
+    # which would lock other users out of a shared or published location.
+    rm -rf "$o/pre"; mkdir -p "$o/pre"; chmod 755 "$o/pre"
+    "$RC" scan "$CORPUS/crackme" --skip-ghidra --output "$o/pre" >/dev/null 2>&1
+    if [[ $(stat -c '%a' "$o/pre") == 755 ]]; then
+        ok "a pre-existing output directory keeps its mode"
+    else
+        no "output dir mode changed" "revctf altered a directory it did not create"
+    fi
+
+    # --- QA-8 (high): FIFOs and character devices were accepted, then blocked or streamed
+    # forever. /dev/zero wedged a scan for the full 300s strings timeout.
+    local fifo="$o/fifo"; mkfifo "$fifo" 2>/dev/null
+    assert_exit  "a FIFO target is rejected"             1 "$RC" scan "$fifo" --skip-ghidra
+    assert_match "the FIFO rejection says what it is"    'named pipe' "$RC" scan "$fifo" --skip-ghidra
+    assert_exit  "a character device is rejected"        1 "$RC" scan /dev/zero --skip-ghidra
+    assert_match "the device rejection says what it is"  'character device' "$RC" scan /dev/zero --skip-ghidra
+
+    # --- QA-9 (high): archive extraction was unbounded. A 1MB zip wrote 1GB into the work
+    # directory with no check of expansion or free space.
+    python3 -c "
+import zipfile
+z = zipfile.ZipFile('$o/bomb.zip','w',zipfile.ZIP_DEFLATED,compresslevel=9)
+z.writestr('big', b'\0'*(3*1024*1024*1024))
+z.close()" 2>/dev/null
+    if [[ -f $o/bomb.zip ]]; then
+        "$RC" scan "$o/bomb.zip" --skip-ghidra --output "$o/bomb" >/dev/null 2>&1
+        if grep -q 'over the .*MB limit' "$o/bomb/triage.txt" 2>/dev/null; then
+            ok "a decompression bomb is refused before extraction"
+        else
+            no "bomb guard" "3GB expansion was not refused"
+        fi
+    else
+        skip "decompression bomb" "could not build the fixture"
+    fi
+
+    # --- QA-10 (medium): every scan exited 0, so nothing could tell a clean run from one
+    # where every stage failed.
+    assert_exit "a clean scan exits 0" 0 \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --output "$o/x1"
+    assert_exit "a scan with a failed stage exits 2" 2 \
+        "$RC" scan "$CORPUS/packed_upx_broken" --skip-ghidra --output "$o/x2"
+    assert_exit "a usage error still exits 1" 1 "$RC" scan --nope
+
+    # --- QA-11 (medium): `output_dir = ~/reports` created a literal "~" directory.
+    printf 'output_dir = ~/revctf-qa-tilde\n' > "$cfg"
+    assert_match "a tilde in the config output_dir is expanded" "captures: $HOME/revctf-qa-tilde" \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --config "$cfg"
+    rm -rf "$HOME/revctf-qa-tilde" ./~ 2>/dev/null
+
+    # --- QA-12 (high): an abort left the running tool as an orphan, because bash defers
+    # a trap until the foreground command finishes — measured at ~77s of apparent hang.
+    #
+    # SIGTERM is used rather than SIGINT: POSIX requires a non-interactive shell to make a
+    # background job ignore SIGINT, and bash then refuses to install the trap, so an
+    # INT-based test can only ever fail here. That limit is real and documented in --help;
+    # SIGTERM exercises the identical abort path and is the correct way to stop a
+    # backgrounded revctf.
+    if [[ -f $CORPUS/large_blob.bin ]]; then
+        rm -rf /tmp/revctf-work.* 2>/dev/null
+        # The signal deliberately lands during binwalk — the slowest stage on this target,
+        # and the one that used to run its tool in the foreground and swallow the signal.
+        "$RC" scan "$CORPUS/large_blob.bin" --skip-ghidra --output "$o/int" >/dev/null 2>&1 &
+        local pid=$! started=$SECONDS
+        sleep 6
+        kill -TERM "$pid" 2>/dev/null
+        sleep 2
+        # `wait` must run in THIS shell: inside $( ) it is a subshell that cannot reap the
+        # parent's child and returns -1 regardless of how the job exited.
+        local irc=0
+        wait "$pid" 2>/dev/null || irc=$?
+        local elapsed=$(( SECONDS - started ))
+        if [[ $irc -eq 143 ]]; then
+            ok "SIGTERM exits 143 (128+15)"
+        else
+            no "abort exit code" "got $irc, want 143"
+        fi
+        if [[ $elapsed -lt 20 ]]; then
+            ok "an abort is honoured promptly (${elapsed}s, was ~77s)"
+        else
+            no "abort latency" "took ${elapsed}s to stop; a stage is swallowing the signal"
+        fi
+        # shellcheck disable=SC2009
+        if [[ $(ps -eo args 2>/dev/null | grep -c '^binwalk') -eq 0 ]]; then
+            ok "an abort leaves no orphaned tool process"
+        else
+            no "orphan after abort" "a binwalk process survived"
+            pkill -KILL -f '^binwalk' 2>/dev/null
+        fi
+        if [[ $(find /tmp -maxdepth 1 -name 'revctf-work.*' 2>/dev/null | wc -l) -eq 0 ]]; then
+            ok "an abort leaves no work directory"
+        else
+            no "work dir after abort" "revctf-work.* survived"
+            rm -rf /tmp/revctf-work.* 2>/dev/null
+        fi
+
+        # SIGHUP must be trapped too: an untrapped HUP from a dropped SSH session killed
+        # the scan with no cleanup at all.
+        rm -rf /tmp/revctf-work.* 2>/dev/null
+        "$RC" scan "$CORPUS/large_blob.bin" --skip-ghidra --output "$o/hup" >/dev/null 2>&1 &
+        local hpid=$!
+        sleep 6
+        kill -HUP "$hpid" 2>/dev/null
+        sleep 2
+        local hrc=0
+        wait "$hpid" 2>/dev/null || hrc=$?
+        if [[ $hrc -eq 129 ]]; then
+            ok "SIGHUP is trapped and exits 129 (a dropped terminal cleans up)"
+        else
+            no "SIGHUP handling" "got $hrc, want 129"
+        fi
+        rm -rf /tmp/revctf-work.* 2>/dev/null
+    else
+        skip "abort tests" "large_blob.bin missing"
+    fi
+
+    # --- QA-13: hostile filenames must never reach a shell.
+    local nasty="$o/a;touch $o/PWNED;b"
+    cp "$CORPUS/crackme" "$nasty" 2>/dev/null
+    "$RC" scan "$nasty" --skip-ghidra --output "$o/nasty" >/dev/null 2>&1
+    if [[ ! -e "$o/PWNED" ]]; then
+        ok "a filename containing shell metacharacters is not executed"
+    else
+        no "command injection" "a filename was interpreted by a shell"
+    fi
+}
+
 # ======================================================================================
 # Real-Ghidra checks. Skipped entirely when no install is present, so the harness stays
 # useful on a box without one.
@@ -579,7 +798,7 @@ test_ghidra() {
 # ======================================================================================
 main() {
     local -a want=("$@")
-    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 m2 ghidra)
+    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 m2 qa ghidra)
 
     printf '\033[1mrevctf verification harness\033[0m\n'
     printf 'repo: %s\n' "$ROOT"
@@ -593,6 +812,7 @@ main() {
             m0)     test_m0     ;;
             m1)     test_m1     ;;
             m2)     test_m2     ;;
+            qa)     test_qa     ;;
             ghidra) test_ghidra ;;
             *)      printf 'unknown section: %s\n' "$s" >&2 ;;
         esac
