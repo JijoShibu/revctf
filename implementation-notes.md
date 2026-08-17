@@ -341,3 +341,59 @@ so. Interactive Ctrl+C is unaffected.
   executes the challenge binary just as directly; the design predates the stage.
 - Stages have time bounds but no output-size bounds. A long-but-not-timed-out stage can
   still fill the disk.
+
+---
+
+## Post-QA hardening (checkpoint v0.2-m2-qa)
+
+The three deferred recommendations from `QA-REVIEW.md` are now implemented; the remaining
+two are genuinely M3/M5 work and are carried below.
+
+- **Per-stage output size cap** (`ST_MAX_OUT_KB`, default 2GB). Time bounds never bounded
+  disk. Enforced with `ulimit -f` in the subshell that `exec`s the tool, so the *kernel*
+  stops the write — no polling loop, no overhead, and nothing a fast writer can outrun. A
+  stage that hits it exits 153 (128+SIGXFSZ) and is reported as truncated with its partial
+  capture kept. Set high deliberately: an explicit `--full-hexdump` is roughly 4x the input
+  and should still complete.
+
+- **`--strict`** (deviation **D8**, now in v6 §11). Stops at the first failed stage. The
+  default is untouched and remains v5 §4.1 isolate-and-continue. Implemented as a thin
+  `run_stage` wrapper rather than by threading a flag through `stage_run`, so the framework
+  contract is unchanged and M3's stages need no awareness of it.
+
+- **ReDoS excluded by construction.** `--flag-format` is user input that M3 will run across
+  megabytes of capture. Rather than trying to validate patterns for safety — which is not
+  reliably possible — the engine choice removes the failure mode: GNU `grep -E` is DFA-based
+  and has no catastrophic-backtracking path. Written as a hard constraint at the top of
+  `lib/flagscan.sh`, in CLAUDE.md §2, and enforced by a harness check that fails if any PCRE
+  flag appears in `lib/`.
+
+### Performance
+
+Profiled before changing anything. At realistic target sizes nothing is pathological: a
+15KB crackme and a 243KB PE both scan in about 2 seconds. The 220MB stress blob takes ~93s,
+of which **binwalk is 77s** — inherent to a Python signature scan over that volume, not
+something to optimise around.
+
+Applied: packer detection now runs the O(1) 4KB stub/trailer scan *before* `upx -t`, which
+reads and decompresses the entire file. Triage on the 220MB target went 2s → 0s, and the
+saving applies to every non-packed target, which is nearly all of them.
+
+**Deliberately not done: intra-file stage concurrency.** The six light stages are
+independent and running them in parallel would cut ~93s to ~77s. It was rejected because
+v3 §8 derives every memory ceiling from *N files × one tool each*; concurrency *within* a
+file invalidates that arithmetic before M5 has had a chance to measure it. Batch-level
+concurrency (M7) is where the parallelism belongs.
+
+### Still open, by milestone
+
+- **M3:** decide whether `--sandbox` covers `strace`. v5 §3 scopes it to `ltrace`, but
+  `strace` executes the challenge binary just as directly — the design predates the stage.
+- **M5:** re-measure the tier boundaries. v4 §10 already flags 3.8GB/2.5GB as estimates, and
+  the Ghidra version boundary was an estimate too, and it was wrong.
+
+### Stability
+
+Three consecutive full runs of the harness: **127 passed, 0 failed, 0 skipped** each time,
+with zero stray work directories, zero orphaned processes, and the developer's real
+`~/.revctf` untouched (the harness redirects `REVCTF_HOME` into its fixtures).

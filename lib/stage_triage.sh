@@ -119,17 +119,22 @@ _triage_packer() {
         archive|java|pyc) printf ''; return 1 ;;
     esac
 
-    if timeout -k 5 "$ST_T_UNWRAP" upx -t "$t" >/dev/null 2>&1; then
-        printf 'upx'; return 0
+    # Cheap check first. `upx -t` reads and decompresses the entire file, which costs real
+    # time on a large target and is wasted on the overwhelming majority of inputs, which are
+    # not packed at all. The 4KB stub/trailer scan is O(1) and rules most targets out
+    # immediately; only a marker hit is worth paying for a full verification.
+    if ! { head -c 4096 -- "$t" 2>/dev/null | grep -qa 'UPX!'; } &&
+       ! { tail -c 4096 -- "$t" 2>/dev/null | grep -qa 'UPX!'; }; then
+        printf ''
+        return 1
     fi
-    # `upx -t` also fails on a packed-but-corrupt image, so fall back to the stub marker —
-    # but only in the first and last 4KB.
-    if head -c 4096 -- "$t" 2>/dev/null | grep -qa 'UPX!' ||
-       tail -c 4096 -- "$t" 2>/dev/null | grep -qa 'UPX!'; then
-        printf 'upx'; return 0
-    fi
-    printf ''
-    return 1
+
+    # Marker present: confirm with upx itself. A failed verification still counts as packed
+    # (upx -t also fails on a packed-but-corrupt image), which is what the unwrap path is
+    # there to report.
+    timeout -k 5 "$ST_T_UNWRAP" upx -t "$t" >/dev/null 2>&1
+    printf 'upx'
+    return 0
 }
 
 # ======================================================================================

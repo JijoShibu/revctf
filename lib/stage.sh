@@ -70,6 +70,18 @@ ST_T_GHIDRA="${ST_T_GHIDRA:-1800}"
 # Hexdump preview cap, in bytes (v6 §8). --full-hexdump bypasses it.
 ST_HEXDUMP_PREVIEW="${ST_HEXDUMP_PREVIEW:-512}"
 
+# Largest capture a single stage may write, in KB. Default 2GB.
+#
+# Time bounds alone do not bound disk: a stage that stays under its timeout can still write
+# until the filesystem is full. `strings` over a large high-entropy target is the obvious
+# case. Enforced with `ulimit -f`, so the kernel stops the write rather than a polling
+# loop — zero overhead, and it cannot be outrun by a fast writer. A stage that hits it is
+# killed with SIGXFSZ and reported as truncated, with the partial capture kept.
+#
+# Set generously so an explicit --full-hexdump on a large target (roughly 4x the input)
+# still completes; it exists to stop runaway growth, not to second-guess the user.
+ST_MAX_OUT_KB="${ST_MAX_OUT_KB:-2097152}"
+
 # ======================================================================================
 # Per-file setup
 # ======================================================================================
@@ -171,7 +183,11 @@ st_run_bounded() {
     local tmo="$1" out="$2" err="$3"; shift 3
     [[ ${1:-} == "--" ]] && shift
     local rc=0
-    timeout -k 5 "$tmo" "$@" >"$out" 2>"$err" &
+    # `ulimit -f` takes 512-byte blocks and is inherited by the exec'd command. `exec`
+    # replaces the subshell, so ST_CHILD_PID is the timeout process itself and the existing
+    # kill path still works.
+    ( ulimit -f $(( ST_MAX_OUT_KB * 2 )) 2>/dev/null
+      exec timeout -k 5 "$tmo" "$@" >"$out" 2>"$err" ) &
     ST_CHILD_PID=$!
     wait "$ST_CHILD_PID" || rc=$?
     ST_CHILD_PID=""
@@ -213,9 +229,18 @@ stage_capture() {
     STAGE_RC[$name]=$rc
     STAGE_SECS[$name]=$(( end - start ))
 
-    if [[ $rc -eq 124 || $rc -eq 137 ]]; then
+    if [[ $rc -eq 153 ]]; then
+        # 128+25 = SIGXFSZ: the stage hit ST_MAX_OUT_KB.
+        stage_set_status "$name" failed \
+            "output exceeded $(st_human_size $(( ST_MAX_OUT_KB * 1024 ))) and was truncated (partial capture kept)"
+    elif [[ $rc -eq 124 ]]; then
         stage_set_status "$name" failed \
             "timed out after ${tmo}s (partial output kept)"
+    elif [[ $rc -eq 137 ]]; then
+        # 137 is `timeout -k`'s SIGKILL, but it is equally the OOM killer's. Say both
+        # rather than assert a timeout that may not have happened.
+        stage_set_status "$name" failed \
+            "killed after ${tmo}s — timeout escalation or out-of-memory (partial output kept)"
     elif [[ $rc -ne 0 ]]; then
         stage_set_status "$name" failed \
             "$(basename "$1") exited $rc$(_st_signal_note "$rc")"

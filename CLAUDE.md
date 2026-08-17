@@ -50,6 +50,19 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
   `RUN_WORKDIR`.
 - **Report output is plain text**, always, in every display mode. Filter coloured tool
   output through `st_strip_ansi()`.
+- **Every external tool launches through `st_run_bounded`.** It backgrounds the tool and
+  `wait`s, which is what makes a run interruptible — bash defers a trap until the current
+  foreground command finishes, so a tool run in the foreground swallows Ctrl+C for its whole
+  duration (measured: 77 seconds) and orphans the process. It also applies the per-stage
+  output size cap. Never invoke a tool directly.
+- **Never let an externally-supplied value reach an arithmetic test.** `[[ $x -eq 1 ]]` is
+  arithmetic context; under `set -u` a non-numeric word there is treated as a variable name
+  and **exits the shell**, which `stage_run`'s boundary cannot catch. Coerce and validate
+  first — this was the critical QA finding.
+- **The flag scan uses `grep -E` only.** Never `grep -P`, never a PCRE engine, never Bash
+  `=~` against a user pattern. `--flag-format` is user input run over megabytes of capture;
+  a backtracking engine makes that a self-inflicted DoS. The harness fails if any PCRE flag
+  appears in `lib/`.
 - Commits are authored as `Jijo <jijoshibuwork@gmail.com>` and made with
   `-c commit.gpgsign=false` so GitHub does not show "Unverified".
 
@@ -119,7 +132,8 @@ anywhere. Set `PF_OPT_ROOT_REAL=/opt` to point it at a real install.
 the standard; do not advance past one until its verification actually runs. Each milestone
 adds its own section to the harness so earlier gates keep being re-checked.
 
-**Milestone status:** M0, M1 and M2 complete. Next is **M3** (ltrace, strace, FLOSS,
+**Milestone status:** M0, M1, M2 and the pre-M3 QA pass complete — tagged `v0.2-m2-qa`,
+127 checks green. Next is **M3** (ltrace, strace, FLOSS,
 radare2, Ghidra, managed/Python decompilers, `lib/flagscan.sh`), then **M4** — the MVP gate:
 report assembly, TUI, and full single-file wiring. M5–M9 add RAM tiers, the Docker sandbox,
 batch mode, user agency, and resilience.
@@ -142,3 +156,10 @@ Carried in `implementation-notes.md`, repeated here because they affect design c
 - Deviation D7 (missing optional tool = hard error) is applied in two tiers: core and
   always-needed tools fail at startup, format-conditional decompilers fail lazily when a
   target routes to them. Flagged for review.
+- **`SIGINT` cannot be trapped when revctf is backgrounded from a non-interactive shell.**
+  POSIX makes such jobs ignore it and bash will not install a trap for an
+  ignored-on-entry signal. Not fixable in bash; `SIGTERM` is the documented alternative.
+  Do not "fix" this — it has already been investigated.
+- **M3 decision still open:** v5 scopes `--sandbox` to `ltrace`, but `strace` executes the
+  challenge binary just as directly. Decide whether the sandbox covers it before shipping
+  the stage.

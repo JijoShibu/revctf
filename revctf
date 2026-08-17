@@ -62,6 +62,7 @@ declare -A OPT=(
     [dry_run]=0
     [verbose]=0
     [debug]=0
+    [strict]=0                      # stop at the first failed stage (v6 §11 D8)
     [stages_disabled]=""            # comma-separated stage names (v6 §8)
 )
 declare -A CLI_SET=()
@@ -69,7 +70,7 @@ declare -A CLI_SET=()
 # Keys a config file is permitted to set (v6 §9 — allowlist validation).
 CONFIG_ALLOWED="output_dir timeout flag_scan flag_format full_hexdump skip_ltrace \
 skip_ghidra no_unwrap unwrap_depth light_decompile force_full_decompile ghidra_script \
-jobs_light jobs_ghidra maxmem_ghidra auto_swap sandbox tui stages_disabled"
+jobs_light jobs_ghidra maxmem_ghidra auto_swap sandbox tui strict stages_disabled"
 
 # Of those, which are booleans and which are integers. Both groups are consumed in `-eq`
 # tests, which is arithmetic context — and under `set -u` a non-numeric word there is
@@ -78,7 +79,7 @@ jobs_light jobs_ghidra maxmem_ghidra auto_swap sandbox tui stages_disabled"
 # stage*, where `set -e`-free isolate-and-continue cannot save it. So every value from a
 # config file is coerced or rejected before it can reach an arithmetic test.
 CONFIG_BOOL_KEYS="flag_scan full_hexdump skip_ltrace skip_ghidra no_unwrap \
-light_decompile force_full_decompile auto_swap sandbox tui"
+light_decompile force_full_decompile auto_swap sandbox tui strict"
 CONFIG_INT_KEYS="timeout unwrap_depth jobs_light jobs_ghidra"
 
 CONFIG_PATH="$REVCTF_HOME/config"
@@ -121,6 +122,8 @@ ANALYSIS DEPTH / STAGE CONTROL
     --skip-ghidra         Skip Ghidra; radare2 disassembly substitutes
     --no-unwrap           Disable the triage/unwrap pre-stage (packers, archives,
                           managed and Python artifacts)
+    --strict              Stop at the first failed stage instead of continuing.
+                          Default is to isolate a failure and carry on.
     --light-decompile     Substitute radare2 disassembly for Ghidra's decompile
     --force-full-decompile
                           Force full Ghidra decompile even on Tier C / after an OOM
@@ -154,7 +157,8 @@ DIAGNOSTICS
 
 EXIT STATUS
     0   scan completed, every stage succeeded
-    2   scan completed, but one or more stages failed (see the report)
+    2   scan completed, but one or more stages failed (see the report);
+        also returned when --strict stopped the run early
     1   the scan could not run: bad arguments, missing tools, unwritable output
     130 interrupted (Ctrl+C); 143 on SIGTERM, 129 on SIGHUP
 
@@ -224,6 +228,7 @@ parse_args() {
             --skip-ltrace)          set_opt skip_ltrace 1; shift ;;
             --skip-ghidra)          set_opt skip_ghidra 1; shift ;;
             --no-unwrap)            set_opt no_unwrap 1; shift ;;
+            --strict)               set_opt strict 1; shift ;;
             --light-decompile)      set_opt light_decompile 1; shift ;;
             --force-full-decompile) set_opt force_full_decompile 1; shift ;;
             --ghidra-script)        need_value "$1" $#; set_opt ghidra_script "$2"; shift 2 ;;
@@ -363,6 +368,10 @@ validate_opts() {
     # which under `set -u` cannot be caught by the stage error boundary. Config values are
     # already coerced in load_config(); this is the belt-and-braces check.
     local b
+    if [[ ${OPT[strict]} -eq 1 && ${OPT[interactive]} -eq 1 ]]; then
+        warn "--strict and --interactive both stop the run on a problem; --strict wins on a stage failure"
+    fi
+
     for b in $CONFIG_BOOL_KEYS interactive assume_yes summary_only dry_run verbose debug; do
         [[ ${OPT[$b]} == 0 || ${OPT[$b]} == 1 ]] \
             || die "internal: option '$b' has a non-boolean value '${OPT[$b]}'"
@@ -531,13 +540,28 @@ scan_one_file() {
     trap '_abort_run TERM' TERM
     trap '_abort_run HUP'  HUP
 
-    stage_run triage   "classifying and unwrapping the target" stage_triage
-    stage_run file     "identifying the file type"             stage_file
-    stage_run strings  "extracting printable strings"          stage_strings
-    stage_run binwalk  "scanning for embedded files"           stage_binwalk
-    stage_run hexdump  "capturing a hex view"                  stage_hexdump
-    stage_run checksec "reading mitigations and metadata"      stage_checksec
-    stage_run objdump  "cross-checking with binutils"          stage_objdump
+    # run_stage wraps stage_run with --strict handling. Default behaviour is unchanged:
+    # v5 §4.1 isolate-and-continue. --strict (v6 §11 D8) stops at the first failure, for
+    # scripted use where a partial report is worse than an early exit.
+    local aborted=0
+    run_stage() {
+        [[ $aborted -eq 1 ]] && return 0
+        stage_run "$1" "$2" "$3"
+        if [[ ${OPT[strict]} -eq 1 && ${STAGE_STATUS[$1]:-} == failed ]]; then
+            printf 'revctf: --strict: stopping after stage "%s" failed (%s)\n' \
+                "$1" "${STAGE_NOTE[$1]:-no detail}" >&2
+            aborted=1
+        fi
+        return 0
+    }
+
+    run_stage triage   "classifying and unwrapping the target" stage_triage
+    run_stage file     "identifying the file type"             stage_file
+    run_stage strings  "extracting printable strings"          stage_strings
+    run_stage binwalk  "scanning for embedded files"           stage_binwalk
+    run_stage hexdump  "capturing a hex view"                  stage_hexdump
+    run_stage checksec "reading mitigations and metadata"      stage_checksec
+    run_stage objdump  "cross-checking with binutils"          stage_objdump
 
     # --- M3 stages and M4 report assembly land here -------------------------------
     m2_interim_summary

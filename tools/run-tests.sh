@@ -732,6 +732,51 @@ z.close()" 2>/dev/null
         skip "abort tests" "large_blob.bin missing"
     fi
 
+    # --- Post-QA hardening -------------------------------------------------------------
+
+    # A per-stage output size cap: time bounds alone never bounded disk.
+    if [[ -f $CORPUS/large_blob.bin ]]; then
+        out=$(ST_MAX_OUT_KB=64 "$RC" scan "$CORPUS/large_blob.bin" --skip-ghidra \
+                --output "$o/cap" 2>&1)
+        if grep -qE '^strings +failed .*exceeded' <<< "$out"; then
+            ok "a stage exceeding the output cap is stopped and reported"
+        else
+            no "output cap" "$(grep -m1 '^strings' <<< "$out")"
+        fi
+        if [[ -s "$o/cap/strings.txt" ]]; then
+            ok "the partial capture is kept when the cap is hit"
+        else
+            no "output cap" "partial capture was discarded"
+        fi
+    else
+        skip "output cap" "large_blob.bin missing"
+    fi
+
+    # --strict stops at the first failure; the default still isolates and continues.
+    local nstrict ndefault
+    nstrict=$("$RC" scan "$CORPUS/packed_upx_broken" --skip-ghidra --strict \
+                --output "$o/st1" 2>&1 | grep -cE '^[a-z]+ +(ok|empty|failed|skipped)')
+    ndefault=$("$RC" scan "$CORPUS/packed_upx_broken" --skip-ghidra \
+                --output "$o/st2" 2>&1 | grep -cE '^[a-z]+ +(ok|empty|failed|skipped)')
+    if [[ $nstrict -lt $ndefault ]]; then
+        ok "--strict stops early ($nstrict stage vs $ndefault by default)"
+    else
+        no "--strict" "ran $nstrict stages, same as the default $ndefault"
+    fi
+    assert_exit "--strict still exits 2" 2 \
+        "$RC" scan "$CORPUS/packed_upx_broken" --skip-ghidra --strict --output "$o/st3"
+
+    # ReDoS: --flag-format takes a user regex and the scan runs it over megabytes of
+    # capture. A backtracking engine would be a self-inflicted DoS, so no PCRE may appear
+    # in lib/. Comment lines are excluded so the constraint's own documentation does not
+    # trip its own check.
+    if grep -rn --include='*.sh' -E '^[^#]*grep([[:space:]]+-[a-zA-Z]+)*[[:space:]]+-[a-zA-Z]*P' lib/ 2>/dev/null \
+       || grep -rn --include='*.sh' -E '^[^#]*--perl-regexp' lib/ 2>/dev/null; then
+        no "PCRE in lib/" "a backtracking regex engine would reintroduce a ReDoS path"
+    else
+        ok "no PCRE engine is used anywhere in lib/ (ReDoS class excluded by construction)"
+    fi
+
     # --- QA-13: hostile filenames must never reach a shell.
     local nasty="$o/a;touch $o/PWNED;b"
     cp "$CORPUS/crackme" "$nasty" 2>/dev/null
