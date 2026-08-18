@@ -11,3 +11,7 @@ tmp/
 *.tmp
 *.swp
 .DS_Store
+
+# Python bytecode (Ghidra post-scripts are run by Ghidra, never imported)
+__pycache__/
+*.py[cod]

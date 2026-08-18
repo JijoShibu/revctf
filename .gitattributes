@@ -1,0 +1,13 @@
+# revctf ships shell scripts that a Linux kernel executes via a #! line.
+# A CRLF checkout makes every one of them fail with "bad interpreter: No such
+# file or directory". Force LF in the repository AND in the working tree on
+# every platform, so a Windows clone stays runnable under WSL/Kali.
+* text=auto eol=lf
+
+# Never touch these, whatever the content sniffer thinks.
+*.png  binary
+*.jpg  binary
+*.gz   binary
+*.zip  binary
+*.pyc  binary
+*.bundle binary
