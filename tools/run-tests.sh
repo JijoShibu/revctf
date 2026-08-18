@@ -115,7 +115,15 @@ mk_masked_path() {
 }
 
 setup_fixtures() {
-    rm -rf "$FIXTURES"; mkdir -p "$FIXTURES/home"
+    rm -rf "$FIXTURES"; mkdir -p "$FIXTURES/home" "$FIXTURES/scratch"
+
+    # Run from inside the fixture tree. Several checks deliberately omit --output to
+    # exercise the default path, and that default is ./revctf-reports/<name>-<timestamp>/,
+    # relative to the CURRENT directory. Run from the repo, a full suite left 388 report
+    # directories and 19MB of litter in the working tree. $RC, $ROOT and $CORPUS are all
+    # absolute, so moving the cwd costs nothing and makes it impossible for a future check
+    # to reintroduce the mess by forgetting a flag.
+    cd "$FIXTURES/scratch" || exit 1
     # Runtime matrix. The version boundary in v3 §1 is wrong (verified against a real
     # install: 11.2.1 ships Jython and runs .py under Jython 2.7.3), so these fixtures
     # pin the corrected behaviour: probe the shipped feature dir first, version only as

@@ -1,5 +1,6 @@
 # Analysis output
 revctf-reports/
+revctf-work.*/
 *.debug.log
 
 # Local test corpus — deliberately uncommitted (execution masterplan M0)

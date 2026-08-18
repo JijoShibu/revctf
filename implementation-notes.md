@@ -487,6 +487,18 @@ Net effect on the 220MB target: >600s and 1.46GB peak → ~80s and 103MB peak, t
 memory profile M2 had. Realistic targets are unaffected — a 15KB crackme runs the full
 13-stage pipeline, Ghidra included, in about 15 seconds.
 
+### Harness defect found while packaging M3
+
+A full suite left **388 report directories and 19MB** in the working tree. Several checks
+deliberately omit `--output` to exercise the default path — and that default is
+`./revctf-reports/<name>-<timestamp>/`, relative to the *current* directory, which was the
+repo. `.gitignore` hid it from git, so it went unnoticed until the delivery tarball came
+out at 1.2MB.
+
+Fixed at the source rather than by adding `--output` to 48 call sites: `setup_fixtures`
+now `cd`s into the fixture tree. `$RC`, `$ROOT` and `$CORPUS` are all absolute, so it costs
+nothing, and a future check that forgets the flag cannot reintroduce the litter.
+
 ### Still open
 
 - **M5:** size Phase 2 from the FLOSS measurement above. The tier boundaries themselves
