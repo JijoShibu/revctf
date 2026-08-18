@@ -508,3 +508,124 @@ nothing, and a future check that forgets the flag cannot reintroduce the litter.
   and the managed stage cannot be verified against a real `.jar` without one.
 - The Ghidra 1800s bound is still a guess — it has not been tested against a genuinely
   slow-path binary.
+
+---
+
+## Session consolidation — 2026-08-18 (post-M3, pre-M4)
+
+Findings from the packaging/handoff session. Recorded here because they existed
+only in a chat transcript, and a transcript is not a durable artifact.
+
+### The build sandbox, measured rather than assumed
+
+Everything through M3 was built and verified in an Anthropic cloud sandbox. It is
+**not Kali**, and four of its properties are load-bearing for milestone planning:
+
+```
+RAM      8023 MB, swap 0 MB       CPUs    2
+Docker   binary present, daemon NOT running
+systemd  systemd-run present, systemd NOT booted (PID 1 = process_api)
+TTY      none on stdout
+Distro   Ubuntu 24.04.4 LTS       Disk    252 GB
+```
+
+Consequences, which decide where M5–M8 get built:
+
+- **8 GB fixed means Tier A only.** Tier B (2.5–3.8 GB) and Tier C (<2.5 GB) can
+  be entered only by faking the RAM read, which exercises the branch but not the
+  behaviour it selects.
+- **systemd is not booted**, so `systemd-run --scope -p MemoryMax` — v4's
+  *preferred* memory-bounding mechanism — has never executed even once. Every run
+  to date has silently used the documented `ulimit -v` fallback. The primary path
+  is entirely untested.
+- **2 CPUs against a Tier A `jobs_light` of 4** means every concurrency
+  measurement so far was taken under 2× oversubscription.
+- **No Docker daemon** blocks M6's sandbox image outright.
+- **No TTY** blocks M8's interactive prompts and any real test of M4's TUI
+  redraw/SIGWINCH handling.
+
+This does not invalidate M0–M3: those milestones are about correctness of Bash,
+tool invocation and parsing, all of which the sandbox tests faithfully. It does
+mean **M5, M6 and M8 must be built and validated on the target host**, and that
+the FLOSS 1.46 GB and radare2 195s→0s figures are 2-CPU/8-GB numbers to be
+re-taken on real hardware.
+
+### GitHub push: definitively not possible from the sandbox
+
+Re-tested rather than carried forward as an assumption:
+
+- `GH_TOKEN` is a 14-character proxy token. `GET /user` succeeds and resolves to
+  `JijoShibu`, but the response carries **empty `X-OAuth-Scopes`** and
+  `X-Accepted-Github-Permissions: allows_permissionless_access=true` — it is
+  permitted only on endpoints requiring no permission.
+- `GET /user/repos` returns an empty set, so the token cannot list private repos,
+  let alone create one.
+- `git ls-remote` fails with `could not read Username`; embedding the token as
+  `https://x-access-token:$GH_TOKEN@…` fails with `Invalid username or token`.
+- `gh` is not installed. SSH egress is blocked. `device_bash` has no network.
+- The only git config injected is `credential.interactive=false` plus two
+  `url.…insteadOf` SSH rewrites — no repo binding that would allow a push.
+
+**Therefore the delivery mechanism is `git bundle` → user pushes from PowerShell.**
+`git bundle create … --all` preserves every commit, branch and tag in one file.
+An incremental bundle (`37b9b69..HEAD`) covers the case where the device copy is
+fast-forwarded in place instead.
+
+### Device-side facts
+
+- Connected folder is `D:\RevCTF` (Windows). It holds the v3–v6 masterplans, the
+  execution masterplan, and a copy of the repo at `D:\RevCTF\revctf`.
+- That copy is at `37b9b69` — 11 commits, history identical to the sandbox's
+  first 11. It is behind, not divergent, so a fast-forward is safe.
+- **The device mount cannot unlink.** `git status` there emitted
+  `unable to unlink '…/.git/index.lock': Operation not permitted`. Any stale lock
+  must be cleared from Windows itself, and anything "deleted" on the device is
+  really moved into `_to_delete/`.
+
+### Repo hygiene fixed this session
+
+- **`.gitattributes` added** with `* text=auto eol=lf`. revctf is executed via
+  `#!` lines; a CRLF checkout makes every script fail with `bad interpreter: No
+  such file or directory`. This became live risk the moment the repo was going to
+  be cloned on Windows. The attribute overrides any global `core.autocrlf`, so it
+  protects the checkout regardless of the user's git configuration. Binary
+  extensions are pinned explicitly rather than left to content sniffing.
+- **`scripts/__pycache__/pyghidra_decompile.cpython-311.pyc` was tracked** — an
+  accidental commit. Untracked, and `__pycache__/` + `*.py[cod]` added to
+  `.gitignore`. Nothing depends on it: the Ghidra post-scripts are executed by
+  Ghidra itself and are never imported, so no bytecode cache is meaningful.
+
+### Documentation consolidated
+
+- **`HANDOFF.md`** added as the single cold-start entry point: document map,
+  current state, the condensed non-negotiables, the verified environment facts,
+  the measurements, the GitHub/device situation, the Windows/WSL traps, the
+  agreed plan and the open questions. A new session reads it plus `CLAUDE.md` and
+  is current.
+- **`CHECKLIST.md`** added — 84 tracked items across 9 phases (design, foundation,
+  core engine, MVP gate, resource/safety/scale, QA process, deployment, known
+  risks, deferred scope), with QA modelled as a **recurring per-milestone gate**
+  rather than a one-off phase, which is why it reads 8/11 rather than done. An
+  interactive HTML tracker renders the same data; its checkboxes are a
+  session-scoped scratch view only — `CHECKLIST.md` is the source of truth.
+
+### Environment decision for M4 onward
+
+Compared continuing in the cloud sandbox against Claude Code on the user's
+machine. Neither wins outright; they are good at different milestones.
+
+- **M4 and M7 suit the cloud.** Report assembly is pure Bash text manipulation;
+  long unattended batch runs over the corpus are something a laptop does worse.
+- **M5, M6 and M8 are structurally impossible here** — see the measurements above.
+  They are also the next three milestones after M4, so the interleaving cost of
+  staying is high.
+
+Agreed: **build M4 here, cut over at M5** to Claude Code inside WSL Kali (the user
+has VirtualBox installed as an equally valid alternative; no WSL yet). Push to
+GitHub first, since the container is ephemeral and 13 commits were unbacked.
+
+Two traps recorded for that migration: keep the repo in the Linux filesystem
+(`~/revctf`) and **never** under `/mnt/c` or `/mnt/d`, because NTFS cannot hold
+the `0600`/`0700` modes v4 §5 requires and QA-9/QA-10 fixed — the tests would pass
+while the guarantee was void; and never run `install.sh` from PowerShell or Git
+Bash, which fails partway and leaves a half-configured tree.
