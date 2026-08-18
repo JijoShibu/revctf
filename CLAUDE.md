@@ -88,6 +88,13 @@ These cost real time to discover. Each one changed the design.
 - **binwalk 2.x and upx reject the `--` end-of-options marker** (`Cannot open file --`).
   Omitted for those two; `RUN_TARGET` is absolutised so it is never ambiguous anyway.
 - **checksec 2.6.0 colours unconditionally** — it ignores both `NO_COLOR` and `TERM=dumb`.
+  radare2 also writes progress escapes to *stderr* even with `scr.color=0`.
+- **`xxd` is not part of a base install** (it ships with vim-common). Depending on it made
+  the hex decoding sweep a silent no-op.
+- **`python3 -m dis` cannot read a `.pyc`** — it treats its argument as source. Unmarshal
+  the code object first; see `scripts/pyc_disasm.py`.
+- **Jython 2.7 refuses a source file with any non-ASCII byte** unless it carries a PEP 263
+  encoding declaration. The failure shows up only as an empty Ghidra stage, exit 0.
 - **Ghidra is downloadable even where `github.com/.../releases/latest` returns 403**, via the
   release-asset host. See `.claude/cloud-setup.sh`.
 
@@ -132,11 +139,10 @@ anywhere. Set `PF_OPT_ROOT_REAL=/opt` to point it at a real install.
 the standard; do not advance past one until its verification actually runs. Each milestone
 adds its own section to the harness so earlier gates keep being re-checked.
 
-**Milestone status:** M0, M1, M2 and the pre-M3 QA pass complete — tagged `v0.2-m2-qa`,
-127 checks green. Next is **M3** (ltrace, strace, FLOSS,
-radare2, Ghidra, managed/Python decompilers, `lib/flagscan.sh`), then **M4** — the MVP gate:
-report assembly, TUI, and full single-file wiring. M5–M9 add RAM tiers, the Docker sandbox,
-batch mode, user agency, and resilience.
+**Milestone status:** M0, M1, M2, the QA pass and **M3** are complete. 157 checks green.
+All 13 stages plus flag detection run end to end. Next is **M4** — the MVP gate: report
+assembly (`lib/report.sh`), the TUI (`lib/tui.sh`), and full single-file wiring. M5–M9 add
+RAM tiers, the Docker sandbox, batch mode, user agency, and resilience.
 
 ---
 
@@ -160,6 +166,10 @@ Carried in `implementation-notes.md`, repeated here because they affect design c
   POSIX makes such jobs ignore it and bash will not install a trap for an
   ignored-on-entry signal. Not fixable in bash; `SIGTERM` is the documented alternative.
   Do not "fix" this — it has already been investigated.
-- **M3 decision still open:** v5 scopes `--sandbox` to `ltrace`, but `strace` executes the
-  challenge binary just as directly. Decide whether the sandbox covers it before shipping
-  the stage.
+- **Resolved in M3 (deviation D9):** `--sandbox` covers `strace` as well as `ltrace`, and
+  refuses the host until M6 builds the container.
+- **M5 must NOT inherit Ghidra's ceiling for Phase 2.** Measured: FLOSS peaks at ~1.46GB on
+  a 220MB target, exceeding Tier A's 1024M and roughly 3x Tier C's. v6 §5's assumption is
+  disproved; size Phase 2 from that number. `FLOSS_MAX_MB` (64MB) is the interim guard.
+- **Two tools reject the `--` end-of-options marker AND so does radare2** (it analyses
+  nothing and every binary looks stripped). Check any new tool for this before trusting it.

@@ -5,6 +5,67 @@ section references (v3 §8, v5 §4.1, v6 §11) point at the design documents.
 
 ---
 
+## [M3] — Heavy stages, decompilers and flag detection
+
+All 13 stages plus the flag scan run end to end. On the corpus crackme, Ghidra recovers
+the password `sw0rdf1sh` from the pseudo-C — verified against a real 11.2.1 install.
+
+### Added
+
+- **Dynamic stages** — `ltrace` (stage 7) and `strace`+`ldd` (stage 9), sharing
+  `lib/stage_dynamic.sh`: `setsid` process-group isolation, closed stdin, a timeout, and
+  an orphan sweep afterwards. Both execute the challenge binary, so every capture they
+  produce opens with an unmissable statement of that fact and of what isolation applied.
+- **`radare2`** (stage 8) — one analysis session, `\bmain\b` word boundary with an
+  `entry0` fallback, reduced analysis depth above `R2_DEEP_MAX_MB`.
+- **FLOSS** (stage 10) — format-aware: all modes on PE, `--only static` on ELF, because
+  stack/tight/decoded extraction is PE-only. The report states which applied, so a missing
+  flag never reads as a clean negative.
+- **Managed and Python decompilation** (stages 11–12) — Java via jd-cli/procyon/cfr, .NET
+  via ilspycmd/monodis, Python via pycdc/uncompyle6 with `scripts/pyc_disasm.py` as an
+  always-available fallback.
+- **Ghidra headless** (stage 13) — runtime-appropriate post-script, throwaway project with
+  `-deleteProject`, and OOM self-heal that retries once with light decompilation.
+- **`lib/flagscan.sh`** — tiered confidence, cross-stage attribution, and the encoding
+  sweep (base64/base32/hex/ROT13). Verified end to end against the corpus.
+- **`--skip-strace`**, for symmetry with `--skip-ltrace`.
+- **`REVCTF_TEST_FAST=1`** skips the large-target checks; the full suite now takes ~15 min.
+
+### Changed
+
+- **Deviation D9: `--sandbox` covers strace as well as ltrace.** v5 §3 scopes it to ltrace,
+  which predates the strace stage. Until M6 builds the container, `--sandbox` *refuses* to
+  run either stage rather than silently falling back to the host.
+- Stage timings, output caps and ANSI stripping now also apply to stderr captures, since
+  M9 quotes stderr tails into the report.
+
+### Fixed
+
+- `radare2` rejects the `--` end-of-options marker — it analysed nothing, so **every**
+  binary looked stripped and every disassembly used the entry0 fallback.
+- The Jython post-script needs a PEP 263 encoding declaration; without it Ghidra produced
+  an empty stage while still exiting 0.
+- `python3 -m dis` cannot read a `.pyc` — it treats the argument as source.
+- The hex encoding sweep was a silent no-op: `xxd` is not part of a base install.
+- Flags were listed worst-first (high/medium/low sorts backwards alphabetically).
+- Decoded streams produced mirror noise; decoded text now requires a known format.
+
+### Performance
+
+Measured on the 220MB stress blob: **>600s and 1.46GB peak → ~80s and 103MB peak.**
+
+- `radare2`'s `aaa` was being run six times, once per query — 195s and an OOM kill. One
+  session now: 195s+ → 0s.
+- **FLOSS peaks at ~1.46GB** on that target and is Phase 2's largest consumer by an order
+  of magnitude. This **disproves v6 §5's assumption** that Phase 2 can inherit Ghidra's
+  ceiling — FLOSS alone exceeds Tier A's 1024M and is ~3x Tier C's. M5 must size Phase 2
+  from this measurement. `FLOSS_MAX_MB` (64MB) keeps it inside every tier meanwhile.
+
+A realistic target is unaffected: a 15KB crackme runs all 13 stages, Ghidra included, in
+about 15 seconds.
+
+---
+
 ## [v0.2-m2-qa] — M2 complete, QA pass applied
 
 A stability checkpoint, not a feature release. Everything through M2 is built, the

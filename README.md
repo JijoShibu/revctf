@@ -6,10 +6,11 @@ Point it at a challenge binary — or a directory of them — and it runs a stag
 (triage/unwrap, static analysis, dynamic tracing, decompilation) and writes a
 beginner-friendly plain-text report with flag candidates surfaced at the top.
 
-> **Status: M2 complete — `v0.2-m2-qa`.** Triage/unwrap and the seven light static stages
-> work end to end; a pre-M3 QA pass is closed (`QA-REVIEW.md`). The heavy stages, flag
-> detection and the report land in M3–M4. Verification: 127 checks, all green
-> (`./tools/run-tests.sh`). See `CHANGELOG.md` and `implementation-notes.md`.
+> **Status: M3 complete.** All 13 analysis stages and flag detection work end to end —
+> including Ghidra headless decompilation and the base64/base32/hex/ROT13 encoding sweep.
+> The formatted report and live TUI land in M4, which is the MVP gate. Verification: 157
+> checks, all green (`./tools/run-tests.sh`). See `CHANGELOG.md`, `QA-REVIEW.md` and
+> `implementation-notes.md`.
 
 ---
 
@@ -72,10 +73,13 @@ of system RAM — that one action is never prompted, by design.
 
 - `--interactive` / `-i` — pause before each stage: Continue / Skip stage / Skip file / Abort
 - `--yes` / `-y` — auto-accept every prompt; makes CI runs unhangable
-- `--skip-ltrace`, `--skip-ghidra` — skip the two heaviest stages
+- `--skip-ltrace`, `--skip-strace` — skip the stages that **execute** the challenge binary
+- `--skip-ghidra` — skip decompilation; radare2 substitutes
 - `--strict` — stop at the first failed stage. By default a failure is isolated and the
   run continues
-- `--sandbox` — run `ltrace` inside a `--network=none --read-only --cap-drop=ALL` container
+- `--sandbox` — run the executing stages inside a `--network=none --read-only
+  --cap-drop=ALL` container. Until M6 builds the image, `--sandbox` **refuses** to run them
+  rather than quietly falling back to the host
 - Prompts appear only on a TTY; piped output never blocks waiting for input
 
 `--sandbox` combined with a large batch is the tightest resource combination on 4GB
@@ -152,9 +156,10 @@ Kali Linux (or Debian-derived), Bash 4+, and the toolchain `install.sh` sets up:
 ## Development
 
 ```bash
-./tools/build-test-corpus.sh     # 18 test artifacts (gitignored)
-./tools/run-tests.sh             # 127 checks: lint corpus m0 m1 m2 qa ghidra
-./tools/run-tests.sh m2 qa       # just those sections
+./tools/build-test-corpus.sh              # 18 test artifacts (gitignored)
+./tools/run-tests.sh                      # 157 checks (~15 min)
+./tools/run-tests.sh m3 qa                # just those sections
+REVCTF_TEST_FAST=1 ./tools/run-tests.sh   # skip the 220MB-target checks (~3 min)
 ```
 
 The `ghidra` section self-skips when no Ghidra is installed. `CLAUDE.md` holds the
