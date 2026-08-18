@@ -7,8 +7,10 @@
 # milestone adds a section, and every later run re-checks all the earlier ones, so a
 # regression in M1 shows up while building M4.
 #
-#   ./tools/run-tests.sh            # everything
-#   ./tools/run-tests.sh m0 m1      # selected sections
+#   ./tools/run-tests.sh                    # everything (~15 min: the 220MB stress
+#                                           #   blob is scanned by several sections)
+#   ./tools/run-tests.sh m0 m1              # selected sections
+#   REVCTF_TEST_FAST=1 ./tools/run-tests.sh # skip the large-target checks (~3 min)
 #
 # Requires a built corpus: ./tools/build-test-corpus.sh
 set -uo pipefail
@@ -69,6 +71,13 @@ assert_no_match() {
 }
 
 have_corpus() { [[ -f $CORPUS/crackme ]]; }
+
+# The 220MB stress blob is what proves streaming, output caps and abort latency — but a
+# full pipeline over it costs about four minutes, and several sections use it. Set
+# REVCTF_TEST_FAST=1 to skip those checks during rapid iteration; CI and every milestone
+# gate should run without it.
+FAST="${REVCTF_TEST_FAST:-0}"
+have_big() { [[ $FAST -eq 0 && -f $CORPUS/large_blob.bin ]]; }
 
 # ======================================================================================
 # Fixtures
@@ -510,7 +519,7 @@ test_m2() {
     fi
 
     # --- streaming discipline: a 220MB target must not be buffered in memory ---
-    if [[ -f $CORPUS/large_blob.bin ]] && command -v /usr/bin/time >/dev/null 2>&1; then
+    if have_big && command -v /usr/bin/time >/dev/null 2>&1; then
         local peak_kb
         peak_kb=$(/usr/bin/time -f '%M' "${RUN[@]}" "$CORPUS/large_blob.bin" \
                     --output "$o/large" 2>&1 >/dev/null | tail -1)
@@ -520,8 +529,133 @@ test_m2() {
             no "streaming" "peak RSS was ${peak_kb}KB, expected well under 256MB"
         fi
     else
-        skip "streaming memory test" "large_blob.bin or /usr/bin/time missing"
+        skip "streaming memory test" "$([[ $FAST -eq 1 ]] && echo 'REVCTF_TEST_FAST=1' || echo 'large_blob.bin or /usr/bin/time missing')"
     fi
+}
+
+test_m3() {
+    section "M3 — heavy stages + flag detection"
+
+    if ! have_corpus; then
+        skip "M3 checks" "run ./tools/build-test-corpus.sh first"; return
+    fi
+    local o="$FIXTURES/m3"; rm -rf "$o"; mkdir -p "$o"
+    local out
+
+    # --- radare2: the \bmain\b word boundary (v3 §4 item 10) -------------------------
+    # The corpus crackme carries a deliberate `domain_main_init` symbol. A substring match
+    # selects it and disassembles the wrong function with total confidence.
+    out=$("$RC" scan "$CORPUS/crackme" --skip-ghidra --output "$o/r2" 2>&1)
+    assert_match "radare2 finds main by word boundary, not substring" \
+        'radare2 .*disassembled main via symbol table' printf '%s' "$out"
+    if grep -q 'domain_main_init' "$o/r2/radare2.txt" 2>/dev/null; then
+        ok "the near-miss symbol is present in the analysis (so the test has teeth)"
+    else
+        no "word-boundary test" "domain_main_init absent; the check proves nothing"
+    fi
+    # A stripped binary has no main at all — entry0 fallback.
+    assert_match "a stripped binary falls back to entry0" 'radare2 .*entry0 fallback' \
+        "$RC" scan "$CORPUS/crackme_stripped" --skip-ghidra --output "$o/r2s"
+
+    # --- dynamic stages execute the target, so the warning must be unmissable ----------
+    assert_match "ltrace states it executed the target" 'THIS STAGE EXECUTES THE TARGET' \
+        cat "$o/r2/ltrace.txt"
+    assert_match "ltrace names the lack of isolation" 'Isolation : NONE' \
+        cat "$o/r2/ltrace.txt"
+    assert_match "a non-ELF target skips ltrace" 'ltrace .*only runs on ELF' \
+        "$RC" scan "$CORPUS/winsample.exe" --skip-ghidra --output "$o/pe"
+    assert_match "--skip-ltrace is honoured" 'ltrace .*--skip-ltrace' \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --skip-ltrace --output "$o/nolt"
+    assert_match "--skip-strace is honoured" 'strace .*--skip-strace' \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --skip-strace --output "$o/nost"
+    # D9: --sandbox must cover strace too, and must refuse the host until M6 builds it.
+    assert_match "--sandbox refuses to run ltrace on the host" 'ltrace .*refusing to run the target on the host' \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --sandbox --output "$o/sbx"
+    assert_match "--sandbox covers strace as well (D9)" 'strace .*refusing to run the target on the host' \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --sandbox --output "$o/sbx2"
+
+    # The hung binary is what proves the timeout and orphan sweep actually work.
+    if [[ -f $CORPUS/hung ]]; then
+        local started=$SECONDS
+        out=$("$RC" scan "$CORPUS/hung" --skip-ghidra --timeout 3 --output "$o/hung" 2>&1)
+        local elapsed=$(( SECONDS - started ))
+        if [[ $elapsed -lt 60 ]]; then
+            ok "a target that never exits is stopped by the timeout (${elapsed}s)"
+        else
+            no "dynamic timeout" "took ${elapsed}s on a hung target"
+        fi
+        # shellcheck disable=SC2009
+        if [[ $(ps -eo args 2>/dev/null | grep -c '[h]ung$') -eq 0 ]]; then
+            ok "the orphan sweep leaves no traced process running"
+        else
+            no "orphan sweep" "the hung target survived the scan"
+            pkill -KILL -f '[h]ung$' 2>/dev/null
+        fi
+    else
+        skip "hung-target tests" "corpus fixture missing"
+    fi
+
+    # --- FLOSS is format-aware (verified: stack/tight/decoded are PE-only) -------------
+    assert_match "FLOSS runs all modes on PE" 'floss .*all modes' \
+        "$RC" scan "$CORPUS/winsample.exe" --skip-ghidra --output "$o/flpe"
+    assert_match "FLOSS is static-only on ELF" 'floss .*static strings only' \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --output "$o/flelf"
+    assert_match "the ELF report explains what FLOSS could NOT look for" \
+        'does NOT mean there is no hidden string' cat "$o/flelf/floss.txt"
+
+    # --- flag detection, including the encoding sweep (D5) -----------------------------
+    local pair f want
+    for pair in "planted_flag:flag\{pl41nt3xt_1n_r0d4t4\}" \
+                "b64_flag:flag\{b4s3_s1xty_f0ur\}" \
+                "rot13_flag:flag\{r0t4t3d_thirt33n\}" \
+                "hex_flag:flag\{h3x_3nc0d3d_str1ng\}"; do
+        f="${pair%%:*}"; want="${pair##*:}"
+        [[ -f "$CORPUS/$f" ]] || { skip "flag in $f" "not in corpus"; continue; }
+        assert_match "flag recovered from $f" "$want" \
+            "$RC" scan "$CORPUS/$f" --skip-ghidra --output "$o/fs-$f"
+    done
+    # The encoded ones must be found BY DECODING, not by luck.
+    assert_match "base64 flag is credited to the decoding sweep" 'recovered by base64 decoding' \
+        "$RC" scan "$CORPUS/b64_flag" --skip-ghidra --output "$o/fs-b64b"
+    assert_match "hex flag is credited to the decoding sweep" 'recovered by hex decoding' \
+        "$RC" scan "$CORPUS/hex_flag" --skip-ghidra --output "$o/fs-hexb"
+
+    # Negative control: a binary stuffed with hashes and GUIDs but no flag.
+    out=$("$RC" scan "$CORPUS/hex_noise_noflag" --skip-ghidra --output "$o/fs-neg" 2>&1)
+    if grep -qE '0 high' <<< "$out"; then
+        ok "the no-flag control yields no high-confidence hit"
+    else
+        no "false positive" "$(grep -m1 'Possible flags' <<< "$out")"
+    fi
+    if grep -qE 'and [0-9]+ more hash-like' <<< "$out"; then
+        ok "hash-like noise is capped so it cannot bury a real hit"
+    else
+        no "medium cap" "21 unwrapped tokens were listed in full"
+    fi
+
+    # High confidence must print before medium/low, or the flag is buried.
+    out=$("$RC" scan "$CORPUS/crackme" --skip-ghidra --output "$o/fs-order" 2>&1)
+    if [[ $(grep -n 'high confidence' <<< "$out" | cut -d: -f1) -lt \
+          $(grep -n 'medium confidence' <<< "$out" | cut -d: -f1 || echo 9999) ]]; then
+        ok "high-confidence flags are listed first"
+    else
+        no "flag ordering" "medium confidence printed above high"
+    fi
+
+    assert_match "--no-flag-scan disables detection" 'Flag detection was disabled' \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --no-flag-scan --output "$o/fs-off"
+    assert_match "--flag-format adds a custom high-confidence pattern" 'sw0rdf1sh' \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --flag-format 'sw0rdf1sh' --output "$o/fs-fmt"
+
+    # --- managed / Python routing -----------------------------------------------------
+    assert_match "a .pyc is routed to Python decompilation" 'pydecomp +ok' \
+        "$RC" scan "$CORPUS/secret.pyc" --skip-ghidra --output "$o/pyc"
+    assert_match "the .pyc flag is recovered" 'flag\{pyc_d3c0mp1l3d\}' \
+        "$RC" scan "$CORPUS/secret.pyc" --skip-ghidra --output "$o/pyc2"
+    assert_match "a .jar is routed to managed decompilation" 'managed +(ok|failed)' \
+        "$RC" scan "$CORPUS/challenge.jar" --skip-ghidra --output "$o/jar"
+    assert_match "native stages skip a Java target" 'radare2 .*not a native binary' \
+        "$RC" scan "$CORPUS/challenge.jar" --skip-ghidra --output "$o/jar2"
 }
 
 # Regression guards for the QA review. Every check here corresponds to a defect that was
@@ -589,7 +723,7 @@ open('$o/fat.macho','wb').write(d)" 2>/dev/null
 
     # --- QA-5 (high): STAGE_SECS was only written by stage_capture, so every other stage
     # reported a fabricated 0 — a 71-second binwalk showed as instant.
-    if [[ -f $CORPUS/large_blob.bin ]]; then
+    if have_big; then
         out=$("$RC" scan "$CORPUS/large_blob.bin" --skip-ghidra --output "$o/secs" 2>&1)
         local bw
         bw=$(grep -E '^binwalk ' <<< "$out" | awk '{print $3}')
@@ -599,7 +733,7 @@ open('$o/fat.macho','wb').write(d)" 2>/dev/null
             no "fabricated timing" "binwalk on a 220MB target reported ${bw}s"
         fi
     else
-        skip "timing check" "large_blob.bin missing"
+        skip "timing check" "$([[ $FAST -eq 1 ]] && echo 'REVCTF_TEST_FAST=1' || echo 'large_blob.bin missing')"
     fi
 
     # --- QA-6 (medium): captures are 0600, per v4 §5. They were inheriting umask (0644).
@@ -674,7 +808,7 @@ z.close()" 2>/dev/null
     # INT-based test can only ever fail here. That limit is real and documented in --help;
     # SIGTERM exercises the identical abort path and is the correct way to stop a
     # backgrounded revctf.
-    if [[ -f $CORPUS/large_blob.bin ]]; then
+    if have_big; then
         rm -rf /tmp/revctf-work.* 2>/dev/null
         # The signal deliberately lands during binwalk — the slowest stage on this target,
         # and the one that used to run its tool in the foreground and swallow the signal.
@@ -729,13 +863,13 @@ z.close()" 2>/dev/null
         fi
         rm -rf /tmp/revctf-work.* 2>/dev/null
     else
-        skip "abort tests" "large_blob.bin missing"
+        skip "abort tests" "$([[ $FAST -eq 1 ]] && echo 'REVCTF_TEST_FAST=1' || echo 'large_blob.bin missing')"
     fi
 
     # --- Post-QA hardening -------------------------------------------------------------
 
     # A per-stage output size cap: time bounds alone never bounded disk.
-    if [[ -f $CORPUS/large_blob.bin ]]; then
+    if have_big; then
         out=$(ST_MAX_OUT_KB=64 "$RC" scan "$CORPUS/large_blob.bin" --skip-ghidra \
                 --output "$o/cap" 2>&1)
         if grep -qE '^strings +failed .*exceeded' <<< "$out"; then
@@ -749,7 +883,7 @@ z.close()" 2>/dev/null
             no "output cap" "partial capture was discarded"
         fi
     else
-        skip "output cap" "large_blob.bin missing"
+        skip "output cap" "$([[ $FAST -eq 1 ]] && echo 'REVCTF_TEST_FAST=1' || echo 'large_blob.bin missing')"
     fi
 
     # --strict stops at the first failure; the default still isolates and continues.
@@ -843,7 +977,7 @@ test_ghidra() {
 # ======================================================================================
 main() {
     local -a want=("$@")
-    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 m2 qa ghidra)
+    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 m2 m3 qa ghidra)
 
     printf '\033[1mrevctf verification harness\033[0m\n'
     printf 'repo: %s\n' "$ROOT"
@@ -857,6 +991,7 @@ main() {
             m0)     test_m0     ;;
             m1)     test_m1     ;;
             m2)     test_m2     ;;
+            m3)     test_m3     ;;
             qa)     test_qa     ;;
             ghidra) test_ghidra ;;
             *)      printf 'unknown section: %s\n' "$s" >&2 ;;

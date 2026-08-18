@@ -397,3 +397,102 @@ concurrency (M7) is where the parallelism belongs.
 Three consecutive full runs of the harness: **127 passed, 0 failed, 0 skipped** each time,
 with zero stray work directories, zero orphaned processes, and the developer's real
 `~/.revctf` untouched (the harness redirects `REVCTF_HOME` into its fixtures).
+
+---
+
+## M3 — Heavy Stages + Flag Detection
+
+**Status:** complete. 157 checks green (97 + 60 across two runs; the suite now takes ~15
+minutes, so `REVCTF_TEST_FAST=1` skips the large-target checks for iteration).
+
+All 13 stages plus the flag scan now run end to end. On the corpus crackme, Ghidra
+recovers the password `sw0rdf1sh` from the pseudo-C — real reverse-engineering output,
+verified rather than assumed.
+
+### Decisions made during M3
+
+- **`lib/stage_dynamic.sh` added** — shared machinery for the two stages that EXECUTE the
+  target. The orphan sweep, the `setsid` process-group handling, the stdin-closing and the
+  "this executed your binary" banner belong in one place, not duplicated per stage.
+
+- **Deviation D9: `--sandbox` covers strace as well as ltrace.** v5 §3 scopes it to ltrace,
+  but that predates the strace stage, which executes the target just as directly. Leaving
+  strace outside would make `--sandbox` a false assurance. Until M6 builds the container,
+  `--sandbox` *refuses* to run either stage rather than silently falling back to the host —
+  a silent fallback would run untrusted code the user explicitly asked to isolate.
+
+- **`--skip-strace` added** for symmetry with `--skip-ltrace`. Both stages execute the
+  challenge binary; both need an opt-out.
+
+- **A traced program exiting non-zero is not a stage failure.** A crackme invoked with no
+  argument exits 1 — that is the expected path. Only the *tracer* failing counts, which
+  shows up as empty output plus a tracer diagnostic.
+
+- **A dynamic-stage timeout is not a failure either.** A binary that loops or waits for
+  input under tracing is telling you something, and the partial trace is usually the
+  interesting part. Recorded as `ok` with a note rather than `failed`.
+
+### Bugs found and fixed during M3
+
+- **`radare2` rejects `--`.** It takes the marker as the filename, analyses nothing, and
+  `afl` returns zero functions — so *every* binary looked stripped and every disassembly
+  used the entry0 fallback. Silent and completely wrong.
+
+- **The Jython post-script needs a PEP 263 encoding declaration.** Jython 2.7 is a Python 2
+  interpreter and refuses any source file containing a non-ASCII byte without one; the
+  em-dashes in the comments were enough. It surfaced only as an empty Ghidra stage, because
+  `analyzeHeadless` still exits 0.
+
+- **`python3 -m dis` does not work on a `.pyc`.** `dis` treats its argument as source, so a
+  compiled file fails with "source code string cannot contain null bytes".
+  `scripts/pyc_disasm.py` unmarshals the code object first. This is the fallback that
+  matters most, since uncompyle6 tops out around Python 3.8 and pycdc is not packaged.
+
+- **The hex encoding sweep was a silent no-op** because `xxd` is not in a base install (it
+  ships with vim-common, not coreutils). The hex-encoded corpus flag went undetected and
+  looked exactly like "no flag here". Rewritten with `printf '\xNN'`, which depends on
+  nothing beyond the shell.
+
+- **Flags were listed worst-first.** Sorting the words high/medium/low alphabetically puts
+  medium above low above high — precisely backwards. Now sorted on a numeric rank.
+
+- **Decoded streams produced mirror noise.** ROT13-ing a capture that already contains
+  `flag{cr4ckm3_s0lv3d}` yields `synt{pe4pxz3_f0yi3q}`, which matched the generic
+  `word{...}` pattern and was reported as a finding. Decoded text now only counts if it
+  matches a *known* format.
+
+- **radare2 progress escapes reached the stderr capture** even with `scr.color=0`. Since
+  M9 quotes stderr tails into the report, ANSI stripping now applies to stderr as well.
+
+### Performance — measured, and one design assumption disproved
+
+Profiling the 220MB stress blob turned up two things worth keeping:
+
+- **`radare2`'s `aaa` was being run six times.** The first version of the stage issued a
+  separate `r2 -c 'aaa; …'` per query, paying the full analysis cost each time — measured
+  at 195s before the kernel OOM-killed it. Everything now runs in one session, and targets
+  over `R2_DEEP_MAX_MB` (64MB) use `aa` instead of `aaa`. That stage went 195s+ → 0s.
+
+- **FLOSS peaks at ~1.46GB on a 220MB target** (~180s), and is the single largest consumer
+  in Phase 2 by an order of magnitude — cutting it dropped the whole scan's peak RSS from
+  1,495,336 KB to 140,212 KB.
+
+  **This disproves a documented assumption.** v6 §5 has Phase 2 inheriting the tier's
+  Ghidra ceiling — 1024M on Tier A, 512M on Tier C — reasoning that it matched an
+  already-derived and tested profile. FLOSS alone exceeds Tier A's ceiling and is roughly
+  3x Tier C's. **M5 must size Phase 2 from this measurement, not from Ghidra's.** A
+  `FLOSS_MAX_MB` guard (64MB, matching radare2's) keeps it inside every tier meanwhile.
+
+Net effect on the 220MB target: >600s and 1.46GB peak → ~80s and 103MB peak, the same
+memory profile M2 had. Realistic targets are unaffected — a 15KB crackme runs the full
+13-stage pipeline, Ghidra included, in about 15 seconds.
+
+### Still open
+
+- **M5:** size Phase 2 from the FLOSS measurement above. The tier boundaries themselves
+  (3.8GB / 2.5GB) also remain unvalidated estimates per v4 §10.
+- **M6:** build the sandbox container so `--sandbox` stops refusing; vendor
+  `pyinstxtractor`; consider packaging a Java decompiler, since none is installable here
+  and the managed stage cannot be verified against a real `.jar` without one.
+- The Ghidra 1800s bound is still a guess — it has not been tested against a genuinely
+  slow-path binary.

@@ -44,6 +44,7 @@ declare -A OPT=(
     [flag_format]=""
     [full_hexdump]=0
     [skip_ltrace]=0
+    [skip_strace]=0
     [skip_ghidra]=0
     [no_unwrap]=0
     [unwrap_depth]=2
@@ -69,7 +70,7 @@ declare -A CLI_SET=()
 
 # Keys a config file is permitted to set (v6 §9 — allowlist validation).
 CONFIG_ALLOWED="output_dir timeout flag_scan flag_format full_hexdump skip_ltrace \
-skip_ghidra no_unwrap unwrap_depth light_decompile force_full_decompile ghidra_script \
+skip_strace skip_ghidra no_unwrap unwrap_depth light_decompile force_full_decompile ghidra_script \
 jobs_light jobs_ghidra maxmem_ghidra auto_swap sandbox tui strict stages_disabled"
 
 # Of those, which are booleans and which are integers. Both groups are consumed in `-eq`
@@ -78,7 +79,7 @@ jobs_light jobs_ghidra maxmem_ghidra auto_swap sandbox tui strict stages_disable
 # `tui = yes` would therefore kill the run, and `full_hexdump = on` would kill it *inside a
 # stage*, where `set -e`-free isolate-and-continue cannot save it. So every value from a
 # config file is coerced or rejected before it can reach an arithmetic test.
-CONFIG_BOOL_KEYS="flag_scan full_hexdump skip_ltrace skip_ghidra no_unwrap \
+CONFIG_BOOL_KEYS="flag_scan full_hexdump skip_ltrace skip_strace skip_ghidra no_unwrap \
 light_decompile force_full_decompile auto_swap sandbox tui strict"
 CONFIG_INT_KEYS="timeout unwrap_depth jobs_light jobs_ghidra"
 
@@ -119,6 +120,8 @@ FLAG DETECTION
 ANALYSIS DEPTH / STAGE CONTROL
     --full-hexdump        Dump the whole file instead of the 512-byte preview
     --skip-ltrace         Skip the ltrace stage
+    --skip-strace         Skip the strace stage. Both it and ltrace execute the
+                          challenge binary; --sandbox isolates them (M6).
     --skip-ghidra         Skip Ghidra; radare2 disassembly substitutes
     --no-unwrap           Disable the triage/unwrap pre-stage (packers, archives,
                           managed and Python artifacts)
@@ -226,6 +229,7 @@ parse_args() {
             # --- analysis depth / stage control ---
             --full-hexdump)         set_opt full_hexdump 1; shift ;;
             --skip-ltrace)          set_opt skip_ltrace 1; shift ;;
+            --skip-strace)          set_opt skip_strace 1; shift ;;
             --skip-ghidra)          set_opt skip_ghidra 1; shift ;;
             --no-unwrap)            set_opt no_unwrap 1; shift ;;
             --strict)               set_opt strict 1; shift ;;
@@ -453,8 +457,10 @@ cmd_scan() {
 
     # --- M2: stage framework + Phase-1 light stages ------------------------------
     local m
-    for m in stage stage_triage stage_file stage_strings stage_binwalk \
-             stage_hexdump stage_checksec stage_objdump; do
+    for m in stage stage_dynamic stage_triage stage_file stage_strings stage_binwalk \
+             stage_hexdump stage_checksec stage_objdump stage_ltrace stage_radare2 \
+             stage_strace stage_floss stage_managed stage_pydecomp stage_ghidra \
+             flagscan; do
         # shellcheck source=/dev/null
         source "$REVCTF_LIB/$m.sh" || die "cannot load $REVCTF_LIB/$m.sh"
     done
@@ -555,15 +561,38 @@ scan_one_file() {
         return 0
     }
 
+    # Stage 0 first, always: every later stage must analyse the real payload rather than
+    # a packer stub or a container (v6 §4.1).
     run_stage triage   "classifying and unwrapping the target" stage_triage
+
+    # Phase 1 — light static, plus ltrace. Order within a phase is v6 §4.2.
     run_stage file     "identifying the file type"             stage_file
     run_stage strings  "extracting printable strings"          stage_strings
     run_stage binwalk  "scanning for embedded files"           stage_binwalk
     run_stage hexdump  "capturing a hex view"                  stage_hexdump
     run_stage checksec "reading mitigations and metadata"      stage_checksec
     run_stage objdump  "cross-checking with binutils"          stage_objdump
+    run_stage ltrace   "tracing library calls"                 stage_ltrace
+    run_stage radare2  "disassembling"                         stage_radare2
 
-    # --- M3 stages and M4 report assembly land here -------------------------------
+    # Phase 2 — heavy extras. Separated from Phase 3 so the two never contend for memory
+    # (v6 §7.2); in single-file mode the phases are sequential anyway, and the boundary is
+    # what M7's batch concurrency will schedule against.
+    run_stage strace   "tracing syscalls"                      stage_strace
+    run_stage floss    "recovering obfuscated strings"         stage_floss
+    run_stage managed  "decompiling managed code"              stage_managed
+    run_stage pydecomp "decompiling Python bytecode"           stage_pydecomp
+
+    # Phase 3 — Ghidra, alone.
+    run_stage ghidra   "decompiling with Ghidra"               stage_ghidra
+
+    # Flag scan runs across EVERY capture, not just strings (v6 §6.3).
+    if [[ ${OPT[flag_scan]} -eq 1 ]]; then
+        [[ ${OPT[verbose]} -eq 1 ]] && _msg "revctf: [flagscan] scanning all captures"
+        flagscan_run
+    fi
+
+    # --- M4 report assembly lands here --------------------------------------------
     m2_interim_summary
 
     # Exit status distinguishes "ran, all stages fine" from "ran, some stages failed".
@@ -602,7 +631,12 @@ m2_interim_summary() {
             "$s" "$status" "${STAGE_SECS[$s]:-0}" \
             "$(st_file_size "${STAGE_OUT[$s]:-/dev/null}")" "$note"
     done
-    printf '\n(M2: light static stages only — heavy stages M3, report M4)\n'
+    # Called unconditionally: flagscan_report handles the disabled case itself, and
+    # saying "flag detection was disabled" is information. Skipping the section entirely
+    # leaves the user staring at a report with no flag section and no explanation.
+    printf '\n'
+    flagscan_report
+    printf '\n(M3: all 13 stages + flag scan. Formatted report lands in M4.)\n'
 }
 
 # ======================================================================================

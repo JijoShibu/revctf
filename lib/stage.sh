@@ -320,6 +320,16 @@ stage_run() {
     # Local boundary. `|| rc=$?` keeps a non-zero return from propagating anywhere.
     "$fn" || rc=$?
 
+    # Strip ANSI from the stderr capture as well as stdout. radare2 writes progress
+    # escapes to stderr even with scr.color=0, and M9's diagnostic block quotes a stderr
+    # tail straight into the report — which v6 §10 requires to be plain text in every
+    # display mode. Doing it here covers every stage rather than one tool at a time.
+    local _errf
+    _errf="$(stage_err_path "$name")"
+    if [[ -s $_errf ]]; then
+        st_strip_ansi < "$_errf" > "$_errf.clean" 2>/dev/null && mv -f "$_errf.clean" "$_errf"
+    fi
+
     # Time every stage here rather than only in stage_capture(). Stages that run their own
     # tool (binwalk, the full hexdump, triage) never went through stage_capture, so their
     # STAGE_SECS key was simply absent and the summary's `:-0` default printed a
