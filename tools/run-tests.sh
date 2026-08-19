@@ -734,7 +734,11 @@ open('$o/fat.macho','wb').write(d)" 2>/dev/null
     if have_big; then
         out=$("$RC" scan "$CORPUS/large_blob.bin" --skip-ghidra --output "$o/secs" 2>&1)
         local bw
+        # M4's WHAT RAN table prints the unit ("73s"). Strip it: a non-numeric word in
+        # arithmetic context is the very defect QA-1 was about, and it belongs in the
+        # harness no more than in lib/.
         bw=$(grep -E '^binwalk ' <<< "$out" | awk '{print $3}')
+        bw="${bw//[^0-9]/}"
         if [[ ${bw:-0} -gt 0 ]]; then
             ok "stage timing is real, not fabricated (binwalk reported ${bw}s)"
         else
@@ -804,8 +808,15 @@ z.close()" 2>/dev/null
 
     # --- QA-11 (medium): `output_dir = ~/reports` created a literal "~" directory.
     printf 'output_dir = ~/revctf-qa-tilde\n' > "$cfg"
-    assert_match "a tilde in the config output_dir is expanded" "captures: $HOME/revctf-qa-tilde" \
-        "$RC" scan "$CORPUS/crackme" --skip-ghidra --config "$cfg"
+    # The regex tracks the report's own wording (M4 changed "captures:" to "Captures  :").
+    # What is being pinned is the expansion, not the label.
+    assert_match "a tilde in the config output_dir is expanded" "Captures +: $HOME/revctf-qa-tilde" \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --summary-only --config "$cfg"
+    if [[ -d "./~" ]]; then
+        no "no literal ~ directory is created" "a directory named '~' was created"
+    else
+        ok "no literal ~ directory is created"
+    fi
     rm -rf "$HOME/revctf-qa-tilde" ./~ 2>/dev/null
 
     # --- QA-12 (high): an abort left the running tool as an orphan, because bash defers
@@ -857,17 +868,42 @@ z.close()" 2>/dev/null
         # SIGHUP must be trapped too: an untrapped HUP from a dropped SSH session killed
         # the scan with no cleanup at all.
         rm -rf /tmp/revctf-work.* 2>/dev/null
-        "$RC" scan "$CORPUS/large_blob.bin" --skip-ghidra --output "$o/hup" >/dev/null 2>&1 &
-        local hpid=$!
+        # stderr is kept, not discarded: when this check fails it must say why. A bare
+        # "got 0" gives nothing to act on, and a signal-handling regression is the last
+        # place to accept an opaque failure.
+        "$RC" scan "$CORPUS/large_blob.bin" --skip-ghidra --output "$o/hup" \
+            >/dev/null 2>"$o/hup.err" &
+        local hpid=$! hrc=0
         sleep 6
-        kill -HUP "$hpid" 2>/dev/null
-        sleep 2
-        local hrc=0
-        wait "$hpid" 2>/dev/null || hrc=$?
-        if [[ $hrc -eq 129 ]]; then
-            ok "SIGHUP is trapped and exits 129 (a dropped terminal cleans up)"
+        # If SIGHUP is IGNORED in this shell it is inherited as ignored by every child,
+        # and bash refuses to install a trap for a signal that was ignored on entry — the
+        # same POSIX rule that makes SIGINT untrappable for a backgrounded job. `nohup`
+        # does exactly this, so running the harness under nohup (or from a launcher that
+        # does) made revctf run to completion and this check report a phantom regression.
+        # Detect it and say so, rather than blaming the tool for the harness's own state.
+        local sigign
+        sigign="$(awk '/^SigIgn:/{print $2}' /proc/self/status 2>/dev/null)"
+        if [[ -n $sigign ]] && (( 0x$sigign & 1 )); then
+            skip "SIGHUP is trapped and exits 129" \
+                 "SIGHUP is ignored in this shell (nohup?); a child cannot trap it"
+            kill -TERM "$hpid" 2>/dev/null
+            wait "$hpid" 2>/dev/null || true
+        elif ! kill -0 "$hpid" 2>/dev/null; then
+            # The scan ended before the signal could be delivered, so nothing about HUP
+            # handling was exercised. Say that, rather than reporting an untrapped signal —
+            # a far more alarming claim than the thing that actually happened.
+            skip "SIGHUP is trapped and exits 129" "the scan ended before HUP was sent"
+            wait "$hpid" 2>/dev/null || true
         else
-            no "SIGHUP handling" "got $hrc, want 129"
+            kill -HUP "$hpid" 2>/dev/null
+            sleep 2
+            hrc=0
+            wait "$hpid" 2>/dev/null || hrc=$?
+            if [[ $hrc -eq 129 ]]; then
+                ok "SIGHUP is trapped and exits 129 (a dropped terminal cleans up)"
+            else
+                no "SIGHUP handling" "got $hrc, want 129; stderr: $(tr '\n' ' ' < "$o/hup.err" 2>/dev/null | tail -c 200)"
+            fi
         fi
         rm -rf /tmp/revctf-work.* 2>/dev/null
     else
@@ -983,9 +1019,148 @@ test_ghidra() {
 }
 
 # ======================================================================================
+# M4 — report assembly, display modes, config extraction
+# ======================================================================================
+test_m4() {
+    section "M4 — report, TUI and config loader"
+
+    if ! have_corpus; then
+        skip "M4 checks" "run ./tools/build-test-corpus.sh first"; return
+    fi
+    local o="$FIXTURES/m4"; rm -rf "$o"; mkdir -p "$o"
+    local out rp
+
+    # --- the report exists, on disk and on stdout, byte-identical --------------------
+    out=$("$RC" scan "$CORPUS/crackme" --skip-ghidra --output "$o/rep" 2>/dev/null)
+    rp="$o/rep/report.txt"
+    if [[ -s $rp ]]; then ok "report.txt written to the output directory"
+    else no "report.txt written" "no file at $rp"; fi
+
+    if [[ -s $rp ]] && diff -q <(printf '%s\n' "$out") "$rp" >/dev/null 2>&1; then
+        ok "stdout and report.txt are byte-identical (one formatter, not two)"
+    else
+        no "stdout == report.txt" "the mirrored report diverged from the file"
+    fi
+
+    # v4 §5: the report carries the same 0600 as every capture.
+    if [[ "$(stat -c '%a' "$rp" 2>/dev/null)" == 600 ]]; then
+        ok "report.txt is mode 0600"
+    else
+        no "report.txt permissions" "got $(stat -c '%a' "$rp" 2>/dev/null), wanted 600"
+    fi
+
+    # --- section order: flags before the stage table (v6 §6.1) -----------------------
+    # A beginner must not have to scroll past 400 lines of disassembly to find the answer.
+    local lf lt
+    lf=$(grep -n 'POSSIBLE FLAGS' "$rp" | head -1 | cut -d: -f1)
+    lt=$(grep -n 'WHAT RAN'       "$rp" | head -1 | cut -d: -f1)
+    if [[ -n $lf && -n $lt && $lf -lt $lt ]]; then
+        ok "the flag section precedes the stage table"
+    else
+        no "flags first" "POSSIBLE FLAGS at line ${lf:-none}, WHAT RAN at ${lt:-none}"
+    fi
+
+    assert_match "the corpus flag reaches the report" 'flag\{cr4ckm3_s0lv3d\}' cat "$rp"
+    assert_match "every stage appears in the WHAT RAN table" 'ghidra +skipped' cat "$rp"
+    assert_match "a beginner blurb is attached to each stage" \
+        'RUNS the program and records the library functions' cat "$rp"
+    assert_match "the report says where the captures are" 'Captures  :' cat "$rp"
+    assert_match "there is an actionable next-steps block" 'WHAT TO TRY NEXT' cat "$rp"
+
+    # --- plain text in every display mode (v6 §10) -----------------------------------
+    if grep -qP '\x1b\[' "$rp" 2>/dev/null || grep -q "$(printf '\033')" "$rp" 2>/dev/null; then
+        no "report is free of ANSI escapes" "an escape sequence reached report.txt"
+    else
+        ok "report is free of ANSI escapes"
+    fi
+
+    # --- --summary-only drops detail but keeps flags and the table -------------------
+    out=$("$RC" scan "$CORPUS/crackme" --skip-ghidra --summary-only --output "$o/sum" 2>/dev/null)
+    assert_match "--summary-only keeps the flag section" 'flag\{cr4ckm3_s0lv3d\}' \
+        printf '%s' "$out"
+    assert_match "--summary-only keeps the stage table" 'WHAT RAN' printf '%s' "$out"
+    assert_no_match "--summary-only drops per-stage detail" 'STAGE DETAIL' printf '%s' "$out"
+    assert_match "--summary-only says what it omitted" 'per-stage detail omitted' \
+        printf '%s' "$out"
+
+    # --- a failed stage is diagnosed, never silently missing --------------------------
+    # A 1-second bound on a 20MB random blob makes binwalk time out deterministically.
+    local blob="$o/blob.bin"
+    head -c 20000000 /dev/urandom > "$blob" 2>/dev/null
+    out=$(ST_T_BINWALK=1 ST_T_STRINGS=1 "$RC" scan "$blob" --skip-ghidra --summary-only \
+          --output "$o/fail" 2>/dev/null)
+    local rc=$?
+    assert_match "a failed stage produces a DIAGNOSTICS block" 'DIAGNOSTICS' printf '%s' "$out"
+    assert_match "the diagnostics name the command that failed" 'command :' printf '%s' "$out"
+    assert_match "the diagnostics carry the exit code" 'exit    :' printf '%s' "$out"
+    if [[ $rc -eq 2 ]]; then
+        ok "a run with a failed stage exits 2"
+    else
+        no "exit 2 on stage failure" "got $rc"
+    fi
+    rm -f "$blob"
+
+    # --- display modes ----------------------------------------------------------------
+    # No TTY at all: a periodic heartbeat, never cursor control.
+    out=$("$RC" scan "$CORPUS/crackme" --skip-ghidra --summary-only --output "$o/hb" 2>&1 >/dev/null)
+    assert_match "no TTY -> heartbeat progress on stderr" 'stages, [0-9]+s elapsed' \
+        printf '%s' "$out"
+    assert_no_match "heartbeat mode emits no cursor-control escapes" \
+        "$(printf '\033')\[[0-9]*A" printf '%s' "$out"
+
+    # Progress must never touch stdout: the report has to survive redirection intact.
+    out=$("$RC" scan "$CORPUS/crackme" --skip-ghidra --summary-only --output "$o/pure" 2>/dev/null)
+    assert_no_match "progress output never reaches stdout" 'stages, [0-9]+s elapsed' \
+        printf '%s' "$out"
+
+    if command -v script >/dev/null 2>&1; then
+        # Both streams on a pty: the in-place table, with a cursor rewind per redraw.
+        out=$(script -qec "$RC scan $CORPUS/crackme --skip-ghidra --summary-only --output $o/tui" \
+              /dev/null 2>&1 | tr -d '\r')
+        assert_match "TTY -> in-place table with cursor rewind" \
+            "$(printf '\033')\[[0-9]+A" printf '%s' "$out"
+        assert_match "the table uses ASCII status glyphs, not box drawing" \
+            '\[ok\] +triage' printf '%s' "$out"
+        # --no-tui on a terminal: one line per transition, no cursor control at all.
+        out=$(script -qec "$RC scan $CORPUS/crackme --skip-ghidra --no-tui --summary-only --output $o/line" \
+              /dev/null 2>&1 | tr -d '\r')
+        assert_match "--no-tui -> line mode transitions" 'revctf: \[[0-9]+/14\] triage' \
+            printf '%s' "$out"
+        assert_no_match "--no-tui emits no cursor-control escapes" \
+            "$(printf '\033')\[[0-9]*A" printf '%s' "$out"
+    else
+        skip "TTY display modes" "script(1) not available"
+    fi
+
+    # --- config loader still behaves after extraction to lib/config.sh ---------------
+    local cfg="$o/cfg"
+    printf 'summary_only = yes\n' > "$cfg"
+    assert_match "config can set summary_only (new M4 key)" 'per-stage detail omitted' \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --config "$cfg" --output "$o/c1"
+    printf 'summary_only = banana\n' > "$cfg"
+    assert_match "a non-boolean config value warns rather than aborting" \
+        "expects a yes/no value" "$RC" scan "$CORPUS/crackme" --skip-ghidra --config "$cfg" \
+        --output "$o/c2"
+    assert_exit "and the run still completes" 0 \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --config "$cfg" --output "$o/c3"
+    printf 'nonsense_key = 1\n' > "$cfg"
+    assert_match "an unknown config key is reported, not silently applied" \
+        "ignoring unknown key" "$RC" scan "$CORPUS/crackme" --skip-ghidra --config "$cfg" \
+        --output "$o/c4"
+
+    # The loader lives in its own file now; the entry script must not have kept a copy.
+    if grep -q 'CONFIG_BOOL_KEYS=' "$ROOT/lib/config.sh" && \
+       ! grep -q 'CONFIG_BOOL_KEYS=' "$ROOT/revctf"; then
+        ok "the config key registry lives only in lib/config.sh"
+    else
+        no "config extraction" "the key registry is duplicated or was not moved"
+    fi
+}
+
+# ======================================================================================
 main() {
     local -a want=("$@")
-    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 m2 m3 qa ghidra)
+    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 m2 m3 m4 qa ghidra)
 
     printf '\033[1mrevctf verification harness\033[0m\n'
     printf 'repo: %s\n' "$ROOT"
@@ -1000,6 +1175,7 @@ main() {
             m1)     test_m1     ;;
             m2)     test_m2     ;;
             m3)     test_m3     ;;
+            m4)     test_m4     ;;
             qa)     test_qa     ;;
             ghidra) test_ghidra ;;
             *)      printf 'unknown section: %s\n' "$s" >&2 ;;

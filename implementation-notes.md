@@ -629,3 +629,122 @@ Two traps recorded for that migration: keep the repo in the Linux filesystem
 the `0600`/`0700` modes v4 §5 requires and QA-9/QA-10 fixed — the tests would pass
 while the guarantee was void; and never run `install.sh` from PowerShell or Git
 Bash, which fails partway and leaves a half-configured tree.
+
+---
+
+## M4 — Report assembly, display layer, config extraction (the MVP gate)
+
+### Decisions made during M4
+
+**One formatter, not two.** The report is written to `<output>/report.txt` and then
+`cat`-ed to stdout. The obvious alternative — format once for the terminal and once for the
+file — guarantees drift the first time someone edits one path. The harness asserts the two
+are byte-identical, so the shortcut cannot creep back in.
+
+**Progress goes to stderr; the report owns stdout.** This is now a standing convention in
+`CLAUDE.md` §2. It falls out of two existing requirements rather than being a new
+preference: v6 §10 wants the report to be plain text in every display mode, and the README
+promises `revctf scan x > report.txt` produces a usable file. If progress shared stdout,
+either the file gets escape sequences or the user watching a redirected run sees nothing.
+
+**Display mode is chosen once, at `tui_init`, from the state of both streams:**
+
+| stdout | stderr | mode | why |
+|---|---|---|---|
+| tty | tty | `tui` | user is watching interactively |
+| not tty | tty | `line` | report is being captured, user still present |
+| not tty | not tty | `heartbeat` | CI or a pipe — no cursor control at all |
+
+`--no-tui` forces `line` when a terminal is present. The existing gate in the entry script
+(`! -t 1` → `OPT[tui]=0`) was left as-is so the M2 display-mode assertions keep passing;
+`tui_init` adds the `-t 2` condition on top.
+
+**Rows are truncated, never wrapped.** A wrapped row occupies two terminal lines while the
+redraw rewinds by one, so the cursor lands inside the table and every subsequent frame
+corrupts further. `printf '%.*s'` with a measured width fixes it, and `SIGWINCH` re-measures.
+This is the single most likely failure mode in the file and the one the harness cannot see.
+
+**ASCII glyphs, not box drawing.** `[ok]`, `[FAILED]`, `[skip]`. A CTF box is often a
+serial console, a container with a C locale, or a tmux session over SSH, where box-drawing
+characters arrive as mojibake and make a working tool look broken.
+
+**Beginner blurbs are per-stage and specific.** The M4 Definition of Done calls these
+load-bearing. Each answers "why am I looking at this?" for a reader who has just learned
+what a binary is — and the two stages that *execute the target* say so in capitals, because
+that is a consent question, not a technical detail.
+
+**"What to try next" is derived, not static.** It names the stages that were skipped or
+failed *on this file*. A generic checklist gets skipped; "Stage ghidra did not run
+(skipped). If the flag is hiding there, that is the gap in this report" does not.
+
+**The config loader moved to `lib/config.sh` whole**, registry included. It is the single
+place an untrusted external value enters `OPT` — precisely the boundary QA-1 broke, where
+`full_hexdump = on` reached an arithmetic test and exited the shell from inside a stage.
+Coercion scattered through a 700-line entry script is how that defect survived review the
+first time. `config_coerce` is now separately testable.
+
+### Bugs found and fixed during M4
+
+- **`${#FLAG_HITS[@]:-0}` is not valid syntax.** Bash rejects a default-value expansion on
+  an array length with `bad substitution`, and — because it is a parse error, not a runtime
+  one — it killed the entire report and the run exited 1 with an empty report file. Caught
+  on the first live run. `${#FLAG_HITS[@]}` is already safe on an empty array.
+- **The heartbeat fired once per stage instead of once per interval**, because
+  `tui_stage_start` called `_tui_beat force`. On a 3-second scan that produced 14 lines,
+  which is exactly the log spam the interval exists to prevent. Only `tui_finish` forces.
+- **A shellcheck directive is not valid in front of a single `case` branch** — it produces
+  SC1124 plus a cascade of parse errors (SC1072/SC1073/SC1085) that make the whole file
+  unparseable, so *no* checks run on it. Moving `CLI_SET[config_path]=1` into a small
+  `set_config_path` function and annotating that is the fix. Recorded in `CLAUDE.md` §2;
+  this will recur wherever a cross-file global is only assigned inside a `case`.
+
+- **A phantom SIGHUP regression, caused by the harness launcher.** After M4 the `qa`
+  section began reporting `SIGHUP handling: got 0, want 129`, which reads as a signal
+  handler that stopped working — the worst kind of regression to see in a milestone gate.
+  It reproduced only inside the harness, never standalone, even replaying the exact
+  two-scan sequence by hand.
+
+  Instrumenting the check to keep revctf's stderr rather than discard it settled it: the
+  scan ran all 14 stages to completion and exited 0, so the signal had simply never been
+  acted on. The cause was `nohup`, used to launch the long harness run in the background.
+  `nohup` sets SIGHUP to SIG_IGN, the disposition is inherited by every descendant, and
+  bash will not install a trap for a signal that was ignored on entry — **exactly the rule
+  already documented for SIGINT on backgrounded jobs**, arriving by a different route.
+
+  Two changes came out of it. The check now reads `SigIgn` from `/proc/self/status` and
+  skips itself with a reason when bit 0 is set, instead of blaming the tool for the
+  harness's own process state. And it keeps stderr, because "got 0" with no evidence cost
+  most of an hour that a two-line stderr tail would have saved. Long harness runs should
+  use `setsid`, not `nohup`.
+
+### Verified behaviour
+
+Live, on the corpus crackme: 14 stages, `flag{cr4ckm3_s0lv3d}` at high confidence, report
+byte-identical on stdout and disk, `report.txt` mode `0600` inside a `0700` directory. A
+1-second bound on a 20MB random blob makes binwalk time out deterministically, which
+produces a DIAGNOSTICS entry naming the command and exit 124, and the run exits 2. Under a
+pty the redraw emits a growing cursor-rewind (`\033[2A` … `\033[15A`) and rows truncate at
+the measured width. With no tty at all, no cursor-control escape is emitted anywhere.
+
+**188 checks green** (31 new in the `m4` section, plus one added to `qa`).
+
+### The gap the harness cannot close
+
+Every M4 check that involves a terminal is made through `script(1)`, which fakes a pty well
+enough to assert that escape sequences are *emitted* — and no further. It cannot tell you
+whether a resize corrupts the redraw, whether Ctrl+C leaves the cursor hidden, or whether
+a 50-column window is legible. Those need a human at a real terminal, which this build
+environment has never had.
+
+`tools/tui-selftest.sh` exists for that: six interactive checks, run once on real hardware.
+Until it has been run, **the M4 display layer is verified only to the extent a pty
+simulation allows** — that is a known, deliberate gap, not an oversight.
+
+### Still open, by milestone
+
+- **M5 must be built on real hardware.** Tier B/C are unreachable on an 8GB host,
+  `systemd-run` cannot run without systemd booted, and Phase 2 must be sized from FLOSS's
+  measured 1.46GB rather than Ghidra's ceiling. See `HANDOFF.md` §6.
+- M6 needs a Docker daemon; M8 needs a TTY. Neither exists in the build sandbox.
+- `REPORT_EXCERPT_LINES` and the per-stage caps are judgement, not measurement. Revisit
+  once someone has read a report for a real challenge.

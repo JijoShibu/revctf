@@ -5,6 +5,62 @@ section references (v3 §8, v5 §4.1, v6 §11) point at the design documents.
 
 ---
 
+## [v0.1-mvp / M4] — Report assembly, display layer, config extraction
+
+**The MVP gate.** revctf now does end to end what it exists to do: point it at a
+challenge file and get back a readable report with the flag at the top.
+
+### Added
+
+- **`lib/report.sh`** — the report. Flags first (v6 §6.1), then a stage table, then
+  per-stage detail with a beginner blurb explaining *why you are looking at this*, then
+  diagnostics for anything that failed, then a next-steps block derived from what actually
+  happened on this file rather than a static checklist. Written to
+  `<output>/report.txt` at `0600` and mirrored to stdout from one code path — two
+  formatters would drift.
+- **`lib/tui.sh`** — three display modes, chosen once at startup: an in-place table when
+  both streams are terminals, one line per transition with `--no-tui`, and a periodic
+  heartbeat when stdout is redirected. **All progress goes to stderr**, so
+  `revctf scan x > report.txt` yields a clean file while the user still sees movement.
+  `SIGWINCH` re-measures the width, and rows are truncated rather than wrapped — a wrapped
+  row occupies two terminal lines and corrupts the cursor rewind.
+- **`lib/config.sh`** — the config loader and key registry, extracted from the entry
+  script. It is the single place an untrusted external value enters `OPT`, which is
+  exactly the boundary QA-1 broke; one auditable file beats coercion scattered through a
+  700-line script. `summary_only` joins the allowlist.
+- **`--summary-only`** wired through: keeps the header, flags and stage table, drops
+  per-stage detail, and says so rather than leaving the reader wondering.
+- **`tools/tui-selftest.sh`** — six interactive checks the automated harness cannot make,
+  because it has never had a controlling terminal: in-place redraw, **resize during a run**,
+  Ctrl+C latency and cursor state, narrow-terminal truncation, redirection cleanliness, and
+  whether the report reads as intended. Run once on a real terminal.
+- **`m4` harness section** — 30 checks, plus one added to `qa`. Total suite: **188 checks**.
+
+### Fixed
+
+- The M3 interim summary reported fabricated `0s` for the flag scan and had no way to show
+  a failed stage's command or stderr. Both are now in the diagnostics block.
+
+### Fixed — in the harness
+
+- The `qa` timing check parsed the stage table's third column as a bare number. M4 prints
+  the unit (`73s`), so it hit an arithmetic test with a non-numeric word — the same class
+  of defect as QA-1, in the harness this time.
+- The SIGHUP check reported a phantom regression when the harness was launched under
+  `nohup`, which sets SIGHUP to SIG_IGN for every descendant; bash then refuses to install
+  the trap, the same POSIX rule already documented for SIGINT. The check now reads
+  `SigIgn` from `/proc/self/status` and skips itself with a reason, and keeps revctf's
+  stderr so a failure carries evidence.
+
+### Notes
+
+Ghidra, the TUI and the report were exercised together on the corpus crackme: 14 stages,
+`flag{cr4ckm3_s0lv3d}` recovered at high confidence, report byte-identical on stdout and
+on disk. A stage forced to time out produces a diagnostics entry naming the command and
+exit code, and the run exits 2 as designed.
+
+---
+
 ## [M3] — Heavy stages, decompilers and flag detection
 
 All 13 stages plus the flag scan run end to end. On the corpus crackme, Ghidra recovers

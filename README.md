@@ -6,11 +6,11 @@ Point it at a challenge binary — or a directory of them — and it runs a stag
 (triage/unwrap, static analysis, dynamic tracing, decompilation) and writes a
 beginner-friendly plain-text report with flag candidates surfaced at the top.
 
-> **Status: M3 complete.** All 13 analysis stages and flag detection work end to end —
-> including Ghidra headless decompilation and the base64/base32/hex/ROT13 encoding sweep.
-> The formatted report and live TUI land in M4, which is the MVP gate. Verification: 157
-> checks, all green (`./tools/run-tests.sh`). See `CHANGELOG.md`, `QA-REVIEW.md` and
-> `implementation-notes.md`.
+> **Status: M4 complete — this is the MVP (`v0.1-mvp`).** Single-file scanning works end
+> to end: 14 stages including Ghidra headless, flag detection with the
+> base64/base32/hex/ROT13 sweep, a readable report, and three display modes. Verification:
+> **188 checks, all green** (`./tools/run-tests.sh`). M5–M9 add RAM tiers, the Docker
+> sandbox, batch mode, user agency and resilience. New here? Read `HANDOFF.md`.
 
 ---
 
@@ -114,13 +114,24 @@ a run or fill a disk:
 
 ## Output
 
-Reports are plain text, written to `./revctf-reports/<name>-<timestamp>/` (directory `700`,
-files `600`) and mirrored to stdout. A stage that finds nothing says so; a stage that fails
-says so with the command, exit code, and a stderr tail. One failed stage never stops the
-run.
+Reports are plain text, written to `./revctf-reports/<name>-<timestamp>/report.txt`
+(directory `700`, files `600`) and mirrored to stdout byte-for-byte. The order is fixed:
 
-Display adapts: a live stage table on a terminal, periodic heartbeat lines when redirected.
-`--no-tui` forces plain line output.
+1. **Possible flags** — first, so you never scroll for the answer
+2. **What ran** — every stage with status, time and output size
+3. **Stage detail** — each capture with a plain-English note on why you are looking at it
+4. **Diagnostics** — any stage that failed, with its command, exit code and stderr tail
+5. **What to try next** — derived from what happened on *your* file, not a generic list
+
+A stage that finds nothing says so; one that fails says so. A failure is isolated and the
+run continues.
+
+`--summary-only` keeps items 1, 2, 4 and 5 and drops the per-stage detail.
+
+**Progress goes to stderr, the report to stdout**, so `revctf scan x > report.txt` gives a
+clean file while you still see movement. Display adapts: an in-place stage table when
+you are on a terminal, one line per stage with `--no-tui`, and a periodic heartbeat when
+stdout is redirected.
 
 ## Configuration
 
@@ -157,13 +168,19 @@ Kali Linux (or Debian-derived), Bash 4+, and the toolchain `install.sh` sets up:
 
 ```bash
 ./tools/build-test-corpus.sh              # 18 test artifacts (gitignored)
-./tools/run-tests.sh                      # 157 checks (~15 min)
-./tools/run-tests.sh m3 qa                # just those sections
+./tools/run-tests.sh                      # 188 checks (~15 min)
+./tools/run-tests.sh m4 qa                # just those sections
 REVCTF_TEST_FAST=1 ./tools/run-tests.sh   # skip the 220MB-target checks (~3 min)
+./tools/tui-selftest.sh                   # 6 interactive checks — needs a real terminal
 ```
 
-The `ghidra` section self-skips when no Ghidra is installed. `CLAUDE.md` holds the
-conventions that must not be violated — read it before changing `lib/`.
+The `ghidra` section self-skips when no Ghidra is installed. `tui-selftest.sh` covers what
+the harness structurally cannot: whether a resize corrupts the redraw, whether Ctrl+C
+leaves the cursor hidden, whether the report reads as intended. Run it once on a real
+terminal before trusting the display layer.
+
+`HANDOFF.md` is the cold-start entry point. `CLAUDE.md` holds the conventions that must not
+be violated — read it before changing `lib/`.
 
 ## Design documents
 

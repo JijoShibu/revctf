@@ -68,20 +68,10 @@ declare -A OPT=(
 )
 declare -A CLI_SET=()
 
-# Keys a config file is permitted to set (v6 §9 — allowlist validation).
-CONFIG_ALLOWED="output_dir timeout flag_scan flag_format full_hexdump skip_ltrace \
-skip_strace skip_ghidra no_unwrap unwrap_depth light_decompile force_full_decompile ghidra_script \
-jobs_light jobs_ghidra maxmem_ghidra auto_swap sandbox tui strict stages_disabled"
-
-# Of those, which are booleans and which are integers. Both groups are consumed in `-eq`
-# tests, which is arithmetic context — and under `set -u` a non-numeric word there is
-# evaluated as a variable name and aborts the shell outright. A config line as ordinary as
-# `tui = yes` would therefore kill the run, and `full_hexdump = on` would kill it *inside a
-# stage*, where `set -e`-free isolate-and-continue cannot save it. So every value from a
-# config file is coerced or rejected before it can reach an arithmetic test.
-CONFIG_BOOL_KEYS="flag_scan full_hexdump skip_ltrace skip_strace skip_ghidra no_unwrap \
-light_decompile force_full_decompile auto_swap sandbox tui strict"
-CONFIG_INT_KEYS="timeout unwrap_depth jobs_light jobs_ghidra"
+# The config key registry and loader live in lib/config.sh (M4). They are kept together
+# because that file is the single place an untrusted external value enters OPT, and QA-1
+# — a config word reaching an arithmetic test and exiting the shell from inside a stage —
+# was exactly that boundary failing. One auditable file beats coercion scattered here.
 
 CONFIG_PATH="$REVCTF_HOME/config"
 SUBCOMMAND=""
@@ -186,6 +176,11 @@ EOF
 # ======================================================================================
 set_opt() { OPT["$1"]="$2"; CLI_SET["$1"]=1; }
 
+# Kept out of the argument `case` because a shellcheck directive is only valid in front
+# of a complete command, never a single case branch.
+# shellcheck disable=SC2034  # CLI_SET is read by config_load() in lib/config.sh
+set_config_path() { CONFIG_PATH="$1"; CLI_SET[config_path]=1; }
+
 need_value() {
     # $1 = flag name, $2 = number of remaining argv entries
     [[ $2 -ge 2 ]] || die "$1 requires a value (see 'revctf --help')"
@@ -253,7 +248,7 @@ parse_args() {
 
             # --- display & config ---
             --no-tui) set_opt tui 0; shift ;;
-            --config) need_value "$1" $#; CONFIG_PATH="$2"; CLI_SET[config_path]=1; shift 2 ;;
+            --config) need_value "$1" $#; set_config_path "$2"; shift 2 ;;
 
             # --- diagnostics ---
             --verbose) set_opt verbose 1; shift ;;
@@ -280,71 +275,14 @@ parse_args() {
 # ======================================================================================
 # Config file (v6 §9)
 # ======================================================================================
+# load_config — source lib/config.sh, then read ~/.revctf/config into OPT.
+#
+# Sourced here rather than in cmd_scan because validate_opts() needs CONFIG_BOOL_KEYS,
+# and both run before any subcommand dispatch.
 load_config() {
-    [[ -r $CONFIG_PATH ]] || {
-        # An explicitly-requested config that does not exist is an error; the default
-        # one simply being absent is not.
-        [[ -n ${CLI_SET[config_path]:-} ]] && die "config file not readable: $CONFIG_PATH"
-        return 0
-    }
-
-    local lineno=0 line key value
-    while IFS= read -r line || [[ -n $line ]]; do
-        lineno=$((lineno + 1))
-        line="${line%%#*}"                       # strip comments
-        line="${line#"${line%%[![:space:]]*}"}"  # ltrim
-        line="${line%"${line##*[![:space:]]}"}"  # rtrim
-        [[ -z $line ]] && continue
-
-        if [[ $line != *=* ]]; then
-            warn "$CONFIG_PATH:$lineno: ignoring malformed line (expected key=value)"
-            continue
-        fi
-
-        key="${line%%=*}"; value="${line#*=}"
-        key="${key%"${key##*[![:space:]]}"}"
-        value="${value#"${value%%[![:space:]]*}"}"
-        value="${value%\"}"; value="${value#\"}"
-        value="${value%\'}"; value="${value#\'}"
-
-        if [[ " $CONFIG_ALLOWED " != *" $key "* ]]; then
-            warn "$CONFIG_PATH:$lineno: ignoring unknown key '$key'"
-            continue
-        fi
-
-        # Config loses to an explicit CLI flag.
-        [[ -n ${CLI_SET[$key]:-} ]] && continue
-
-        # Coerce/validate before the value can reach an arithmetic test.
-        if [[ " $CONFIG_BOOL_KEYS " == *" $key "* ]]; then
-            case "${value,,}" in
-                1|yes|true|on|enabled)   value=1 ;;
-                0|no|false|off|disabled) value=0 ;;
-                *)  warn "$CONFIG_PATH:$lineno: '$key' expects a yes/no value (got '$value'); using the default"
-                    continue ;;
-            esac
-        elif [[ " $CONFIG_INT_KEYS " == *" $key "* ]]; then
-            if ! is_uint "$value"; then
-                warn "$CONFIG_PATH:$lineno: '$key' expects a whole number (got '$value'); using the default"
-                continue
-            fi
-        elif [[ $key == output_dir || $key == ghidra_script ]]; then
-            # README documents `output_dir = ~/ctf/reports`. A config file is read, not
-            # sourced, so `~` would otherwise be taken literally and create a directory
-            # actually named "~".
-            # The config file is read, not sourced, so this is the only place `~` gets
-            # expanded. Compared character-wise to keep a literal tilde out of a path
-            # context. README documents `output_dir = ~/ctf/reports`, which would
-            # otherwise create a directory actually named "~".
-            if [[ ${value:0:1} == '~' ]]; then
-                if [[ ${#value} -eq 1 || ${value:1:1} == '/' ]]; then
-                    value="$HOME${value:1}"
-                fi
-            fi
-        fi
-
-        OPT["$key"]="$value"
-    done < "$CONFIG_PATH"
+    # shellcheck source=/dev/null
+    source "$REVCTF_LIB/config.sh" || die "cannot load $REVCTF_LIB/config.sh"
+    config_load
 }
 
 # ======================================================================================
@@ -460,7 +398,7 @@ cmd_scan() {
     for m in stage stage_dynamic stage_triage stage_file stage_strings stage_binwalk \
              stage_hexdump stage_checksec stage_objdump stage_ltrace stage_radare2 \
              stage_strace stage_floss stage_managed stage_pydecomp stage_ghidra \
-             flagscan; do
+             flagscan tui report; do
         # shellcheck source=/dev/null
         source "$REVCTF_LIB/$m.sh" || die "cannot load $REVCTF_LIB/$m.sh"
     done
@@ -552,7 +490,12 @@ scan_one_file() {
     local aborted=0
     run_stage() {
         [[ $aborted -eq 1 ]] && return 0
+        # Register before running so the live table shows the stage as pending-then-running
+        # rather than materialising only once it has finished.
+        stage_set_status "$1" pending
+        tui_stage_start "$1" "$2"
         stage_run "$1" "$2" "$3"
+        tui_stage_end "$1"
         if [[ ${OPT[strict]} -eq 1 && ${STAGE_STATUS[$1]:-} == failed ]]; then
             printf 'revctf: --strict: stopping after stage "%s" failed (%s)\n' \
                 "$1" "${STAGE_NOTE[$1]:-no detail}" >&2
@@ -560,6 +503,10 @@ scan_one_file() {
         fi
         return 0
     }
+
+    # 14 = Stage 0 plus the 13 analysis stages (v6 §4). The count is what lets the display
+    # say "3/14" instead of an open-ended spinner; a wrong count is cosmetic, never fatal.
+    tui_init 14
 
     # Stage 0 first, always: every later stage must analyse the real payload rather than
     # a packer stub or a container (v6 §4.1).
@@ -588,12 +535,15 @@ scan_one_file() {
 
     # Flag scan runs across EVERY capture, not just strings (v6 §6.3).
     if [[ ${OPT[flag_scan]} -eq 1 ]]; then
-        [[ ${OPT[verbose]} -eq 1 ]] && _msg "revctf: [flagscan] scanning all captures"
+        tui_note "scanning every capture for flag candidates"
         flagscan_run
     fi
 
-    # --- M4 report assembly lands here --------------------------------------------
-    m2_interim_summary
+    # --- M4: assemble and emit the report -----------------------------------------
+    # tui_finish first: the progress display owns the terminal until this point, and the
+    # report must not be interleaved with a half-drawn table.
+    tui_finish
+    report_build
 
     # Exit status distinguishes "ran, all stages fine" from "ran, some stages failed".
     # Both are successful runs under v5 §4.1's isolate-and-continue rule, but a script or
@@ -613,30 +563,6 @@ scan_one_file() {
         return 2
     fi
     return 0
-}
-
-# Interim stdout summary, replaced by lib/report.sh in M4. It exists so M2 is verifiable
-# on its own rather than only once the report layer arrives.
-m2_interim_summary() {
-    local s status note
-    printf '\n'
-    printf 'revctf %s — %s\n' "$REVCTF_VERSION" "$RUN_ORIGINAL"
-    printf 'format: %s   captures: %s\n' "$RUN_FORMAT" "$RUN_OUTDIR"
-    [[ $RUN_TARGET != "$RUN_ORIGINAL" ]] && printf 'analysed: %s (unwrapped)\n' "$RUN_TARGET"
-    printf '\n%-10s  %-8s  %5s  %10s  %s\n' STAGE STATUS SECS BYTES NOTE
-    for s in "${STAGE_ORDER[@]}"; do
-        status="${STAGE_STATUS[$s]:-?}"
-        note="${STAGE_NOTE[$s]:-}"
-        printf '%-10s  %-8s  %5s  %10s  %s\n' \
-            "$s" "$status" "${STAGE_SECS[$s]:-0}" \
-            "$(st_file_size "${STAGE_OUT[$s]:-/dev/null}")" "$note"
-    done
-    # Called unconditionally: flagscan_report handles the disabled case itself, and
-    # saying "flag detection was disabled" is information. Skipping the section entirely
-    # leaves the user staring at a report with no flag section and no explanation.
-    printf '\n'
-    flagscan_report
-    printf '\n(M3: all 13 stages + flag scan. Formatted report lands in M4.)\n'
 }
 
 # ======================================================================================

@@ -3,8 +3,8 @@
 Generated companion to `revctf-checklist.html`. Milestones refer to
 `revctf_executionmasterplan.md`; this file is the source of truth for status.
 
-**84 tracked items** — 36 done · 36 pending · 6 open risk · 6 deferred.
-Milestones M0–M3 complete of M0–M9. Verification harness: 157 checks, all green.
+**84 tracked items** — 45 done · 27 pending · 6 open risk · 6 deferred.
+Milestones M0–M4 complete of M0–M9 (tag v0.1-mvp). Verification harness: 188 checks, all green.
 
 Legend: `[x]` done · `[ ]` pending · `[!]` open risk · `[-]` deferred (decided against).
 
@@ -75,26 +75,26 @@ The stage framework and all 13 analysis stages.
 - [x] **M3 · Flag detection: confidence tiers, cross-stage attribution, encoding sweep**
   <br>M: M3 · lib/flagscan.sh
 
-## Phase 4 — MVP Gate (M4)  — 0/8
+## Phase 4 — MVP Gate (M4)  — 8/8
 
 The milestone at which the tool is genuinely usable end to end. Currently the active work.
 
-- [ ] **M4 · lib/report.sh — beginner blurbs, raw output, found/failed/empty markers**
-  <br>M: M4 · stub only
-- [ ] **M4 · Flag section at the top of the report, ASCII [FLAG] fallback**
-  <br>M: M4 · flagscan_report exists; not wired to report
-- [ ] **M4 · lib/tui.sh — live stage table on TTY, prompts in a bottom pane**
-  <br>M: M4 · stub only; highest defect risk
-- [ ] **M4 · --no-tui line mode + heartbeat when redirected**
-  <br>M: M4 · display mode selection already works
-- [ ] **M4 · Report file naming, stdout mirroring, 700/600 permissions**
-  <br>M: M4 · permissions already enforced
-- [ ] **M4 · --summary-only ordering (flags first, condensed status lines)**
-  <br>M: M4 · flag parsed, unimplemented
-- [ ] **M4 · Config loader extracted to lib/config.sh for batch subshells**
-  <br>M: M4 · currently inlined
-- [ ] **M4 · GATE: single-file autonomous run produces a complete report on all corpus files**
-  <br>M: M4 · tag v0.1-mvp when green
+- [x] **M4 · lib/report.sh — beginner blurbs, raw output, found/failed/empty markers**
+  <br>M: M4 · lib/report.sh · per-stage blurbs
+- [x] **M4 · Flag section at the top of the report, ASCII [FLAG] fallback**
+  <br>M: M4 · harness asserts flags precede the table
+- [x] **M4 · lib/tui.sh — in-place stage table on TTY, SIGWINCH re-measure, truncation**
+  <br>M: M4 · prompts pane deferred to M8
+- [x] **M4 · --no-tui line mode + heartbeat when redirected**
+  <br>M: M4 · 3 modes; all progress on stderr
+- [x] **M4 · Report file naming, stdout mirroring, 700/600 permissions**
+  <br>M: M4 · stdout byte-identical to report.txt
+- [x] **M4 · --summary-only ordering (flags first, condensed status lines)**
+  <br>M: M4 · keeps flags/table/diagnostics
+- [x] **M4 · Config loader extracted to lib/config.sh for batch subshells**
+  <br>M: M4 · registry + config_coerce
+- [x] **M4 · GATE: single-file autonomous run produces a complete report on all corpus files**
+  <br>M: M4 · 188 checks green · tagged v0.1-mvp
 
 ## Phase 5 — Resource, Safety & Scale  — 0/13
 
@@ -127,26 +127,26 @@ Everything after the MVP: adaptivity, isolation, batch, agency, resilience.
 - [ ] **M9 · lib/spinner.sh, --verbose/--debug plumbing, full SIGINT abort semantics**
   <br>M: M9 · abort semantics partly done
 
-## Phase 6 — QA Process (recurring, every milestone)  — 8/11
+## Phase 6 — QA Process (recurring, every milestone)  — 9/11
 
-Run this block for M4 through M9. It is what kept M0–M3 honest.
+Run this block for M5 through M9. It is what kept M0–M4 honest.
 
 - [x] **shellcheck -S style clean across every shell file**
-  <br>M: M0–M3 · asserted by the harness
+  <br>M: M0–M4 · asserted by the harness
 - [x] **Verification harness green before advancing past a DoD gate**
-  <br>M: M0–M3 · 157 checks
+  <br>M: M0–M4 · 188 checks
 - [x] **New milestone adds its own harness section; earlier gates re-run**
-  <br>M: M0–M3 · lint/corpus/m0/m1/m2/m3/qa/ghidra
+  <br>M: M0–M4 · lint/corpus/m0/m1/m2/m3/m4/qa/ghidra
 - [x] **Adversarial QA pass — security, fault tolerance, load, error handling**
   <br>M: pre-M3 · 16 defects, all fixed
 - [x] **Every QA finding pinned by a regression check so it cannot return**
   <br>M: pre-M3 · qa section, 32 checks
 - [x] **Findings and rejected approaches appended to implementation-notes.md**
-  <br>M: M0–M3 · ongoing discipline
+  <br>M: M0–M4 · ongoing discipline
 - [x] **Commit at each green gate; tag the named checkpoints**
-  <br>M: M0–M3 · v0.2-m2-qa
-- [ ] **Repeat the full QA block for M4 (report + TUI)**
-  <br>M: M4 · TUI is the highest-risk component
+  <br>M: M0–M4 · v0.2-m2-qa · v0.1-mvp
+- [x] **Repeat the full QA block for M4 (report + TUI)**
+  <br>M: M4 · 30 m4 checks; TTY gap covered by tui-selftest.sh
 - [ ] **Repeat for M5–M9; add tier/sandbox/batch/agency/resilience sections**
   <br>M: M5–M9
 - [ ] **Second adversarial pass before v1.0, covering the M4–M9 surface**
@@ -171,7 +171,7 @@ What has to be true before calling it v1.0.
 - [ ] **Connect the Claude GitHub App for automated pushes at v1.0**
   <br>M: v1.0 · hybrid plan
 - [x] **README, CHANGELOG, CLAUDE.md and notes current at each milestone**
-  <br>M: M0–M3 · re-verify per milestone
+  <br>M: M0–M4 · re-verify per milestone
 - [ ] **README documents every flag, tier table, agency model, diagnostics**
   <br>M: M9 · partially done
 - [ ] **Tag v0.1-mvp at the M4 gate**

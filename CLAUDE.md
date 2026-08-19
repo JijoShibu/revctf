@@ -63,6 +63,13 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
   `=~` against a user pattern. `--flag-format` is user input run over megabytes of capture;
   a backtracking engine makes that a self-inflicted DoS. The harness fails if any PCRE flag
   appears in `lib/`.
+- **All progress output goes to stderr; the report owns stdout.** `lib/tui.sh` must never
+  write to stdout. `revctf scan x > report.txt` has to produce a clean file while progress
+  still reaches the terminal, and v6 §10 requires the report to be plain text in every
+  display mode.
+- **A shellcheck directive is only valid in front of a complete command**, never a single
+  `case` branch — it produces SC1124/SC1072 and breaks parsing. Lift the statement into a
+  small function and annotate that instead (see `set_config_path`).
 - Commits are authored as `Jijo <jijoshibuwork@gmail.com>` and made with
   `-c commit.gpgsign=false` so GitHub does not show "Unverified".
 
@@ -109,11 +116,13 @@ lib/preflight.sh          tool discovery, versions, Ghidra runtime, disk, system
 lib/stage_triage.sh       Stage 0: classify + unwrap (packers, archives, managed, Python)
 lib/stage_*.sh            one file per analysis stage
 lib/flagscan.sh           tiered regex + encoding sweep            (M3)
+lib/config.sh             config key registry + coercion           (M4)
 lib/report.sh             report assembly                          (M4)
-lib/tui.sh                live stage table / line / heartbeat       (M4)
+lib/tui.sh                stage table / line / heartbeat, stderr   (M4)
 scripts/*.py              the two Ghidra headless post-scripts     (M3)
 tools/build-test-corpus.sh  regenerates the 18-artifact corpus (binaries are gitignored)
 tools/run-tests.sh        milestone-gate verification harness
+tools/tui-selftest.sh     interactive checks needing a real terminal (M4)
 .claude/cloud-setup.sh    toolchain install for a cloud environment
 ```
 
@@ -139,10 +148,13 @@ anywhere. Set `PF_OPT_ROOT_REAL=/opt` to point it at a real install.
 the standard; do not advance past one until its verification actually runs. Each milestone
 adds its own section to the harness so earlier gates keep being re-checked.
 
-**Milestone status:** M0, M1, M2, the QA pass and **M3** are complete. 157 checks green.
-All 13 stages plus flag detection run end to end. Next is **M4** — the MVP gate: report
-assembly (`lib/report.sh`), the TUI (`lib/tui.sh`), and full single-file wiring. M5–M9 add
-RAM tiers, the Docker sandbox, batch mode, user agency, and resilience.
+**Milestone status:** M0, M1, M2, the QA pass, M3 and **M4** are complete — **188 checks
+green**, tagged `v0.1-mvp`. Single-file scanning works end to end: 14 stages, flag
+detection, a readable report, three display modes.
+
+Next is **M5**, and it **must be built on real hardware, not in a cloud sandbox** — see
+`HANDOFF.md` §6. Tier B/C cannot be entered on an 8GB host, `systemd-run` cannot run
+without systemd booted, M6 needs a Docker daemon and M8 needs a TTY.
 
 ---
 
@@ -173,3 +185,10 @@ Carried in `implementation-notes.md`, repeated here because they affect design c
   disproved; size Phase 2 from that number. `FLOSS_MAX_MB` (64MB) is the interim guard.
 - **Two tools reject the `--` end-of-options marker AND so does radare2** (it analyses
   nothing and every binary looks stripped). Check any new tool for this before trusting it.
+- **`nohup` makes SIGHUP untrappable for every descendant.** It sets SIGHUP to SIG_IGN
+  (`SigIgn: …1` in `/proc/<pid>/status`), the disposition is inherited, and bash will not
+  install a trap for a signal ignored on entry — the same rule that makes SIGINT
+  untrappable for a backgrounded job. Running the harness under `nohup` therefore made the
+  SIGHUP check fail while revctf was behaving correctly. Launch long harness runs with
+  `setsid`, not `nohup`. The check now detects the ignored disposition and skips itself
+  with a reason.

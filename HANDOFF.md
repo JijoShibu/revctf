@@ -7,7 +7,7 @@ the four it points at — so no future session needs to carry a long transcript.
 If you are a new session: read this file top to bottom, then `CLAUDE.md`. That
 is enough to start work. Read the others on demand.
 
-Last consolidated: 2026-08-18, after M3 + the QA pass, before M4.
+Last consolidated: 2026-08-19, after M4 (`v0.1-mvp`), before M5.
 
 ---
 
@@ -44,24 +44,27 @@ v6 §11 Deviation Register > v5 + execution masterplan > v4 > v3.**
 
 ## 3. Current state
 
-**M0, M1, M2, the QA pass and M3 are complete. M4 is next and is the MVP gate.**
+**M0, M1, M2, the QA pass, M3 and M4 are complete. `v0.1-mvp` is tagged.**
+**M5 is next, and it must be built on real hardware — see §6.**
 
 - All 13 analysis stages plus Stage 0 triage run end to end.
 - Flag detection works, including the base64/base32/hex/ROT13 encoding sweep.
 - Ghidra headless verified against a real 11.2.1 install: it recovers the
   password `sw0rdf1sh` from the corpus crackme's pseudo-C.
-- **Verification: `./tools/run-tests.sh` → 157 checks, all green.** Sections:
-  `lint corpus m0 m1 m2 m3 qa ghidra`. `REVCTF_TEST_FAST=1` skips the 220 MB
+- Single-file scanning works end to end: report with flags first, three display modes.
+- **Verification: `./tools/run-tests.sh` → 188 checks, all green.** Sections:
+  `lint corpus m0 m1 m2 m3 m4 qa ghidra`. `REVCTF_TEST_FAST=1` skips the 220 MB
   target checks (~3 min instead of ~15).
-- 13 commits, tag `v0.2-m2-qa`. Branch `main`.
+- Tags `v0.2-m2-qa` and `v0.1-mvp`. Branch `main`, pushed to
+  <https://github.com/JijoShibu/revctf> (private).
 
-Progress: 54% of build tasks; 36 of 84 tracked items done; 4 of 10 milestones.
+Progress: 72% of build tasks; 45 of 84 tracked items done; 5 of 10 milestones.
 
 ### Remaining milestones
 
 | # | Scope | Can this cloud sandbox validate it? |
 |---|---|---|
-| M4 | `lib/report.sh`, `lib/tui.sh`, `--summary-only`, config-loader extraction, tag `v0.1-mvp` | Mostly — the TUI needs a human at a real terminal |
+| M4 | ~~report, TUI, `--summary-only`, config extraction~~ | **DONE** — but the TUI is verified only as far as a `script(1)` pty allows; run `tools/tui-selftest.sh` on a real terminal |
 | M5 | RAM tiers A/B/C, RSS watchdog, swap offer, `systemd-run` bounding | **No** — see §6 |
 | M6 | Docker sandbox image, `install.sh` hardening, vendor `pyinstxtractor` | **No** — no Docker daemon |
 | M7 | Batch mode, three-phase scheduling, per-archive-member analysis | Yes, and well |
@@ -204,10 +207,11 @@ target hardware at M5** — those are the numbers that matter.
 
 | Location | State |
 |---|---|
-| Cloud sandbox `/home/claude/work/revctf` | **Authoritative.** 13 commits, tag `v0.2-m2-qa`, branch `main`. Ephemeral |
-| Device `D:\RevCTF\revctf` | Stale copy at commit `37b9b69` (11 commits). Same history, just behind |
+| GitHub `JijoShibu/revctf` (private) | **Authoritative.** Branch `main`, tags `v0.2-m2-qa` and `v0.1-mvp` |
+| Cloud sandbox `/home/claude/work/revctf` | Working copy through M4. Ephemeral |
+| Device `D:\RevCTF\revctf-repo` | The pushed clone. `D:\RevCTF\revctf` was the stale pre-push copy |
 | Device `D:\RevCTF\` | Also holds the v3–v6 masterplans and the execution masterplan |
-| GitHub | **Nothing pushed yet.** No remote configured |
+
 
 **I cannot push from the sandbox.** Re-verified 2026-08-18 rather than assumed:
 the `GH_TOKEN` is a 14-char proxy token with **empty `X-OAuth-Scopes`** and
@@ -251,11 +255,10 @@ Claude Code in PowerShell installed, VirtualBox present, **no WSL yet**).
 
 Decided 2026-08-18 after comparing environments:
 
-1. **Push to GitHub now.** 13 unbacked commits in an ephemeral container is the
-   single largest live risk. `PUSH-RUNBOOK.md` + `revctf-full.bundle`.
-2. **Build M4 in this cloud session.** Report assembly is pure Bash text
-   manipulation and this environment does it well. The TUI gets built here and
-   eyeballed by the user on a real terminal.
+1. ~~Push to GitHub.~~ **Done** — 14 commits, private repo, verified.
+2. ~~Build M4 in this cloud session.~~ **Done** — `v0.1-mvp`. One task remains on the
+   user's side: run `tools/tui-selftest.sh` on a real terminal, since no automated check
+   can see a corrupted redraw or a hidden cursor.
 3. **Cut over at M5** to Claude Code inside WSL Kali (or the VirtualBox Kali VM).
    From M5 the work *is* the host — tiers, `systemd-run`, swap, Docker, TTY
    prompts. Continuing in the cloud past M4 means writing code against an
