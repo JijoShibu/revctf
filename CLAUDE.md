@@ -200,7 +200,7 @@ anywhere. Set `PF_OPT_ROOT_REAL=/opt` to point it at a real install.
 the standard; do not advance past one until its verification actually runs. Each milestone
 adds its own section to the harness so earlier gates keep being re-checked.
 
-**Milestone status:** M0, M1, M2, the QA pass, M3 and **M4** are complete — **188 checks
+**Milestone status:** M0, M1, M2, the QA pass, M3 and **M4** are complete — **262 checks
 green**, tagged `v0.1-mvp`. Single-file scanning works end to end: 14 stages, flag
 detection, a readable report, three display modes.
 

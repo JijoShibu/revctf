@@ -53,8 +53,8 @@ v6 §11 Deviation Register > v5 + execution masterplan > v4 > v3.**
 - Ghidra headless verified against a real 11.2.1 install: it recovers the
   password `sw0rdf1sh` from the corpus crackme's pseudo-C.
 - Single-file scanning works end to end: report with flags first, three display modes.
-- **Verification: `./tools/run-tests.sh` → 188 checks, all green.** Sections:
-  `lint corpus m0 m1 m2 m3 m4 qa ghidra`. `REVCTF_TEST_FAST=1` skips the 220 MB
+- **Verification: `./tools/run-tests.sh` → 262 checks, all green.** Sections:
+  `lint corpus m0 m1 m2 m3 m4 m5 qa docs ghidra`. `REVCTF_TEST_FAST=1` skips the 220 MB
   target checks (~3 min instead of ~15).
 - Tags `v0.2-m2-qa` and `v0.1-mvp`. Branch `main`, pushed to
   <https://github.com/JijoShibu/revctf> (private).
@@ -66,9 +66,9 @@ Progress: 72% of build tasks; 45 of 84 tracked items done; 5 of 10 milestones.
 | # | Scope | Can this cloud sandbox validate it? |
 |---|---|---|
 | M4 | ~~report, TUI, `--summary-only`, config extraction~~ | **DONE** — but the TUI is verified only as far as a `script(1)` pty allows; run `tools/tui-selftest.sh` on a real terminal |
-| M5 | RAM tiers A/B/C, RSS watchdog, swap offer, `systemd-run` bounding | **No** — see §6 |
-| M6 | Docker sandbox image, `install.sh` hardening, vendor `pyinstxtractor` | **No** — no Docker daemon |
-| M7 | Batch mode, three-phase scheduling, per-archive-member analysis | Yes, and well |
+| M5 | Tier resolution **done**; remaining: `systemd-run`/`ulimit -v` **enforcement**, RSS watchdog, Ghidra MAXMEM wiring. Swap offer removed (D10) | **No** — systemd is not booted here, so the primary path cannot execute even once |
+| M6 | Docker sandbox image, `install.sh` hardening, vendor `pyinstxtractor`. **Independent of M5** — can run in parallel on the host | **No** — no Docker daemon |
+| M7 | Batch mode, three-phase scheduling, per-archive-member analysis. **Depends on M5** for tier-driven concurrency | Logic yes, but it is blocked behind M5 |
 | M8 | `--interactive` agency: Continue / Skip stage / Skip file / Abort | **No** — no TTY |
 | M9 | Crash resilience, resume, error-log rotation | Partly |
 
@@ -264,8 +264,15 @@ Decided 2026-08-18 after comparing environments:
    From M5 the work *is* the host — tiers, `systemd-run`, swap, Docker, TTY
    prompts. Continuing in the cloud past M4 means writing code against an
    environment that cannot contradict it.
-4. **Optionally return to the cloud for M7.** Long unattended batch runs over the
-   corpus are the one thing this environment does better than a laptop.
+4. **Optionally return to the cloud for M7's long batch runs** — but only after M5 lands,
+   since M7 needs tier-driven concurrency values. Long unattended runs over the corpus are
+   the one thing this environment does better than a laptop.
+
+**As of `bd2927b` there is no remaining milestone work this environment can verify.**
+Every path after M4 is either host-bound (M5 needs systemd, M6 needs Docker, M8 needs a
+TTY) or blocked behind one that is. Building M5's enforcement here would mean shipping the
+`systemd-run` primary path with no behavioural check — which is precisely the defect class
+QA review #2 closed, in a new costume.
 
 Handoff cost is deliberately low: `CLAUDE.md`, `implementation-notes.md`,
 `CHECKLIST.md` and this file were written for cold starts. A fresh Claude Code

@@ -9,7 +9,7 @@ beginner-friendly plain-text report with flag candidates surfaced at the top.
 > **Status: M4 complete — this is the MVP (`v0.1-mvp`).** Single-file scanning works end
 > to end: 14 stages including Ghidra headless, flag detection with the
 > base64/base32/hex/ROT13 sweep, a readable report, and three display modes. Verification:
-> **188 checks, all green** (`./tools/run-tests.sh`). M5–M9 add RAM tiers, the Docker
+> **262 checks, all green** (`./tools/run-tests.sh`). M5–M9 add RAM tiers, the Docker
 > sandbox, batch mode, user agency and resilience. New here? Read `HANDOFF.md`.
 
 ---
