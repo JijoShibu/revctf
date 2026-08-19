@@ -3,8 +3,8 @@
 Generated companion to `revctf-checklist.html`. Milestones refer to
 `revctf_executionmasterplan.md`; this file is the source of truth for status.
 
-**84 tracked items** — 45 done · 27 pending · 6 open risk · 6 deferred.
-Milestones M0–M4 complete of M0–M9 (tag v0.1-mvp). Verification harness: 188 checks, all green.
+**84 tracked items** — 48 done · 25 pending · 5 open risk · 6 deferred.
+Milestones M0–M4 complete of M0–M9 (tag v0.1-mvp). Verification harness: 262 checks, all green.
 
 Legend: `[x]` done · `[ ]` pending · `[!]` open risk · `[-]` deferred (decided against).
 
@@ -96,20 +96,20 @@ The milestone at which the tool is genuinely usable end to end. Currently the ac
 - [x] **M4 · GATE: single-file autonomous run produces a complete report on all corpus files**
   <br>M: M4 · 188 checks green · tagged v0.1-mvp
 
-## Phase 5 — Resource, Safety & Scale  — 0/13
+## Phase 5 — Resource, Safety & Scale  — 2/13
 
 Everything after the MVP: adaptivity, isolation, batch, agency, resilience.
 
-- [ ] **M5 · lib/tier.sh — RAM detection, Tier A/B/C, per-value overrides**
-  <br>M: M5 · v4 §3 table
+- [x] **M5 · lib/tier.sh — RAM detection, Tier A/B/C, per-value overrides**
+  <br>M: M5 · resolved + reported; limits not yet enforced
 - [ ] **M5 · Re-derive Phase-2 ceiling from the measured FLOSS peak, not Ghidra's**
   <br>M: M5 · BLOCKS M5 — see Risks
 - [ ] **M5 · systemd-run --scope MemoryMax with ulimit -v fallback + report notice**
   <br>M: M5 · probe already implemented
 - [ ] **M5 · lib/watchdog.sh — global RSS monitor, kills job tree at 90%**
   <br>M: M5 · never prompted, by design
-- [ ] **M5 · lib/swap.sh — auto-create swap on low tier with no active swap**
-  <br>M: M5 · touches /etc/fstab
+- [x] **M5 · Low-RAM/no-swap diagnostic (auto-swap REMOVED, D10)**
+  <br>M: M5 · lib/tier.sh · revctf never modifies the host
 - [ ] **M6 · docker/Dockerfile built by install.sh during the network window**
   <br>M: M6 · --sandbox currently refuses
 - [ ] **M6 · Sandboxed ltrace AND strace; verify no network egress**
@@ -120,8 +120,8 @@ Everything after the MVP: adaptivity, isolation, batch, agency, resilience.
   <br>M: M7
 - [ ] **M8 · lib/prompt.sh — TTY detection, per-run answer memoization**
   <br>M: M8
-- [ ] **M8 · --interactive guided mode; wire confirmations to swap/sandbox/OOM retry**
-  <br>M: M8 · flag parsed, unimplemented
+- [ ] **M8 · --interactive guided mode; wire confirmations to sandbox/OOM retry**
+  <br>M: M8 · marked [NOT YET: M8] in --help
 - [ ] **M9 · lib/errorlog.sh — structured diagnostics, persistent log, 5MB rotation**
   <br>M: M9
 - [ ] **M9 · lib/spinner.sh, --verbose/--debug plumbing, full SIGINT abort semantics**
@@ -183,7 +183,7 @@ What has to be true before calling it v1.0.
 - [ ] **Verify on the actual Kali VM, not just the build sandbox**
   <br>M: pre-v1.0 · target environment
 
-## Phase 8 — Known Risks & Open Questions  — 1/9
+## Phase 8 — Known Risks & Open Questions  — 2/9
 
 Each is tracked to the milestone that resolves it. Two are load-bearing.
 
@@ -199,8 +199,8 @@ Each is tracked to the milestone that resolves it. Two are load-bearing.
   <br>Risk · M: M7 · depth cap bounds the damage
 - [ ] **Archive members extracted but not yet analysed individually**
   <br>M: M7 · belongs with batch orchestration
-- [!] **Auto-swap mutates system state (/etc/fstab) — different risk profile**
-  <br>Risk · M: M5 · opt-out exists
+- [x] **Auto-swap mutating /etc/fstab — RESOLVED by removing the feature (D10)**
+  <br>M: M5 · diagnostic replaces it; revctf never modifies the host
 - [x] **SIGINT untrappable when backgrounded from a non-interactive shell**
   <br>POSIX; documented, SIGTERM works
 - [ ] **D7 two-tier interpretation (startup vs lazy tool checks) flagged for review**

@@ -14,6 +14,31 @@
 #    tool — redraw, resize and signal handling in Bash — so every mode falls back to the
 #    one below it, and the whole layer is bypassable with --no-tui.
 #
+# ======================================================================================
+# THIS FILE IS FROZEN
+# ======================================================================================
+# Decided after QA review #2. It works, it is isolated behind --no-tui, and it is the
+# highest-defect-density component in the tool — cursor arithmetic, SIGWINCH, width
+# measurement and truncation, in Bash. It is also the only part of revctf that NO
+# automated check can verify: `script(1)` proves the right escape sequences are emitted
+# and nothing more, which is why tools/tui-selftest.sh exists and has to be run by a human.
+#
+# Against that cost, the in-place table adds polish to the fifteen seconds before the
+# report — the part nobody keeps. The line and heartbeat modes already deliver the actual
+# user value: which stage is running, and how long it has taken.
+#
+# THE RULES
+#   * Bug fixes only. No new features, no new modes, no colour, no progress bars.
+#   * The harness pins this file's line count. Growth fails the build, so adding to it is
+#     a deliberate decision someone has to make on purpose rather than drift into.
+#   * DELETION TRIGGER: if this file ever needs a second dedicated debugging session,
+#     delete it and default to line mode. That removes ~190 lines and one whole class of
+#     platform-specific risk (terminal emulators, TERM values, resize semantics, locales).
+#     Deleting it costs: the in-place table, and nothing else. tui_stage_start /
+#     tui_stage_end / tui_finish / tui_note keep their signatures in line mode, so the
+#     entry script would not change at all — remove _tui_redraw, _tui_measure, _tui_glyph
+#     and the WINCH trap, and force TUI_MODE=line in tui_init.
+#
 # Modes, chosen once at tui_init:
 #   tui        stdout AND stderr are terminals, --no-tui not given: a table redrawn in place
 #   line       a terminal, but --no-tui: one line per stage transition

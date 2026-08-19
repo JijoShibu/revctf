@@ -70,10 +70,15 @@ before committing to a large batch. It executes nothing.
 > them as estimates, and the measured FLOSS peak (~1.46GB) already exceeds every tier's
 > Ghidra ceiling. `--dry-run` says so in its Notes. M5 replaces them with real numbers.
 
-**Planned for M5, not in this build:** the swap offer on a low-RAM host
-(`--no-auto-swap`), the RSS watchdog, and actual *enforcement* of the tier limits. Today
-the tier is detected, resolved and reported — `--dry-run` shows exactly what it decided —
-but nothing constrains a stage to those numbers yet.
+**revctf never modifies your system.** On a Tier B/C host with no active swap it says so
+and names the two remedies — run with `--skip-ghidra`, or add swap yourself — and then
+gets on with the scan. Earlier designs had it create a swap file automatically; that was
+removed (deviation D10). Reading a binary and writing a report does not require write
+access to `/etc/fstab`.
+
+**Planned for M5, not in this build:** the RSS watchdog, and actual *enforcement* of the
+tier limits. Today the tier is detected, resolved and reported — `--dry-run` shows exactly
+what it decided — but nothing constrains a stage to those numbers yet.
 
 ## Control and safety
 
@@ -173,10 +178,10 @@ harness asserts that this list and that one agree — so neither can drift.
 |---|---|---|
 | `--interactive` / `-i` | parses, no effect | M8 |
 | `--yes` / `-y` | parses, no effect | M8 |
-| `--no-auto-swap`, swap offer | parses, no effect | M5 |
 | `--debug`, `~/.revctf/error.log` | parses, no effect | M9 |
 | `--jobs-light`, `--jobs-ghidra`, `--maxmem-ghidra` | resolved and reported, **not enforced** | M5 |
 | RSS watchdog | not present | M5 |
+| Auto-created swap file | **removed** — replaced by a diagnostic (D10) | n/a |
 | `--sandbox` | *refuses* the executing stages rather than falling back to the host | M6 |
 | Batch mode (a directory target) | exits 1 with a clear message | M7 |
 | `install.sh` dependency installation | **stub — installs nothing** | next |
@@ -196,7 +201,7 @@ Kali Linux (or Debian-derived), Bash 4+, and the toolchain `install.sh` sets up:
 ```bash
 ./tools/bootstrap-kali.sh                 # one-shot setup on a fresh Kali / WSL Kali
 ./tools/build-test-corpus.sh              # 18 test artifacts (gitignored)
-./tools/run-tests.sh                      # 250 checks (~15 min)
+./tools/run-tests.sh                      # 262 checks (~15 min)
 ./tools/run-tests.sh m4 m5 docs qa       # just those sections
 REVCTF_TEST_FAST=1 ./tools/run-tests.sh   # skip the 220MB-target checks (~3 min)
 ./tools/tui-selftest.sh                   # 6 interactive checks — needs a real terminal

@@ -7,7 +7,8 @@ the four it points at — so no future session needs to carry a long transcript.
 If you are a new session: read this file top to bottom, then `CLAUDE.md`. That
 is enough to start work. Read the others on demand.
 
-Last consolidated: 2026-08-19, after M4 (`v0.1-mvp`), before M5.
+Last consolidated: 2026-08-19, after M4 (`v0.1-mvp`) + QA review #2 + the D10 scope
+reduction, before M5.
 
 ---
 
@@ -174,7 +175,7 @@ Ghidra   11.2.1 at /opt/ghidra_11.2.1_PUBLIC
 |---|---|
 | Tier B (2.5–3.8 GB) and Tier C (<2.5 GB) paths | 8 GB fixed → **Tier A only**. Faking the RAM read tests the branch, not the behaviour |
 | `systemd-run --scope -p MemoryMax` (v4's preferred bounding) | systemd not booted; the primary path has **never once executed**. Everything falls to the `ulimit -v` fallback |
-| Swap offer (1–2 GB swap file) | swap is 0 so the prompt fires, but writing swap + `/etc/fstab` in an ephemeral container measures nothing |
+| ~~Swap offer~~ | **Removed** (D10) — replaced by a diagnostic; revctf never modifies the host |
 | Tier concurrency (`jobs_light=4` at Tier A) | **2 CPUs** — every concurrency timing here is taken under 2× oversubscription |
 | M6 Docker sandbox (`--network=none --read-only --cap-drop=ALL`) | daemon not running, and with no systemd unlikely to start |
 | M8 interactive prompts; M4 TUI redraw / SIGWINCH | **no TTY** |

@@ -54,7 +54,6 @@ declare -A OPT=(
     [jobs_light]=""                 # empty => tier-resolved (v6 §5)
     [jobs_ghidra]=""
     [maxmem_ghidra]=""
-    [auto_swap]=1
     [sandbox]=0
     [interactive]=0
     [assume_yes]=0
@@ -130,7 +129,6 @@ RESOURCE TUNING
                           (resolved and reported; not yet enforced)
     --maxmem-ghidra M     [PARTIAL: M5] Override tier Ghidra MAXMEM
                           (resolved and reported; not yet enforced)
-    --no-auto-swap        [NOT YET: M5] Never auto-create a swap file
 
 SANDBOXING
     --sandbox             Run ltrace inside a network-isolated Docker container
@@ -246,7 +244,6 @@ parse_args() {
             --jobs-light)    need_value "$1" $#; set_opt jobs_light "$2"; shift 2 ;;
             --jobs-ghidra)   need_value "$1" $#; set_opt jobs_ghidra "$2"; shift 2 ;;
             --maxmem-ghidra) need_value "$1" $#; set_opt maxmem_ghidra "$2"; shift 2 ;;
-            --no-auto-swap)  set_opt auto_swap 0; shift ;;
 
             # --- sandboxing ---
             --sandbox) set_opt sandbox 1; shift ;;

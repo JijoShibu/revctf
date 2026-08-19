@@ -1304,6 +1304,26 @@ test_m5() {
     assert_match "the plan flags the unresolved Phase-2 ceiling" \
         'FLOSS peak .*exceeds it' env REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run
 
+    # --- the diagnostic that replaced auto-swap (deviation D10) -----------------------
+    # It must fire on the tiers that can actually be hurt, stay silent on Tier A, and
+    # never imply revctf will act on the user's behalf.
+    assert_match "Tier C with no swap warns about the OOM risk" 'no active swap' \
+        env REVCTF_RAM_MB=2000 "$RC" scan "$t" --dry-run
+    assert_match "Tier B with no swap warns too" 'no active swap' \
+        env REVCTF_RAM_MB=3000 "$RC" scan "$t" --dry-run
+    assert_no_match "Tier A stays silent about swap" 'no active swap' \
+        env REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run
+    assert_match "the warning names both remedies" 'skip-ghidra' \
+        env REVCTF_RAM_MB=2000 "$RC" scan "$t" --dry-run
+    assert_match "and promises revctf will not act for you" 'will not modify your system' \
+        env REVCTF_RAM_MB=2000 "$RC" scan "$t" --dry-run
+    assert_exit "--no-auto-swap is gone, not silently accepted" 1 \
+        "$RC" scan "$t" --dry-run --no-auto-swap
+    local swapcfg="$o/swap.cfg"
+    printf 'auto_swap = no\n' > "$swapcfg"
+    assert_match "auto_swap in a config file is now an unknown key" "ignoring unknown key" \
+        "$RC" scan "$t" --dry-run --config "$swapcfg"
+
     # --- flag surface reflected in the plan -------------------------------------------
     assert_match "--sandbox is shown as refusing the executing stages" \
         'refused: --sandbox has no container until M6' "$RC" scan "$t" --dry-run --sandbox
@@ -1440,6 +1460,52 @@ test_docs() {
         no "install.sh documentation" "README does not disclose that install.sh is a stub"
     fi
 
+    # --- lib/tui.sh is frozen (QA review #2) ------------------------------------------
+    # A comment alone would not have held: the same trust in "someone will read it" is
+    # what let seven documented-but-absent features accumulate. The ceiling makes growth
+    # fail the build, so extending the TUI becomes a decision rather than a drift.
+    local tui_lines tui_ceiling=235
+    tui_lines=$(wc -l < "$ROOT/lib/tui.sh")
+    if [[ $tui_lines -le $tui_ceiling ]]; then
+        ok "lib/tui.sh is within its freeze ceiling ($tui_lines/$tui_ceiling lines)"
+    else
+        no "TUI freeze breached" "lib/tui.sh is $tui_lines lines, ceiling $tui_ceiling. It is frozen: bug fixes only. If it needs real work, delete it and default to line mode (see the header)."
+    fi
+    if grep -q 'THIS FILE IS FROZEN' "$ROOT/lib/tui.sh"; then
+        ok "the freeze and its deletion trigger are stated in the file"
+    else
+        no "TUI freeze undocumented" "lib/tui.sh has no freeze header"
+    fi
+
+    # --- a [NOT YET: Mn] marker must name a milestone that still exists ---------------
+    # Otherwise a marker outlives its milestone and becomes a promise nobody owns.
+    local -a orphan=()
+    local ms
+    while read -r ms; do
+        [[ -z $ms ]] && continue
+        case "$ms" in M0|M1|M2|M3|M4|M5|M6|M7|M8|M9) ;; *) orphan+=("$ms") ;; esac
+    done < <(grep -oE '\[(NOT YET|PARTIAL): M[0-9]+\]' <<< "$help_out" \
+             | grep -oE 'M[0-9]+' | sort -u)
+    if [[ ${#orphan[@]} -eq 0 ]]; then
+        ok "every unfinished-flag marker names a real milestone"
+    else
+        no "orphaned milestone marker" "not in the M0-M9 plan: ${orphan[*]}"
+    fi
+
+    # --- auto-swap is gone and must stay gone (deviation D10) -------------------------
+    # v4 §3 and v5 §3.1 both specify it, so a future session reading those documents will
+    # be tempted to re-add it. This check is the tripwire.
+    if grep -rq 'auto_swap\|auto-swap' "$ROOT/revctf" "$ROOT"/lib/*.sh 2>/dev/null; then
+        no "auto-swap returned" "removed as deviation D10 — revctf does not modify the host. See lib/tier.sh for the diagnostic that replaced it."
+    else
+        ok "auto-swap is absent from the code (deviation D10)"
+    fi
+    if [[ -f $ROOT/lib/swap.sh ]]; then
+        no "lib/swap.sh returned" "deleted under D10"
+    else
+        ok "lib/swap.sh is deleted"
+    fi
+
     # --- every lib/ stub is either unreferenced or documented as absent ---------------
     # A 12-line placeholder whose function prints "not yet implemented" is fine. A stub
     # that some other file calls in earnest is a silent no-op in production.
@@ -1453,7 +1519,15 @@ test_docs() {
             fi
         done < <(grep -oE '^[a-z_]+(\(\))' "$libf" | tr -d '()')
     done
-    ok "$stubs lib/ modules are still placeholders"
+    # The stub inventory may only SHRINK. A new "not yet implemented" placeholder is how
+    # a documented-but-absent feature gets created in the first place, so adding one has
+    # to be a deliberate act that updates this number in the same commit.
+    local STUB_CEILING=4
+    if [[ $stubs -le $STUB_CEILING ]]; then
+        ok "$stubs lib/ placeholders (ceiling $STUB_CEILING)"
+    else
+        no "stub inventory grew" "$stubs placeholders, ceiling is $STUB_CEILING — lower the ceiling in the same commit that removes one, never raise it"
+    fi
     if [[ ${#called[@]} -eq 0 ]]; then
         ok "no placeholder function is called from the entry script"
     else

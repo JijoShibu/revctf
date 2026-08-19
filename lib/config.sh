@@ -22,13 +22,13 @@
 # in force is worse than a warning.
 CONFIG_ALLOWED="output_dir timeout flag_scan flag_format full_hexdump skip_ltrace \
 skip_strace skip_ghidra no_unwrap unwrap_depth light_decompile force_full_decompile \
-ghidra_script jobs_light jobs_ghidra maxmem_ghidra auto_swap sandbox tui strict \
+ghidra_script jobs_light jobs_ghidra maxmem_ghidra sandbox tui strict \
 stages_disabled summary_only"
 
 # Keys consumed in arithmetic context. These MUST be coerced to 0/1 before they can reach
 # `[[ $x -eq 1 ]]`. See QA-1 above.
 CONFIG_BOOL_KEYS="flag_scan full_hexdump skip_ltrace skip_strace skip_ghidra no_unwrap \
-light_decompile force_full_decompile auto_swap sandbox tui strict summary_only"
+light_decompile force_full_decompile sandbox tui strict summary_only"
 
 # Keys that must be whole numbers.
 CONFIG_INT_KEYS="timeout unwrap_depth jobs_light jobs_ghidra"

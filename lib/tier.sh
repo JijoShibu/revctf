@@ -159,6 +159,22 @@ tier_resolve() {
         TIER_NOTES+=("Tier C with --force-full-decompile: full Ghidra at -P 1 / MAXMEM=${TIER_MAXMEM_GHIDRA}. Accepted risk.")
     fi
 
+    # --- Low RAM with no swap: a diagnostic, not an action -----------------------------
+    # v4 §3 and v5 §3.1 specified auto-creating a 1-2GB swap file here. That was removed
+    # (deviation D10): writing a swap file and touching /etc/fstab is a system
+    # administration action, and revctf's job is to read a binary and write a report. The
+    # failure it guarded against is real — Ghidra OOM-killed on a small host — but the
+    # honest response is to name it and let the user decide, which is one sentence rather
+    # than a subsystem, an opt-out flag and a privileged write.
+    if [[ $TIER != A && $TIER_RAM_MB -gt 0 ]]; then
+        local swap_kb=0
+        [[ -r /proc/meminfo ]] && swap_kb="$(awk '/^SwapTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)"
+        is_uint "$swap_kb" || swap_kb=0
+        if [[ $swap_kb -eq 0 ]]; then
+            TIER_NOTES+=("Tier $TIER (${TIER_RAM_MB}MB) with no active swap. Ghidra may be OOM-killed on this host. Either run with --skip-ghidra (radare2 substitutes), or add swap yourself — revctf will not modify your system.")
+        fi
+    fi
+
     # --- Explicit overrides always win (v6 §5) -----------------------------------------
     tier_apply_override jobs_light   TIER_JOBS_LIGHT
     tier_apply_override jobs_ghidra  TIER_JOBS_GHIDRA

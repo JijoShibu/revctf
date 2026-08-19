@@ -5,6 +5,46 @@ section references (v3 §8, v5 §4.1, v6 §11) point at the design documents.
 
 ---
 
+## [Unreleased] — scope reduction: auto-swap removed, TUI frozen
+
+Acting on QA review #2's two simplification recommendations.
+
+### Removed
+
+- **Auto-swap (deviation D10).** v4 §3 and v5 §3.1 specified creating a 1–2GB swap file on
+  a low-RAM host with no active swap, gated by `--no-auto-swap`. Deleted entirely:
+  `lib/swap.sh`, the flag, its config key and its default. Writing a swap file and touching
+  `/etc/fstab` is a system-administration action, and revctf's job is to read a binary and
+  write a report. The risk it guarded against — Ghidra OOM-killed on a small host — is
+  real, so it is now **named rather than acted on**: on Tier B/C with no swap the plan says
+  so and gives the two remedies (`--skip-ghidra`, or add swap yourself), and states plainly
+  that revctf will not modify your system. One sentence instead of a subsystem, an opt-out
+  flag and a privileged write. CLI surface: 28 flags → 27.
+
+  `--no-auto-swap` is now an unknown-option error rather than a silently accepted no-op —
+  a ghost flag is exactly the pattern the `docs` section exists to prevent. A config file
+  setting `auto_swap` warns as an unknown key.
+
+### Changed
+
+- **`lib/tui.sh` is frozen.** Bug fixes only: no new features, modes, colour or progress
+  bars. It works and is isolated behind `--no-tui`, but it is the highest-defect-density
+  component and the only one no automated check can verify. The freeze is enforced by a
+  line-count ceiling in the harness, not just a comment — the same trust in "someone will
+  read it" is what let seven documented-but-absent features accumulate. The header records
+  the **deletion trigger** (a second dedicated debugging session) and exactly what deleting
+  it would cost: the in-place table, and nothing else — the four `tui_*` entry points keep
+  their signatures in line mode.
+
+### Added
+
+- Harness: the stub inventory may only **shrink** (ceiling 4); `[NOT YET: Mn]` markers must
+  name a milestone that still exists; `lib/tui.sh` must stay inside its ceiling and keep
+  its freeze header; and two tripwires for auto-swap, since v4 and v5 both still specify it
+  and a future session reading those documents will be tempted to re-add it.
+
+---
+
 ## [Unreleased] — pre-M5 groundwork
 
 Work done in the cloud session before handing development to a Linux host at M5.

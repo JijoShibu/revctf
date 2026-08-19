@@ -63,6 +63,11 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
   `=~` against a user pattern. `--flag-format` is user input run over megabytes of capture;
   a backtracking engine makes that a self-inflicted DoS. The harness fails if any PCRE flag
   appears in `lib/`.
+- **`lib/tui.sh` is FROZEN** (QA review #2). Bug fixes only — no new features, modes,
+  colour or progress bars. The harness pins its line count, so growth fails the build.
+  If it ever needs a second dedicated debugging session, **delete it and default to line
+  mode**: the four `tui_*` entry points keep their signatures, so nothing else changes.
+  Do not "improve" this file.
 - **All progress output goes to stderr; the report owns stdout.** `lib/tui.sh` must never
   write to stdout. `revctf scan x > report.txt` has to produce a clean file while progress
   still reaches the terminal, and v6 §10 requires the report to be plain text in every

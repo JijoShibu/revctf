@@ -858,3 +858,80 @@ write it; `tools/measure-host.sh` reports it; `CLAUDE.md` §3b records it.
 
 The mirror image is a gift: `.wslconfig` with `[wsl2] memory=2GB` is exactly the
 "forced-2GB cgroup/VM" M5's DoD asks for, without a spare machine.
+
+---
+
+## Scope reduction — auto-swap removed, TUI frozen
+
+Both changes come from QA review #2's alignment section. Recording the reasoning here
+because v4 §3 and v5 §3.1 *both* still specify auto-swap, so a future session reading the
+design documents will meet a feature that no longer exists and be tempted to build it.
+
+### Deviation D10 — auto-swap deleted, replaced by a diagnostic
+
+The specified behaviour: on a low tier with no active swap, create a 1–2GB swap file,
+gated by `--no-auto-swap`.
+
+The objection is not that it would not work. It is that **it is the wrong kind of action
+for this tool.** revctf reads a binary and writes a text report. Creating a swap file and
+touching `/etc/fstab` requires privilege, mutates the host persistently, and is the sort of
+thing a user expects to do themselves — a CTF player running an unfamiliar tool on their
+Kali VM does not expect it to change their memory configuration. The v5 design gated it
+behind a prompt, which acknowledges the discomfort without resolving it: the prompt layer
+is M8, so a Tier C user before M8 would have got the mutation with no prompt at all.
+
+The risk it guarded against is real — Ghidra OOM-killed on a 2GB box. So the risk is now
+**named rather than acted on**. `tier_resolve` pushes a note on Tier B/C with no swap that
+states the risk, gives the two remedies (`--skip-ghidra`, which substitutes radare2, or add
+swap yourself), and says explicitly that revctf will not modify your system.
+
+What went: `lib/swap.sh`, `--no-auto-swap`, the `auto_swap` config key and its default.
+What arrived: eight lines in `tier_resolve` and one sentence in the plan. CLI surface 28
+flags → 27, one fewer stub, one fewer privileged operation.
+
+`--no-auto-swap` is now an unknown-option error, not a silently accepted no-op. Keeping it
+as a ghost would have recreated exactly the defect class the `docs` section was built to
+prevent — a flag that parses and does nothing.
+
+Two harness tripwires guard this, because the design documents disagree with the code now:
+one fails if `auto_swap`/`auto-swap` reappears anywhere in `revctf` or `lib/`, and one
+fails if `lib/swap.sh` comes back.
+
+### The TUI is frozen, and the freeze is enforced
+
+`lib/tui.sh` works. It is also, by some distance, the riskiest file in the tool: cursor
+arithmetic, `SIGWINCH`, width measurement and truncation, all in Bash, across terminal
+emulators and `TERM` values we cannot enumerate. And it is the **only** component no
+automated check can verify — `script(1)` proves the right escape sequences are emitted and
+stops there, which is why `tools/tui-selftest.sh` exists and needs a human.
+
+Against that, what it buys is polish on the fifteen seconds before the report appears. The
+line and heartbeat modes already carry the information: which stage is running, how long it
+has taken. The report is the deliverable.
+
+So: keep it, stop investing in it. Bug fixes only — no new features, modes, colour or
+progress bars.
+
+**The freeze is a harness ceiling, not a comment.** A comment would not have held; trusting
+"someone will read it" is precisely what allowed seven documented-but-absent features to
+accumulate. `tools/run-tests.sh` pins the file's line count with about 10% headroom for
+fixes, so growth fails the build and extending the TUI becomes a decision someone makes on
+purpose.
+
+The header also records the **deletion trigger** and its cost, so that decision is cheap
+when it comes: if the file ever needs a second dedicated debugging session, delete
+`_tui_redraw`, `_tui_measure`, `_tui_glyph` and the `WINCH` trap, force `TUI_MODE=line` in
+`tui_init`, and the entry script does not change at all — `tui_stage_start`,
+`tui_stage_end`, `tui_finish` and `tui_note` keep their signatures. Cost: the in-place
+table. Nothing else.
+
+### Two more conformance checks
+
+Extending the mechanism rather than the instances, per the same reasoning as the `docs`
+section itself:
+
+- **The stub inventory may only shrink** (ceiling 4). A new `not yet implemented`
+  placeholder is how a documented-but-absent feature is born; adding one now has to be
+  deliberate and update the ceiling in the same commit.
+- **Every `[NOT YET: Mn]` marker must name a milestone that still exists.** Otherwise a
+  marker outlives its milestone and becomes a promise with no owner.
