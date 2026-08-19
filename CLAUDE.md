@@ -114,10 +114,21 @@ These cost real time to discover. Each one changed the design.
 
 ---
 
-## 3b. The WSL / Kali target environment
+## 3b. The Kali target environment
 
-Development moves to WSL Kali (or a Kali VM) at M5. These facts are not optional details —
-each one silently voids something the design depends on.
+Development moves to Kali at M5. **The chosen host is a VirtualBox Kali VM**, not WSL, for
+one decisive reason: v3 §8's memory derivation is
+`4096MB − 800MB (XFCE) − 50MB (bash) − 300MB (Docker) ≈ 2946MB`. That 800MB desktop is a
+load-bearing term. WSL has no desktop, so tier numbers measured there would show ~800MB of
+headroom a real user does not have — and M5 is the milestone that turns measurements into
+constants. A real VM also boots systemd itself, has a real kernel (stable RSS accounting
+for the watchdog), and supports snapshots before destructive tests.
+
+**On VirtualBox:** give the VM 4096MB for normal work (Tier A, and v3's exact target) and
+2048MB when testing Tier C. Snapshot before `bootstrap-kali.sh` if the VM is used for
+anything else.
+
+The WSL notes below are kept in case the host changes:
 
 - **WSL2 does not boot systemd by default.** M5's Definition of Done requires
   `systemd-run --scope -p MemoryMax=…` to work, and that path has **never executed once**

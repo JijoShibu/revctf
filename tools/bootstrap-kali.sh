@@ -38,10 +38,78 @@ need_sudo() {
 }
 run_root() { if [[ $EUID -eq 0 ]]; then "$@"; else sudo "$@"; fi; }
 
-step_wsl_check() {
-    say "WSL environment"
+step_preflight() {
+    say "Pre-flight — look before installing"
+    # This script installs system packages. On a VM that is used for other work that is a
+    # real risk: an apt upgrade can move a version something else depends on. So it reports
+    # what is already here and what it would change, before changing anything.
+
+    local free_mb
+    free_mb="$(df -Pm / 2>/dev/null | awk 'NR==2{print $4}')"
+    if [[ -n $free_mb ]] && is_uint_bk "$free_mb"; then
+        # Ghidra ~400MB unpacked, JDK ~500MB, mingw + build tools ~700MB, corpus ~250MB,
+        # plus apt cache. 4GB is comfortable; 2GB will fail partway through Ghidra.
+        if [[ $free_mb -lt 2048 ]]; then
+            fail "only ${free_mb}MB free on / — need ~4GB (Ghidra, JDK, mingw, corpus)"
+        elif [[ $free_mb -lt 4096 ]]; then
+            warn "${free_mb}MB free on / — tight. Ghidra and the JDK need most of it."
+        else
+            ok "${free_mb}MB free on /"
+        fi
+    else
+        warn "could not read free disk space"
+    fi
+
+    local ram_mb cpus
+    ram_mb="$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')"
+    cpus="$(nproc 2>/dev/null)"
+    printf '    RAM %sMB, %s CPU(s)\n' "${ram_mb:-?}" "${cpus:-?}"
+    if [[ -n $ram_mb ]] && is_uint_bk "$ram_mb"; then
+        if   [[ $ram_mb -ge 3891 ]]; then ok "Tier A (>= 3891MB) — matches v3 §8's 4GB derivation target"
+        elif [[ $ram_mb -ge 2560 ]]; then warn "Tier B. Raise the VM to 4096MB to develop against Tier A."
+        else                              warn "Tier C. Ghidra will be skipped by default on this host."
+        fi
+    fi
+
+    # What is already installed, and at what version. On a cluttered VM this is the line
+    # that tells you whether apt is about to change something you rely on.
+    say "Already present"
+    local t v n=0
+    for t in file binwalk ltrace strace radare2 checksec upx floss analyzeHeadless docker; do
+        if command -v "$t" >/dev/null 2>&1; then
+            v="$("$t" --version 2>/dev/null | head -1 | cut -c1-46)"
+            printf '    %-16s %s\n' "$t" "${v:-installed}"
+            n=$(( n + 1 ))
+        fi
+    done
+    [[ $n -eq 0 ]] && printf '    (none of the toolchain is installed yet)\n'
+
+    if [[ ${ASSUME_YES:-0} -eq 1 ]]; then return 0; fi
+    printf '\n    \033[1mIf this VM is used for other work, snapshot it now.\033[0m\n'
+    printf '    VirtualBox: Machine > Take Snapshot, while the VM is running or powered off.\n'
+    printf '    This script runs apt-get install and writes to /opt and /usr/local/bin.\n'
+    printf '    Continue? [y/N] '
+    local a; read -r a
+    [[ ${a,,} == y ]] || { printf '    Stopped. Nothing was changed.\n'; exit 0; }
+    return 0
+}
+
+# Local numeric guard — this script does not source lib/, and a non-numeric word in an
+# arithmetic test exits the shell outright under `set -u` (the QA-1 rule).
+is_uint_bk() { [[ $1 =~ ^[0-9]+$ ]]; }
+
+step_env_check() {
+    say "Environment"
     if ! grep -qi microsoft /proc/version 2>/dev/null; then
-        ok "not WSL — nothing to configure"
+        # A real VM (VirtualBox, VMware, bare metal) boots systemd itself, so the whole
+        # WSL dance below does not apply. Confirm systemd anyway: M5's primary
+        # memory-bounding path is systemd-run, and it has never executed in this project.
+        if [[ -d /run/systemd/system ]]; then
+            ok "not WSL, and systemd is booted — M5's systemd-run path is available"
+        else
+            warn "not WSL, but systemd is NOT booted (PID 1 = $(ps -p1 -o comm= 2>/dev/null))"
+            printf '        M5 requires systemd-run --scope -p MemoryMax=. Investigate before M5.\n'
+        fi
         return 0
     fi
     ok "running under WSL"
@@ -204,7 +272,8 @@ step_verify() {
 
 main() {
     printf '\033[1mrevctf bootstrap\033[0m — stopgap until install.sh is completed\n'
-    step_wsl_check
+    step_preflight
+    step_env_check
     step_apt
     step_floss
     step_ghidra
