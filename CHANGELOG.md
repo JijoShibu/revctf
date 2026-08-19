@@ -5,6 +5,77 @@ section references (v3 §8, v5 §4.1, v6 §11) point at the design documents.
 
 ---
 
+## [Unreleased] — pre-M5 groundwork
+
+Work done in the cloud session before handing development to a Linux host at M5.
+
+### Fixed
+
+- **`--dry-run` was parsed and then ignored.** It set `OPT[dry_run]=1`, nothing ever read
+  it, and the scan ran in full — so a flag the README recommends *before committing to a
+  large batch* silently performed the 78-second scan it was meant to preview. It now
+  prints the resolved plan and returns before the stage modules are even sourced: no work
+  directory, no output directory, no tool launched.
+- A missing tool no longer suppresses the plan. A hard error is correct for a real scan
+  (D7), but refusing to answer "would this run, and how?" because a tool is absent defeats
+  the flag. `--dry-run` reports the preflight verdict as a line in the plan instead.
+
+### Added
+
+- **`lib/tier.sh`** — RAM detection (`free -m`, `/proc/meminfo` fallback), Tier A/B/C
+  resolution, Tier C's automatic `--light-decompile` with `--force-full-decompile`
+  override, and the `--jobs-*`/`--maxmem-ghidra` overrides. The table is v6 §5 unchanged;
+  every constant is named and grouped so moving a boundary is a one-line change.
+  **The numbers are still unmeasured** — v4 §10 flags them as estimates, and the plan says
+  so rather than presenting them as settled.
+- **`REVCTF_RAM_MB`** injects a RAM figure so tier *branch* logic can be tested on any
+  machine. Every report labels an injected value as injected: a tier chosen from a fake
+  number must never look like a measurement.
+- **`tools/measure-host.sh`** — captures what M5's constants must be derived from on the
+  real host: RAM/CPU/swap, whether `systemd-run` actually works, toolchain versions, stage
+  timings, and FLOSS peak RSS with `FLOSS_MAX_MB` lifted.
+- **`tools/bootstrap-kali.sh`** — one-shot Kali/WSL setup. Explicitly a stopgap until
+  `install.sh` is completed; installs FLOSS via a venv because the `pip
+  --break-system-packages` line install.sh still carries is known to fail.
+- **`m5` harness section** — 52 checks covering both sides of every tier boundary, the
+  injection labelling, Tier C routing, overrides, and that `--dry-run` creates nothing.
+- **`CLAUDE.md` §3b** — the WSL/Kali facts: `systemd=true` in `/etc/wsl.conf` (without it
+  M5's primary memory path cannot work), `.wslconfig` as the Tier C rig, the ext4-not-/mnt
+  rule, and `setsid` rather than `nohup` for background harness runs.
+
+### QA review #2 — the defect class behind both
+
+`--dry-run` and `install.sh` are the same defect: **documented behaviour with no executing
+code**, invisible to 188 passing checks because every check tested behaviour someone had
+already thought to implement. Nothing tested the inverse. Auditing all 28 flags found
+**five more**: `--debug`, `--interactive`, `--yes`, `~/.revctf/error.log`, and the RSS
+watchdog / swap offer — all described by README in the present tense, none implemented.
+
+Contributing cause: README was written early from the design documents, describing the
+finished v1.0 tool, and has since been maintained only at its status banner.
+
+- **`--help` marks every unfinished flag** `[NOT YET: Mn]` or `[PARTIAL: Mn]`.
+- **README carries a "What is not in this build" table** and no longer claims absent
+  behaviour in the present tense.
+- **New `docs` harness section** — 10 checks that close the class rather than the
+  instances. A flag now has two legal states: implemented *and named in the harness*, or
+  marked unfinished *in both documents*. There is no third state where it quietly does
+  nothing. Also asserts that no placeholder function is called from the entry script.
+
+Full analysis, including the alignment review and the standing rules, in `QA-REVIEW-2.md`.
+
+### Known, unfixed
+
+- **`install.sh` installs nothing.** Its whole dependency block is commented out, while
+  README calls it mandatory and preflight tells users to re-run it when a tool is missing —
+  a closed loop. Deferred deliberately to the first Claude Code session, where it can be
+  written and tested against real Kali in one loop.
+- v6 §5's Phase-2 ceiling derivation remains disproved by the measured FLOSS peak
+  (~1.46GB). `lib/tier.sh` implements it as written and states the gap in every plan
+  rather than inventing a replacement number without measuring.
+
+---
+
 ## [v0.1-mvp / M4] — Report assembly, display layer, config extraction
 
 **The MVP gate.** revctf now does end to end what it exists to do: point it at a

@@ -1158,9 +1158,313 @@ test_m4() {
 }
 
 # ======================================================================================
+# M5 (groundwork) — tier selection and --dry-run
+# ======================================================================================
+# SCOPE LIMIT, stated so nobody mistakes a green section for a verified milestone.
+# These checks pin the tier BRANCH LOGIC by injecting REVCTF_RAM_MB, which can run on any
+# machine. They say nothing about whether a tier's limits actually keep a scan inside
+# memory on hardware that really has that much RAM — that needs a host with 2GB and one
+# with 8GB, and it is the substance of M5's Definition of Done. See HANDOFF.md §6.
+test_m5() {
+    section "M5 groundwork — tier selection, --dry-run"
+
+    if ! have_corpus; then
+        skip "M5 checks" "run ./tools/build-test-corpus.sh first"; return
+    fi
+    local o="$FIXTURES/m5"; rm -rf "$o"; mkdir -p "$o"
+    local t="$CORPUS/crackme" out
+
+    # --- --dry-run runs nothing ------------------------------------------------------
+    # The defect this pins: the flag was parsed, set OPT[dry_run]=1, and was never read,
+    # so a flag the README recommends before a large batch performed the full scan.
+    rm -rf "$o/never" /tmp/revctf-work.* 2>/dev/null
+    local before after
+    before=$(date +%s)
+    out=$("$RC" scan "$t" --dry-run --output "$o/never" 2>&1)
+    after=$(date +%s)
+    assert_match "--dry-run says plainly that nothing ran" 'nothing was executed' \
+        printf '%s' "$out"
+    if [[ -e "$o/never" ]]; then
+        no "--dry-run creates no output directory" "$o/never was created"
+    else
+        ok "--dry-run creates no output directory"
+    fi
+    if [[ $(find /tmp -maxdepth 1 -name 'revctf-work.*' 2>/dev/null | wc -l) -eq 0 ]]; then
+        ok "--dry-run creates no work directory"
+    else
+        no "--dry-run work dir" "revctf-work.* was created"
+        rm -rf /tmp/revctf-work.* 2>/dev/null
+    fi
+    assert_no_match "--dry-run produces no report body" 'POSSIBLE FLAGS' printf '%s' "$out"
+    assert_no_match "--dry-run runs no stage" 'WHAT RAN' printf '%s' "$out"
+    if [[ $(( after - before )) -lt 20 ]]; then
+        ok "--dry-run returns promptly ($(( after - before ))s)"
+    else
+        no "--dry-run latency" "took $(( after - before ))s; it is running something"
+    fi
+    assert_match "--dry-run names the output directory it would use" 'Output would be' \
+        printf '%s' "$out"
+    assert_match "--dry-run lists the stages" '\[run \] triage' printf '%s' "$out"
+    assert_match "--dry-run admits what it cannot predict" \
+        'made by Stage 0' printf '%s' "$out"
+
+    # --dry-run must still print a plan when preflight fails — the harness runs with
+    # PF_OPT_ROOT pointed at an empty tree, so Ghidra is absent here by construction.
+    # "Would this run, and how?" deserves an answer even when the answer is no.
+    assert_match "--dry-run prints the plan even when preflight fails" 'Preflight     : ' \
+        "$RC" scan "$t" --dry-run
+
+    # --- tier selection at each boundary ---------------------------------------------
+    # Boundaries: A >= 3891MB, B >= 2560MB, C below. Each is checked on both sides, so a
+    # off-by-one in the comparison cannot pass.
+    local -a cases=(
+        "8192:A:4:1024M:full"
+        "3891:A:4:1024M:full"
+        "3890:B:2:768M:full"
+        "2560:B:2:768M:full"
+        "2559:C:1:512M:light"
+        "512:C:1:512M:light"
+    )
+    local c ram want_tier want_jobs want_mem want_dec got
+    for c in "${cases[@]}"; do
+        IFS=: read -r ram want_tier want_jobs want_mem want_dec <<< "$c"
+        out=$(REVCTF_RAM_MB="$ram" "$RC" scan "$t" --dry-run 2>/dev/null)
+        got=$(grep -E '^  Tier ' <<< "$out" | awk '{print $3}')
+        if [[ $got == "$want_tier" ]]; then
+            ok "${ram}MB -> Tier $want_tier"
+        else
+            no "tier at ${ram}MB" "got '$got', wanted '$want_tier'"
+        fi
+        # `A && ok || no` would call `no` when ok() itself returned non-zero, so each
+        # comparison gets a real if. SC2015 is right to complain about the short form.
+        got=$(grep -E '^  Phase-1 jobs' <<< "$out" | awk '{print $4}')
+        if [[ $got == "$want_jobs" ]]; then
+            ok "  Tier $want_tier -> ${want_jobs} phase-1 jobs"
+        else
+            no "phase-1 jobs at ${ram}MB" "got '$got', wanted '$want_jobs'"
+        fi
+        got=$(grep -E '^  Ghidra MAXMEM' <<< "$out" | awk '{print $4}')
+        if [[ $got == "$want_mem" ]]; then
+            ok "  Tier $want_tier -> MAXMEM $want_mem"
+        else
+            no "MAXMEM at ${ram}MB" "got '$got', wanted '$want_mem'"
+        fi
+        got=$(grep -E '^  Decompilation' <<< "$out" | awk '{print $3}')
+        if [[ $got == "$want_dec" ]]; then
+            ok "  Tier $want_tier -> $want_dec decompilation"
+        else
+            no "decompile default at ${ram}MB" "got '$got', wanted '$want_dec'"
+        fi
+    done
+
+    # --- an injected figure must never look like a measurement -----------------------
+    assert_match "an injected RAM value is labelled as injected" 'INJECTED via REVCTF_RAM_MB' \
+        env REVCTF_RAM_MB=2000 "$RC" scan "$t" --dry-run
+    assert_no_match "a real detection is not labelled injected" 'INJECTED' \
+        "$RC" scan "$t" --dry-run
+    assert_match "the detection source is always named" 'via (free -m|/proc/meminfo|injected)' \
+        "$RC" scan "$t" --dry-run
+
+    # A non-numeric injection must warn and fall back, never reach an arithmetic test.
+    # This is QA-1's rule applied to an environment variable instead of a config file.
+    assert_match "a non-numeric REVCTF_RAM_MB warns and detects normally" \
+        'not a whole number' env REVCTF_RAM_MB=banana "$RC" scan "$t" --dry-run
+    assert_exit "and the run still completes" 0 \
+        env REVCTF_RAM_MB=banana "$RC" scan "$t" --dry-run
+
+    # --- Tier C behaviour -------------------------------------------------------------
+    out=$(REVCTF_RAM_MB=2000 "$RC" scan "$t" --dry-run 2>/dev/null)
+    assert_match "Tier C skips Ghidra for radare2-only" '\[skip\] ghidra' printf '%s' "$out"
+    assert_match "Tier C enables --light-decompile automatically" \
+        'light-decompile enabled automatically' printf '%s' "$out"
+    out=$(REVCTF_RAM_MB=2000 "$RC" scan "$t" --dry-run --force-full-decompile 2>/dev/null)
+    assert_match "--force-full-decompile restores Ghidra on Tier C" '\[run \] ghidra' \
+        printf '%s' "$out"
+    assert_match "and the reported decompile mode changes with it" 'Decompilation : full' \
+        printf '%s' "$out"
+
+    # --- explicit overrides beat the tier ---------------------------------------------
+    out=$(REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run --jobs-light 1 --maxmem-ghidra 2048M 2>/dev/null)
+    assert_match "--jobs-light overrides the tier value" 'Phase-1 jobs  : 1' printf '%s' "$out"
+    assert_match "--maxmem-ghidra overrides the tier value" 'MAXMEM : 2048M' printf '%s' "$out"
+    assert_match "an override is recorded in the notes" 'overridden' printf '%s' "$out"
+    # validate_opts already rejects this before tier resolution is ever reached, which is
+    # the stricter and better behaviour: a nonsensical concurrency is a usage error, not
+    # something to warn about and carry on from. tier_apply_override's own guard stays as
+    # defence in depth for any path that reaches it with an unvalidated value.
+    assert_exit "a zero --jobs-light is a usage error" 1 \
+        env REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run --jobs-light 0
+    assert_match "and it says why" 'must be a positive integer' \
+        env REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run --jobs-light 0
+
+    # --- the disproved Phase-2 derivation must stay visible ---------------------------
+    # v6 §5 sizes Phase 2 from Ghidra's ceiling; the measured FLOSS peak (~1.46GB) breaks
+    # that. Implemented as specified, but the plan has to keep saying so, or the next
+    # person to read it inherits a silently wrong assumption.
+    assert_match "the plan flags the unresolved Phase-2 ceiling" \
+        'FLOSS peak .*exceeds it' env REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run
+
+    # --- flag surface reflected in the plan -------------------------------------------
+    assert_match "--sandbox is shown as refusing the executing stages" \
+        'refused: --sandbox has no container until M6' "$RC" scan "$t" --dry-run --sandbox
+    assert_match "--skip-ghidra is shown in the plan" 'skipped by --skip-ghidra' \
+        "$RC" scan "$t" --dry-run --skip-ghidra
+    assert_match "--strict is shown in the plan" 'stop at the first failed stage' \
+        "$RC" scan "$t" --dry-run --strict
+}
+
+# ======================================================================================
+# docs — documentation conformance
+# ======================================================================================
+# WHY THIS SECTION EXISTS
+#
+# Two defects reached v0.1-mvp with 188 checks green, and they share one root cause:
+#
+#   install.sh   its entire dependency block was commented out, while README called it
+#                mandatory and preflight told users to "re-run it (while online)".
+#   --dry-run    parsed, set OPT[dry_run]=1, and was never read — so a flag documented as
+#                "show plan, run nothing" ran the full scan.
+#
+# Neither is a coding mistake. Both are DOCUMENTED BEHAVIOUR WITH NO EXECUTING CODE, and
+# the harness could not catch them because every check tested behaviour someone had
+# already thought to implement. Nothing tested the inverse: does everything we promise
+# actually exist?
+#
+# An audit then found five more of the same kind — --debug, --interactive, --yes,
+# ~/.revctf/error.log, the RSS watchdog — all described in the present tense by a README
+# that was written from the design documents and only ever maintained at its status
+# banner.
+#
+# This section closes the class rather than the instances. `--help` now marks unfinished
+# flags [NOT YET: Mn] / [PARTIAL: Mn]; README carries the same list; and the checks below
+# assert that the two agree AND that every flag NOT so marked is exercised somewhere in
+# this file. A new flag therefore has exactly two legal states: implemented and tested, or
+# marked unimplemented in both documents. There is no third state in which it can quietly
+# do nothing.
+test_docs() {
+    section "docs — documentation conformance"
+
+    local help_out readme="$ROOT/README.md"
+    help_out="$("$RC" --help 2>&1)"
+
+    # --- every flag in --help is either marked, or exercised by this harness ----------
+    local -a flags marked untested=()
+    mapfile -t flags < <(grep -oE '^\s+(-[a-zA-Z], )?--[a-z-]+' <<< "$help_out" \
+                         | grep -oE '\-\-[a-z-]+' | sort -u)
+    if [[ ${#flags[@]} -lt 20 ]]; then
+        no "flag list parsed from --help" "found only ${#flags[@]}; the help format changed"
+        return
+    fi
+    ok "parsed ${#flags[@]} flags from --help"
+
+    local f line
+    for f in "${flags[@]}"; do
+        case "$f" in --help|--version|--config) continue ;; esac
+        line="$(grep -F -- "$f" <<< "$help_out" | head -1)"
+        if [[ $line == *'[NOT YET:'* || $line == *'[PARTIAL:'* ]]; then
+            continue
+        fi
+        # Implemented flags must appear somewhere in the harness. grep against this file
+        # is crude, but it is exactly the property that was missing: a flag nobody thought
+        # to test is a flag nobody verified does anything.
+        # $ROOT-anchored: setup_fixtures cd's into the fixture tree, so a relative $0
+        # would not resolve and every flag would look untested.
+        grep -qF -- "$f" "$ROOT/tools/run-tests.sh" || untested+=("$f")
+    done
+    if [[ ${#untested[@]} -eq 0 ]]; then
+        ok "every unmarked flag is exercised by the harness"
+    else
+        no "untested flags" "not marked [NOT YET]/[PARTIAL] and never tested: ${untested[*]}"
+    fi
+
+    # --- --help and README agree on what is missing -----------------------------------
+    mapfile -t marked < <(grep -oE '\-\-[a-z-]+' <<< \
+        "$(grep -E '\[(NOT YET|PARTIAL):' <<< "$help_out")" | sort -u)
+    if [[ ${#marked[@]} -eq 0 ]]; then
+        no "unfinished flags are marked in --help" "no [NOT YET:]/[PARTIAL:] markers found"
+    else
+        ok "${#marked[@]} unfinished flags are marked in --help"
+    fi
+    if grep -q 'What is not in this build' "$readme"; then
+        ok "README carries a 'What is not in this build' section"
+    else
+        no "README limitations section" "no 'What is not in this build' heading"
+    fi
+    local missing=()
+    for f in "${marked[@]}"; do
+        grep -qF -- "$f" "$readme" || missing+=("$f")
+    done
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        ok "every flag marked unfinished in --help also appears in README"
+    else
+        no "help/README drift" "marked in --help but absent from README: ${missing[*]}"
+    fi
+
+    # --- README must not promise behaviour that does not exist ------------------------
+    # Each pattern below is a sentence the README once carried in the present tense while
+    # the code did nothing. They may only reappear alongside an explicit "not in this
+    # build" qualifier.
+    local -a claims=(
+        "kills the run if total RSS:the RSS watchdog"
+        "offers to create a 1.2GB swap file:the swap offer"
+        "every stage failure across every run:~/.revctf/error.log"
+    )
+    local c pat what bad=0
+    for c in "${claims[@]}"; do
+        pat="${c%%:*}"; what="${c#*:}"
+        if grep -qE "$pat" "$readme"; then
+            no "README promises $what" "present-tense claim for behaviour that does not exist"
+            bad=1
+        fi
+    done
+    [[ $bad -eq 0 ]] && ok "README makes no present-tense claim for absent behaviour"
+
+    # --- install.sh must not silently be a stub ---------------------------------------
+    # It is currently a stub BY DECISION (it is completed on Kali, where each apt group can
+    # be run as it is written). What is not acceptable is a stub that reads as an
+    # installer. It must say so on stdout, and README must not call it complete.
+    if grep -q 'stub' "$ROOT/install.sh"; then
+        ok "install.sh admits in its own output that it is a stub"
+    else
+        # Once it is real, this branch is the one that should pass: assert it installs.
+        if grep -qE '^\s*[^#]*apt-get install' "$ROOT/install.sh"; then
+            ok "install.sh has a live package-install path"
+        else
+            no "install.sh" "neither admits to being a stub nor installs anything"
+        fi
+    fi
+    if grep -q 'install.sh` dependency installation | \*\*stub' "$readme" \
+       || grep -q 'stub — installs nothing' "$readme"; then
+        ok "README states that install.sh installs nothing"
+    else
+        no "install.sh documentation" "README does not disclose that install.sh is a stub"
+    fi
+
+    # --- every lib/ stub is either unreferenced or documented as absent ---------------
+    # A 12-line placeholder whose function prints "not yet implemented" is fine. A stub
+    # that some other file calls in earnest is a silent no-op in production.
+    local libf fn stubs=0 called=()
+    for libf in "$ROOT"/lib/*.sh; do
+        grep -q 'not yet implemented' "$libf" || continue
+        stubs=$(( stubs + 1 ))
+        while read -r fn; do
+            if grep -rqE "(^|[^_[:alnum:]])$fn\b" "$ROOT/revctf"; then
+                called+=("$(basename "$libf"):$fn")
+            fi
+        done < <(grep -oE '^[a-z_]+(\(\))' "$libf" | tr -d '()')
+    done
+    ok "$stubs lib/ modules are still placeholders"
+    if [[ ${#called[@]} -eq 0 ]]; then
+        ok "no placeholder function is called from the entry script"
+    else
+        no "live call into a stub" "the entry script calls: ${called[*]}"
+    fi
+}
+
+# ======================================================================================
 main() {
     local -a want=("$@")
-    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 m2 m3 m4 qa ghidra)
+    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 m2 m3 m4 m5 qa docs ghidra)
 
     printf '\033[1mrevctf verification harness\033[0m\n'
     printf 'repo: %s\n' "$ROOT"
@@ -1176,7 +1480,9 @@ main() {
             m2)     test_m2     ;;
             m3)     test_m3     ;;
             m4)     test_m4     ;;
+            m5)     test_m5     ;;
             qa)     test_qa     ;;
+            docs)   test_docs   ;;
             ghidra) test_ghidra ;;
             *)      printf 'unknown section: %s\n' "$s" >&2 ;;
         esac

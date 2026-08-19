@@ -124,18 +124,21 @@ ANALYSIS DEPTH / STAGE CONTROL
 
 RESOURCE TUNING
     --timeout SECONDS     ltrace timeout  [default: 10]
-    --jobs-light N        Override tier's Phase-1 concurrency
-    --jobs-ghidra N       Override tier's Phase-2/3 concurrency
-    --maxmem-ghidra M     Override tier's Ghidra MAXMEM (e.g. 1024M)
-    --no-auto-swap        Never auto-create a swap file on a low-RAM host
+    --jobs-light N        [PARTIAL: M5] Override tier Phase-1 concurrency
+                          (resolved and reported; not yet enforced)
+    --jobs-ghidra N       [PARTIAL: M5] Override tier Phase-2/3 concurrency
+                          (resolved and reported; not yet enforced)
+    --maxmem-ghidra M     [PARTIAL: M5] Override tier Ghidra MAXMEM
+                          (resolved and reported; not yet enforced)
+    --no-auto-swap        [NOT YET: M5] Never auto-create a swap file
 
 SANDBOXING
     --sandbox             Run ltrace inside a network-isolated Docker container
 
 AGENCY & INTERACTIVITY
-    -i, --interactive     Pause before each stage: Continue / Skip stage /
-                          Skip file / Abort
-    -y, --yes             Auto-accept every prompt (CI-safe; overrides -i)
+    -i, --interactive     [NOT YET: M8] Pause before each stage: Continue /
+                          Skip stage / Skip file / Abort
+    -y, --yes             [NOT YET: M8] Auto-accept every prompt (CI-safe)
 
 DISPLAY & CONFIG
     --no-tui              Disable the live stage table; use line-mode output
@@ -144,9 +147,15 @@ DISPLAY & CONFIG
 
 DIAGNOSTICS
     --verbose             Human-readable stage trace on stderr
-    --debug               Full command trace to <output>/<name>.debug.log
+    --debug               [NOT YET: M9] Full command trace to a debug log
     -h, --help            Show this help
         --version         Show version
+
+NOT YET IMPLEMENTED IN THIS BUILD
+    Flags above marked [NOT YET: Mn] parse and validate but have no effect; the
+    milestone that implements each is named. [PARTIAL: Mn] means the value is
+    resolved and shown by --dry-run but not yet enforced during a scan. This
+    list is asserted by the verification harness, so it cannot drift silently.
 
 EXIT STATUS
     0   scan completed, every stage succeeded
@@ -382,18 +391,42 @@ cmd_scan() {
         _msg "  interactive : ${OPT[interactive]}   assume-yes: ${OPT[assume_yes]}"
     fi
 
-    # --- M1: preflight -----------------------------------------------------------
+    # --- Preflight ---------------------------------------------------------------
     # shellcheck source=/dev/null
     source "$REVCTF_LIB/preflight.sh" || die "cannot load $REVCTF_LIB/preflight.sh"
 
     local out_hint="${OPT[output_dir]:-.}"
-    preflight_run "$out_hint" "${OPT[skip_ghidra]}" || return 1
+    local pf_ok=1
+    preflight_run "$out_hint" "${OPT[skip_ghidra]}" || pf_ok=0
+
+    # A missing tool is a hard error for a real scan (v6 §11 D7) — but NOT for --dry-run.
+    # Refusing to print the plan because a tool is absent defeats the flag: "would this
+    # run, and how?" is exactly the question being asked, and "no, and here is what is
+    # missing" is a useful answer. The plan reports the verdict instead of swallowing it.
+    if [[ ${OPT[dry_run]} -eq 0 && $pf_ok -eq 0 ]]; then
+        return 1
+    fi
 
     if [[ ${OPT[verbose]} -eq 1 ]]; then
         preflight_summary >&2
     fi
 
-    # --- M2: stage framework + Phase-1 light stages ------------------------------
+    # --- Tier resolution + the --dry-run short-circuit ----------------------------
+    # Resolved once per run, not per file (v6 §5), so a batch cannot drift between files.
+    # shellcheck source=/dev/null
+    source "$REVCTF_LIB/tier.sh" || die "cannot load $REVCTF_LIB/tier.sh"
+    tier_resolve
+
+    # --dry-run must run NOTHING. It was previously parsed and then ignored, so a flag the
+    # README recommends before committing to a large batch quietly performed the full scan
+    # it was meant to preview — 78 seconds on a 220MB target. It returns here: before the
+    # stage modules are even sourced, before Stage 0, before any directory is created.
+    if [[ ${OPT[dry_run]} -eq 1 ]]; then
+        dry_run_plan "$pf_ok"
+        return 0
+    fi
+
+    # --- Stage framework + every analysis stage ----------------------------------
     local m
     for m in stage stage_dynamic stage_triage stage_file stage_strings stage_binwalk \
              stage_hexdump stage_checksec stage_objdump stage_ltrace stage_radare2 \
@@ -402,10 +435,6 @@ cmd_scan() {
         # shellcheck source=/dev/null
         source "$REVCTF_LIB/$m.sh" || die "cannot load $REVCTF_LIB/$m.sh"
     done
-
-    # --- M5 lands here: tier resolution + --dry-run short-circuit ------------------
-    # source "$REVCTF_LIB/tier.sh"; tier_resolve
-    # [[ ${OPT[dry_run]} -eq 1 ]] && { tier_report; return 0; }
 
     if [[ -d $TARGET ]]; then
         printf 'revctf: batch mode is not yet implemented (M7); pass a single file for now.\n' >&2
@@ -456,6 +485,93 @@ resolve_output_dir() {
     base="$(basename -- "$target")"
     stamp="$(date +%Y%m%d-%H%M%S)"
     printf './revctf-reports/%s-%s' "$base" "$stamp"
+}
+
+# dry_run_plan — print the resolved plan and run nothing.
+#
+# Everything here is read from already-resolved state: no tool is launched, no file is
+# read beyond a stat, and no directory is created. That is the whole contract of the flag.
+dry_run_plan() {
+    local pf_ok="${1:-1}" size="unknown" outdir bytes
+    # lib/stage.sh is deliberately NOT sourced on this path, so st_human_size is not
+    # available here. `numfmt` is coreutils and always present; the raw byte count is the
+    # fallback rather than a dependency.
+    if [[ -f $TARGET ]]; then
+        bytes="$(stat -c '%s' "$TARGET" 2>/dev/null || printf 0)"
+        size="$(numfmt --to=iec --suffix=B "$bytes" 2>/dev/null || printf '%s bytes' "$bytes")"
+    fi
+    outdir="$(resolve_output_dir "$TARGET")"
+
+    printf '======================================================================\n'
+    printf ' revctf %s — dry run (nothing was executed)\n' "$REVCTF_VERSION"
+    printf '======================================================================\n'
+    printf 'Target        : %s\n' "$TARGET"
+    printf 'Size          : %s\n' "$size"
+    printf 'Kind          : %s\n' \
+        "$([[ -d $TARGET ]] && printf 'directory (batch mode lands in M7)' || printf 'file')"
+    printf 'Output would be: %s\n' "$outdir"
+    printf 'Config        : %s\n' \
+        "$CONFIG_PATH$([[ -r $CONFIG_PATH ]] || printf ' (absent — built-in defaults)')"
+    if [[ $pf_ok -eq 1 ]]; then
+        printf 'Preflight     : passed — every required tool was found\n'
+    else
+        printf 'Preflight     : FAILED — a real scan would refuse to start (detail above)\n'
+    fi
+    printf '\n'
+    tier_report
+
+    printf '\nStages that would run\n'
+    local st label reason
+    for st in triage:"classify and unwrap" file:"identify the file type" \
+              strings:"extract printable strings" binwalk:"scan for embedded files" \
+              hexdump:"capture a hex view" checksec:"read mitigations and metadata" \
+              objdump:"cross-check with binutils" ltrace:"trace library calls (EXECUTES the target)" \
+              radare2:"disassemble" strace:"trace syscalls (EXECUTES the target)" \
+              floss:"recover obfuscated strings" managed:"decompile managed code" \
+              pydecomp:"decompile Python bytecode" ghidra:"decompile with Ghidra"; do
+        label="${st#*:}"; st="${st%%:*}"
+        reason="$(dry_run_skip_reason "$st")"
+        if [[ -n $reason ]]; then
+            printf '  [skip] %-9s %s — %s\n' "$st" "$label" "$reason"
+        else
+            printf '  [run ] %-9s %s\n' "$st" "$label"
+        fi
+    done
+
+    printf '\nFlag detection : %s\n' \
+        "$([[ ${OPT[flag_scan]} -eq 1 ]] && printf 'on, across every capture' || printf 'off (--no-flag-scan)')"
+    [[ -n ${OPT[flag_format]} ]] && printf 'Custom pattern : %s\n' "${OPT[flag_format]}"
+    printf 'Report style   : %s\n' \
+        "$([[ ${OPT[summary_only]} -eq 1 ]] && printf 'summary only' || printf 'full detail')"
+    printf 'On failure     : %s\n' \
+        "$([[ ${OPT[strict]} -eq 1 ]] && printf 'stop at the first failed stage (--strict)' || printf 'isolate and continue')"
+    printf 'ltrace timeout : %ss\n' "${OPT[timeout]}"
+
+    printf '\nStage-level skip decisions that depend on the file itself — whether it is a\n'
+    printf 'managed assembly, Python bytecode, packed, or a container — are made by Stage 0\n'
+    printf 'at scan time and cannot be predicted here without reading the file.\n'
+    printf '\nNothing was executed. Re-run without --dry-run to scan.\n'
+    return 0
+}
+
+# dry_run_skip_reason <stage> — why a stage would not run, or empty if it would.
+# Only reasons knowable WITHOUT touching the target; format-based skips belong to Stage 0.
+dry_run_skip_reason() {
+    local st="$1"
+    if [[ -n ${OPT[stages_disabled]} && ",${OPT[stages_disabled]}," == *",$st,"* ]]; then
+        printf 'disabled by --disable-stages'; return 0
+    fi
+    case "$st" in
+        triage)  [[ ${OPT[no_unwrap]} -eq 1 ]] && printf 'unwrapping disabled (--no-unwrap)' ;;
+        ltrace)  if [[ ${OPT[skip_ltrace]} -eq 1 ]]; then printf 'skipped by --skip-ltrace'
+                 elif [[ ${OPT[sandbox]} -eq 1 ]]; then printf 'refused: --sandbox has no container until M6'; fi ;;
+        strace)  if [[ ${OPT[skip_strace]} -eq 1 ]]; then printf 'skipped by --skip-strace'
+                 elif [[ ${OPT[sandbox]} -eq 1 ]]; then printf 'refused: --sandbox has no container until M6'; fi ;;
+        ghidra)  if [[ ${OPT[skip_ghidra]} -eq 1 ]]; then printf 'skipped by --skip-ghidra; radare2 substitutes'
+                 elif [[ $TIER == C && ${OPT[force_full_decompile]} -eq 0 ]]; then
+                     printf 'Tier C default: skipped for radare2-only (--force-full-decompile overrides)'; fi ;;
+    esac
+    return 0
 }
 
 # scan_one_file <path> — Stage 0 then the Phase-1 light stages.

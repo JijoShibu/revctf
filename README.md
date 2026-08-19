@@ -32,7 +32,7 @@ revctf scan ./crackme                                   # single file
 revctf scan ./challenges/ --summary-only                # batch, flags first
 revctf scan ./bin --flag-format 'picoCTF\{.*?\}'        # custom flag pattern
 revctf scan ./sample --sandbox                          # ltrace in a container
-revctf scan ./big.elf --dry-run                         # show plan, run nothing
+revctf scan ./big.elf --dry-run                         # resolved plan, runs nothing
 revctf --help                                           # every flag
 ```
 
@@ -63,16 +63,20 @@ RAM is detected at startup and mapped to a tier that sets concurrency and memory
 | C | < 2.5GB | 1 | 400MB | 1 (forced only) | 512M | Light (auto) |
 
 Override individually with `--jobs-light`, `--jobs-ghidra`, `--maxmem-ghidra`. Use
-`--dry-run` to see the resolved plan before committing to a large batch.
+`--dry-run` to see the resolved plan — tier, limits, and exactly which stages would run —
+before committing to a large batch. It executes nothing.
 
-On a Tier B/C host with no active swap, revctf offers to create a 1–2GB swap file
-(`--no-auto-swap` opts out). A background watchdog kills the run if total RSS passes 90%
-of system RAM — that one action is never prompted, by design.
+> The tier boundaries and the Phase-2 memory ceiling are **not yet measured**. v4 §10 flags
+> them as estimates, and the measured FLOSS peak (~1.46GB) already exceeds every tier's
+> Ghidra ceiling. `--dry-run` says so in its Notes. M5 replaces them with real numbers.
+
+**Planned for M5, not in this build:** the swap offer on a low-RAM host
+(`--no-auto-swap`), the RSS watchdog, and actual *enforcement* of the tier limits. Today
+the tier is detected, resolved and reported — `--dry-run` shows exactly what it decided —
+but nothing constrains a stage to those numbers yet.
 
 ## Control and safety
 
-- `--interactive` / `-i` — pause before each stage: Continue / Skip stage / Skip file / Abort
-- `--yes` / `-y` — auto-accept every prompt; makes CI runs unhangable
 - `--skip-ltrace`, `--skip-strace` — skip the stages that **execute** the challenge binary
 - `--skip-ghidra` — skip decompilation; radare2 substitutes
 - `--strict` — stop at the first failed stage. By default a failure is isolated and the
@@ -153,8 +157,31 @@ expanded in path values.
 ## Diagnostics
 
 - `--verbose` — stage trace on stderr
-- `--debug` — full command trace to `<output>/<name>.debug.log`
-- `~/.revctf/error.log` — every stage failure across every run, `600`, rotated at 5MB
+- Every failed stage is reported in the report's DIAGNOSTICS block with its command, exit
+  code and a stderr tail; the raw `<stage>.stderr` capture is kept alongside it
+
+Planned, **not in this build**: `--debug` (M9), the persistent `~/.revctf/error.log` (M9),
+and the `--interactive` / `--yes` prompt layer (M8). `--help` marks each of these
+`[NOT YET: Mn]`.
+
+## What is not in this build
+
+`revctf --help` marks these `[NOT YET: Mn]` or `[PARTIAL: Mn]`, and the verification
+harness asserts that this list and that one agree — so neither can drift.
+
+| Flag / feature | Status | Lands in |
+|---|---|---|
+| `--interactive` / `-i` | parses, no effect | M8 |
+| `--yes` / `-y` | parses, no effect | M8 |
+| `--no-auto-swap`, swap offer | parses, no effect | M5 |
+| `--debug`, `~/.revctf/error.log` | parses, no effect | M9 |
+| `--jobs-light`, `--jobs-ghidra`, `--maxmem-ghidra` | resolved and reported, **not enforced** | M5 |
+| RSS watchdog | not present | M5 |
+| `--sandbox` | *refuses* the executing stages rather than falling back to the host | M6 |
+| Batch mode (a directory target) | exits 1 with a clear message | M7 |
+| `install.sh` dependency installation | **stub — installs nothing** | next |
+
+`tools/bootstrap-kali.sh` covers the `install.sh` gap meanwhile.
 
 ## Requirements
 
@@ -167,12 +194,17 @@ Kali Linux (or Debian-derived), Bash 4+, and the toolchain `install.sh` sets up:
 ## Development
 
 ```bash
+./tools/bootstrap-kali.sh                 # one-shot setup on a fresh Kali / WSL Kali
 ./tools/build-test-corpus.sh              # 18 test artifacts (gitignored)
-./tools/run-tests.sh                      # 188 checks (~15 min)
-./tools/run-tests.sh m4 qa                # just those sections
+./tools/run-tests.sh                      # 250 checks (~15 min)
+./tools/run-tests.sh m4 m5 docs qa       # just those sections
 REVCTF_TEST_FAST=1 ./tools/run-tests.sh   # skip the 220MB-target checks (~3 min)
 ./tools/tui-selftest.sh                   # 6 interactive checks — needs a real terminal
+./tools/measure-host.sh                   # the numbers M5's constants derive from
 ```
+
+Launch long background harness runs with `setsid`, **not** `nohup` — `nohup` sets SIGHUP
+to ignored for every descendant, which makes the SIGHUP check report a phantom failure.
 
 The `ghidra` section self-skips when no Ghidra is installed. `tui-selftest.sh` covers what
 the harness structurally cannot: whether a resize corrupts the redraw, whether Ctrl+C

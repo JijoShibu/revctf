@@ -107,6 +107,50 @@ These cost real time to discover. Each one changed the design.
 
 ---
 
+## 3b. The WSL / Kali target environment
+
+Development moves to WSL Kali (or a Kali VM) at M5. These facts are not optional details —
+each one silently voids something the design depends on.
+
+- **WSL2 does not boot systemd by default.** M5's Definition of Done requires
+  `systemd-run --scope -p MemoryMax=…` to work, and that path has **never executed once**
+  in this project: the cloud build sandbox had systemd installed but not booted, so every
+  run fell through to the `ulimit -v` fallback, which bounds *virtual size*, not RSS.
+  Migrating to WSL without enabling systemd inherits the exact blocker the move was meant
+  to escape. Put this in `/etc/wsl.conf`, then `wsl --shutdown` from PowerShell:
+
+  ```ini
+  [boot]
+  systemd=true
+  ```
+
+  Verify with `systemctl is-system-running` and `systemd-run --user --scope true`.
+- **`.wslconfig` is the Tier C test rig.** M5's DoD asks for "a forced-2GB cgroup/VM".
+  In `C:\Users\<user>\.wslconfig`, `[wsl2] memory=2GB` plus `processors=2`, then
+  `wsl --shutdown`. That is the cheapest way to test a tier boundary honestly, and it is a
+  real argument for WSL over a VM here.
+- **The repo must live in the Linux filesystem** (`~/revctf`), never under `/mnt/c` or
+  `/mnt/d`. NTFS cannot hold the `0600` capture and `0700` directory modes v4 §5 requires
+  and QA-9/QA-10 fixed. The permission tests would pass while the guarantee was void —
+  worse than failing.
+- **Line endings.** `.gitattributes` pins `* text=auto eol=lf`. A CRLF `.sh` fails as
+  `bad interpreter: No such file or directory`. Do not remove it, and do not let a global
+  `core.autocrlf=true` be assumed safe.
+- **Claude Code runs inside the WSL shell**, never in PowerShell. Native Windows has no
+  `ltrace`, no `strace`, no `radare2` against ELF, no `setsid`, no process groups, no
+  `ulimit -f`/`SIGXFSZ` and no POSIX permission bits — which is most of what `lib/` relies on.
+- **`install.sh` is still a stub.** Its whole dependency block is commented out while
+  README calls it mandatory and preflight tells users to "re-run it (while online)" when a
+  tool is missing. **Completing it is the first task after this handoff.**
+  `tools/bootstrap-kali.sh` is the stopgap; note it installs FLOSS via a venv, because
+  `pip install --break-system-packages flare-floss` — the line install.sh still carries —
+  is already documented in §3 as failing.
+- **Use `setsid`, not `nohup`, for long background harness runs.** `nohup` sets SIGHUP to
+  SIG_IGN for every descendant, which makes the `qa` SIGHUP check report a phantom
+  regression. The check now detects and skips, but the launcher is the real fix.
+
+---
+
 ## 4. Layout
 
 ```
@@ -119,10 +163,13 @@ lib/flagscan.sh           tiered regex + encoding sweep            (M3)
 lib/config.sh             config key registry + coercion           (M4)
 lib/report.sh             report assembly                          (M4)
 lib/tui.sh                stage table / line / heartbeat, stderr   (M4)
+lib/tier.sh               RAM tier resolution + overrides          (M5 groundwork)
 scripts/*.py              the two Ghidra headless post-scripts     (M3)
 tools/build-test-corpus.sh  regenerates the 18-artifact corpus (binaries are gitignored)
 tools/run-tests.sh        milestone-gate verification harness
 tools/tui-selftest.sh     interactive checks needing a real terminal (M4)
+tools/measure-host.sh     capture the numbers M5's constants are derived from
+tools/bootstrap-kali.sh   one-shot Kali/WSL setup — stopgap until install.sh works
 .claude/cloud-setup.sh    toolchain install for a cloud environment
 ```
 

@@ -748,3 +748,113 @@ simulation allows** — that is a known, deliberate gap, not an oversight.
 - M6 needs a Docker daemon; M8 needs a TTY. Neither exists in the build sandbox.
 - `REPORT_EXCERPT_LINES` and the per-stage caps are judgement, not measurement. Revisit
   once someone has read a report for a real challenge.
+
+---
+
+## Pre-M5 groundwork (cloud session, before the handoff to a Linux host)
+
+Three things were built here because they can be built blind, and one was deliberately
+left alone because it cannot.
+
+### `--dry-run` was a lie, and the fix changed where preflight sits
+
+The flag parsed, set `OPT[dry_run]=1`, and was never read again. The short-circuit existed
+only as a comment. So `revctf scan big.elf --dry-run` — which `README.md` recommends
+*before committing to a large batch* — performed the full 78-second scan it was supposed
+to preview, created the output directory, and exited 0. Documented behaviour and actual
+behaviour were opposites, which is worse than an unimplemented flag.
+
+Implementing it forced a design decision. Preflight treats a missing tool as a hard error
+(v6 §11 D7) and returns before anything else runs, so a dry run on a box without Ghidra
+printed a tool error and no plan. But "would this run, and how?" is precisely the question
+`--dry-run` asks, and *"no, and here is what is missing"* is a useful answer — refusing to
+print the plan makes the flag useless exactly when it is most wanted. So the preflight
+verdict is now captured rather than returned on, and:
+
+- a **real scan** still returns 1 on preflight failure — D7 unchanged;
+- a **dry run** prints the plan with `Preflight : FAILED — a real scan would refuse to
+  start`.
+
+The short-circuit also moved *above* the stage-module sourcing loop, so a dry run no
+longer loads eighteen files it will not use. One consequence worth remembering:
+`lib/stage.sh` is not sourced on that path, so `st_human_size` is unavailable there and
+`dry_run_plan` uses `numfmt` with a raw-bytes fallback.
+
+### `lib/tier.sh` — written, deliberately not trusted
+
+The table is v6 §5 / v4 §3 carried unchanged: A ≥3891MB, B ≥2560MB, C below, with the
+`-P` values, radare2 ceilings and Ghidra `MAXMEM` per tier. What is new is the shape:
+
+- Every constant is named and grouped at the top of the file, so moving a boundary once it
+  is measured is a one-line change rather than an archaeology exercise. v4 §10 flags these
+  numbers as estimates, and that warning has been vindicated once already — v3's
+  "Ghidra 11.x+ → PyGhidra" boundary was an estimate too, and it was wrong by a whole
+  major version.
+- `tier_detect_ram_mb` **assigns globals rather than printing**. The first version printed
+  the figure and was called as `$(tier_detect_ram_mb)`, which runs in a subshell, so the
+  `TIER_RAM_SOURCE` assignment evaporated and the plan reported `RAM detected: 8023MB
+  (via )`. Missing provenance is not cosmetic here: the whole point of the field is to
+  stop an injected value from looking measured.
+- The RAM figure is coerced with `is_uint` before it reaches `-ge`. That is the QA-1 rule,
+  and it applies to a number read from `free` exactly as it applies to one read from a
+  config file — arithmetic context under `set -u` does not care where the word came from.
+- Undetectable RAM falls back to **Tier C**, not Tier A. Guessing low costs a slower scan;
+  guessing high on a 2GB box costs an OOM kill mid-Ghidra.
+- Tier C with `--force-full-decompile` now reports `Decompilation : full`. The first
+  version kept printing the table's default (`light`) next to a note saying full
+  decompilation was running — a small self-contradiction, and those are what cost an hour
+  later.
+
+**`REVCTF_RAM_MB` exists for the harness**, and its limits are the point. Injecting a
+figure tests the *branch* — that 2559MB picks Tier C and 2560MB picks Tier B — on any
+machine. It tests nothing about whether Tier C's limits actually keep a scan inside memory
+on a box that really has 2GB. That distinction is why every report labels an injected
+value, and why the `m5` section carries a scope-limit comment at the top: a green section
+here must never be mistaken for a verified milestone.
+
+### The Phase-2 ceiling was implemented as specified, and flagged
+
+v6 §5 derives Phase 2's per-job ceiling as the tier's Ghidra `MAXMEM`, arguing it makes
+Phase 2's worst case identical to Phase 3's, which v3 §8 already sized. M3 measurement
+disproves the premise: FLOSS peaks at ~1.46GB on a 220MB target, above Tier A's 1024M and
+roughly 3x Tier C's.
+
+The temptation is to invent a better number. That would repeat the original mistake —
+substituting one unmeasured constant for another. So `tier_resolve` implements the
+derivation as written, and every plan carries the contradiction in its Notes block, with
+`FLOSS_MAX_MB` (64MB) as the interim guard on the one known offender. M5 replaces it from
+`tools/measure-host.sh` output taken on real hardware.
+
+### What was left alone, and why
+
+**`install.sh` still installs nothing.** Every line of its dependency block is commented
+out; it prints `dependency installation is a stub (lands in M1); skipping` and exits
+happily. Its own header claims M1 completed it — M1 built the preflight *registry*
+(detection), never the installer. Meanwhile `README.md` says it is mandatory and preflight
+tells a user with a missing tool to *"re-run it (while online)"*. That is a closed loop,
+and it is the first thing anyone hits on a fresh Kali.
+
+It also carries a line already known to be wrong: `pip install --break-system-packages
+flare-floss` is documented in `CLAUDE.md` §3 as failing on modern Debian/Ubuntu via its
+`halo` dependency. FLOSS needs a venv.
+
+Fixing it was deferred on purpose: an installer that has never run against the platform it
+targets is not really written. It should be built in the first Claude Code session on
+Kali, where each apt group and download can be executed as it is written.
+`tools/bootstrap-kali.sh` covers the gap meanwhile and is labelled a stopgap in its own
+header.
+
+### The WSL fact that matters more than it looks
+
+**WSL2 does not boot systemd by default.** M5's Definition of Done requires
+`systemd-run --scope -p MemoryMax=…` to work, and that path has never executed once in
+this project — the cloud sandbox had `systemd-run` on PATH but systemd unbooted (PID 1 was
+`process_api`), so every run silently used the `ulimit -v` fallback, which bounds virtual
+size rather than RSS.
+
+Moving to WSL without `[boot] systemd=true` in `/etc/wsl.conf` inherits precisely the
+blocker the move exists to escape. `tools/bootstrap-kali.sh` checks for it and offers to
+write it; `tools/measure-host.sh` reports it; `CLAUDE.md` §3b records it.
+
+The mirror image is a gift: `.wslconfig` with `[wsl2] memory=2GB` is exactly the
+"forced-2GB cgroup/VM" M5's DoD asks for, without a spare machine.
