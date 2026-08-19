@@ -1460,6 +1460,27 @@ test_docs() {
         no "install.sh documentation" "README does not disclose that install.sh is a stub"
     fi
 
+    # --- the design documents must travel with the repo -------------------------------
+    # CLAUDE.md §1 names revctfmasterplan_v6.md §11 as the highest authority for resolving
+    # conflicts. They were kept beside the repo, so a fresh clone was instructed to obey a
+    # document it did not have. This check makes that unrepeatable.
+    local -a design=(revctfmasterplan_v6.md revctfmasterplan_v5.md revctfmasterplan_v4.md
+                     revctfmasterplanv3.md revctf_executionmasterplan.md README.md)
+    local d missing_design=()
+    for d in "${design[@]}"; do
+        [[ -s "$ROOT/design/$d" ]] || missing_design+=("$d")
+    done
+    if [[ ${#missing_design[@]} -eq 0 ]]; then
+        ok "all ${#design[@]} design documents are in design/"
+    else
+        no "design documents missing" "not in design/: ${missing_design[*]}"
+    fi
+    if grep -q 'D10' "$ROOT/design/revctfmasterplan_v6.md"; then
+        ok "the Deviation Register in design/ includes D10"
+    else
+        no "stale design spec" "design/revctfmasterplan_v6.md predates D10"
+    fi
+
     # --- lib/tui.sh is frozen (QA review #2) ------------------------------------------
     # A comment alone would not have held: the same trust in "someone will read it" is
     # what let seven documented-but-absent features accumulate. The ceiling makes growth

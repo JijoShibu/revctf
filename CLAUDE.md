@@ -21,8 +21,10 @@ Five design documents exist. They do not all agree. Resolve conflicts in this or
 | 3 | `revctfmasterplan_v4.md` | Fills gaps only: RAM tier table, resource isolation, watchdog, swap, Ghidra OOM retry. |
 | 4 | `revctfmasterplanv3.md` | Fills gaps only: memory derivations, base CLI semantics, per-stage invocations, sandbox hardening. |
 
-**`revctfmasterplan_v6.md` consolidates all four — read that one first.** The design
-documents live alongside the repo, not inside it.
+**`revctfmasterplan_v6.md` consolidates all four — read that one first.** All five live in
+**`design/`** in this repo. They used to sit beside it, which meant a fresh clone lacked the
+very document this table calls the highest authority; `design/README.md` explains the move
+and flags the two places where v3/v4/v5 are now actively wrong.
 
 `implementation-notes.md` (in this repo) records what was learned *while building*, as the
 execution masterplan §4 requires. Append to it whenever something non-obvious comes up.
