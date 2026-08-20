@@ -1190,3 +1190,94 @@ The general lesson matches the upx and radare2 ones: **a check that passes becau
 the machine happens to lack is not a check.** Three instances in one milestone — the swap
 diagnostic (passed because the sandbox had no swap), these Ghidra checks (passed because no
 Ghidra was installed), and the watchdog test (passed because the watchdog never started).
+
+### The fourth vacuous check — and it is the one that let a tag through
+
+Three checks in this milestone passed by never executing (the swap diagnostic, the Ghidra
+discovery checks, the watchdog test). This is the fourth, and the most costly: **the
+`ghidra` harness section reported 3 passed / 0 skipped while revctf's Ghidra stage was
+failing with an empty capture and the corpus crackme's password was not being recovered.
+`v0.3-m5` was tagged against that result.** Recorded rather than quietly re-tagged, because
+the tag genuinely was cut against a green suite that was not measuring the thing.
+
+Why it was vacuous — three checks, none of which touched the code under test:
+
+1. *"detected runtime matches the shipped feature dir"* asserted that preflight **names**
+   the right runtime. On 12.1.3 it correctly said `pyghidra`, and the pyghidra script then
+   died because PyGhidra is not enabled under plain `analyzeHeadless`. Naming the runtime
+   and being able to run it are different claims.
+2. *"headless analysis succeeds on the corpus crackme"* invoked `analyzeHeadless` **with no
+   `-postScript` and no `-scriptPath`**. It proved Ghidra can analyse a binary, which was
+   never in question. The post-script is the part that broke, and it was never invoked.
+3. *"-deleteProject leaves no project behind"* is structural and orthogonal.
+
+So the section verified *Ghidra*, never *revctf's Ghidra stage*. It is the same defect
+QA review #2 named — a structural gate where a behavioural one was needed — applied to the
+one stage whose output nothing else in the harness covers.
+
+The section now runs a real `revctf scan` and asserts the payload: stage status `ok`, a
+non-empty `ghidra.txt`, **`sw0rdf1sh` present in the decompiled pseudo-C**, and that it
+reaches `report.txt`. The password is a known answer that can only appear if the
+decompiler ran *and* the post-script emitted its output — a check that a stage producing
+nothing cannot satisfy.
+
+Verified against a deliberately broken post-script (an unparseable `.py` passed via
+`--ghidra-script`), which reproduces the 12.x shape exactly: **status `empty`, 0 bytes,
+exit 0**. All four new checks fail on it; both old ones would still have passed.
+
+That negative test also showed `_ghidra_saw_script_error` was too narrow — it matched the
+12.x `GhidraScriptLoadException` but not Jython's `SyntaxError`, so the broken script was
+still reported as `empty` rather than `failed`. Both are now matched, and the quoted
+reason uses the same alternation as the detector, so the failure names its cause instead
+of showing a blank.
+
+**The general rule this fourth instance earns:** a check that does not invoke the code path
+it is named after is not testing that path, however green it looks. For a stage, assert the
+artifact the stage exists to produce.
+
+### install.sh could never correct a stale GHIDRA_HOME
+
+Two bugs compounding, both in `step_ghidra`:
+
+- The function `return 0`-ed at *"already installed"*, so everything after that point was
+  unreachable on every run after the first.
+- The `.bashrc` append was guarded by `! grep -q GHIDRA_HOME`, which skips when **any**
+  line exists — including a wrong one.
+
+Together: the first value ever written was permanent. Observed on this machine, a line
+still naming a 12.1.3 install that had been replaced by 11.2.1, uncorrectable by re-running
+the installer.
+
+This was cosmetic before D12 and is not now. **D12 makes `GHIDRA_HOME` win over PATH**, so
+a stale line no longer just sits there — it silently redirects every scan to whatever
+install it names. It is inert today only because the stale path does not exist, which makes
+D12's fall-back-to-PATH warning fire. The moment such a path exists again (another install,
+a restored snapshot), it would override a deliberately pinned Ghidra with no indication.
+
+`_sync_ghidra_home` now replaces a differing line, appends when none exists, and says so in
+all three cases; `_ghidra_install_root` resolves the installer's own symlink to find the
+real root; and the already-installed branch reaches the sync instead of returning early.
+
+Fixing that check surfaced two more instances of the same shape, which is worth recording
+because it shows how easily the pattern reproduces — I introduced one of them *while
+fixing the original*:
+
+- **The section searched for Ghidra itself** (`find /opt -name analyzeHeadless | sort -rV |
+  head -1`), a second independent implementation of discovery. It disagreed with revctf's:
+  an install shelved by renaming it to `/opt/_disabled_ghidra_12.1.3` was still matched and
+  won the sort, so the section printed `using: /opt/_disabled_ghidra_12.1.3` and ran its
+  first three checks against a Ghidra revctf would never touch, while the stage checks used
+  the real 11.2.1 through PATH. One section, two Ghidras. It now asks revctf what it
+  resolved (`--verbose` already prints it), which also exercises D12 precedence for free.
+
+- **`grep sw0rdf1sh report.txt` was vacuous** — the crackme's password is visible to plain
+  `strings`, so the whole-report grep passes with Ghidra contributing nothing. This was a
+  check I added in this very fix, and it passed against the broken 12.1.3 install alongside
+  the three that correctly failed. Now scoped to the `### ghidra` section of the report.
+
+Both were caught by the same technique, which is the durable lesson: **run the new check
+against a known-broken input and confirm it fails.** A check verified only against a
+working system cannot distinguish "passes because correct" from "passes because it never
+looked". The negative case used here is an unparseable post-script passed via
+`--ghidra-script`, which reproduces the 12.x shape (`empty`, 0 bytes, exit 0) without
+needing 12.x reinstalled.

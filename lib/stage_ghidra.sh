@@ -111,8 +111,11 @@ stage_ghidra() {
     # FAILURE, and saying so is the difference between "no flag here" and "this tool never
     # ran".
     if [[ ! -s $out ]] && _ghidra_saw_script_error "$err"; then
+        # Quote whatever Ghidra actually said. The alternation has to match the same set as
+        # _ghidra_saw_script_error, or the stage reports a failure with a blank reason —
+        # which is barely better than the empty stage it replaced.
         stage_set_status "$name" failed \
-            "the Ghidra post-script did not run — $(grep -aoiEm1 '(GhidraScriptLoadException|SCRIPT ERROR)[^\n]{0,120}' "$err" 2>/dev/null | head -c 160)"
+            "the Ghidra post-script did not run — $(grep -aoiEm1 '(GhidraScriptLoadException|SCRIPT ERROR|SyntaxError|Unable to load script|not started with PyGhidra)[^\n]{0,120}' "$err" 2>/dev/null | head -c 160)"
         return 0
     fi
 
@@ -121,8 +124,16 @@ stage_ghidra() {
 }
 
 # A post-script that failed to load, or threw, while analyzeHeadless still exited 0.
+#
+# The patterns are deliberately several, because the shape of this failure depends on HOW
+# the script died and they look nothing alike. Two observed on this project:
+#   Ghidra 12.1.3, PyGhidra not enabled -> "GhidraScriptLoadException: Ghidra was not
+#                                           started with PyGhidra"
+#   Jython, unparseable script          -> "SyntaxError: no viable alternative at input"
+# Both produced an empty capture and exit 0. Anchor `SyntaxError`/`Traceback` to the
+# interpreter rather than to a phrase, so a future interpreter's wording still matches.
 _ghidra_saw_script_error() {
-    grep -qaiE 'SCRIPT ERROR|GhidraScriptLoadException|Unable to load script|not started with PyGhidra|Python is not available' \
+    grep -qaiE 'SCRIPT ERROR|GhidraScriptLoadException|Unable to load script|not started with PyGhidra|Python is not available|SyntaxError|Traceback \(most recent call last\)' \
         "$1" 2>/dev/null
 }
 

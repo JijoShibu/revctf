@@ -79,6 +79,11 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
   reported both as "timed out after Ns", so a FLOSS run killed at its ceiling after ONE
   second was reported as "timed out after 300s" — pointing the reader at the wrong
   constant. Use `st_explain_kill()`.
+- **A stage check must assert the artifact the stage produces, not that its tool exists.**
+  The `ghidra` harness section passed 3/0 while the stage produced an empty capture, because
+  it ran `analyzeHeadless` with no `-postScript` — testing Ghidra, never revctf's stage.
+  `v0.3-m5` was tagged against that. It now asserts `sw0rdf1sh` appears in the decompiled
+  pseudo-C. Four checks in M5 turned out to pass by never executing; this was the costliest.
 - **A memory ceiling that a stage cannot possibly meet must degrade the stage, not kill
   it.** Tier C cannot afford FLOSS's ~900MB emulation, so it runs `--only static` and the
   report says RAM was the reason. A ceiling that guarantees a failure is worse than none.

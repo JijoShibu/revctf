@@ -197,6 +197,8 @@ Each is tracked to the milestone that resolves it. Two are load-bearing.
   <br>M: M5 · $HOME-under-sudo, unconditional escalation, unchecked ln, "latest" Ghidra
 - [!] **PyGhidra post-script has never run against a real PyGhidra (Ghidra 12.x headless)**
   <br>Risk · M: M6+ · Ghidra pinned to 11.2.x meanwhile; `support/pyghidraRun` is GUI-only
+- [x] **ghidra harness section asserts the decompile output, not just that Ghidra runs**
+  <br>M: M5 · was vacuous; v0.3-m5 was tagged against it · now asserts sw0rdf1sh
 - [!] **Tier boundaries 3.8GB / 2.5GB are unvalidated estimates (v4 §10)**
   <br>Risk · M: M5 · STILL UNMEASURED · the 4GB VM lands 26MB inside Tier A
 - [!] **Tier B/C never entered on hardware that really has that much RAM**

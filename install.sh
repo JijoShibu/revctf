@@ -181,8 +181,24 @@ step_ghidra() {
         ok "skipped by request (SKIP_GHIDRA=1)"
         return 0
     fi
+    # ALREADY INSTALLED IS NOT A REASON TO RETURN.
+    #
+    # This used to `return 0` here, which made the GHIDRA_HOME sync at the end of this
+    # function unreachable on every run after the first. Combined with the append guard
+    # below only firing when NO GHIDRA_HOME line existed, a wrong value written once could
+    # never be corrected by any later run — observed: a line still pointing at a 12.1.3
+    # install that had been replaced, which had to be fixed by hand. Harmless only while
+    # the stale path does not resolve (D12 warns and falls back to PATH); the moment such a
+    # path exists again it would silently override a deliberately pinned install.
+    local home=""
     if command -v analyzeHeadless >/dev/null 2>&1 || compgen -G "$GHIDRA_DIR/ghidra_*" >/dev/null 2>&1; then
-        ok "already installed"
+        home="$(_ghidra_install_root)"
+        if [[ -n $home ]]; then
+            ok "already installed at $home"
+            _sync_ghidra_home "$home"
+        else
+            ok "already installed"
+        fi
         return 0
     fi
     if ! command -v curl >/dev/null 2>&1; then
@@ -227,7 +243,7 @@ step_ghidra() {
     fi
     rm -f "$zip"
 
-    local home; home="$(compgen -G "$GHIDRA_DIR/ghidra_*" | head -1)"
+    home="$(compgen -G "$GHIDRA_DIR/ghidra_*" | head -1)"
     if [[ -z $home ]]; then
         FAILED+=("ghidra extract — no ghidra_* directory found under $GHIDRA_DIR")
         return 1
@@ -241,18 +257,59 @@ step_ghidra() {
     # analyzeHeadless is found via PATH -> GHIDRA_HOME -> /opt/ghidra* (pf_detect_ghidra_
     # runtime, lib/preflight.sh). The symlink covers PATH; GHIDRA_HOME is a convenience for
     # anything that reads the variable directly.
-    # INSTALL_HOME, not $HOME: under sudo this file belongs to the invoking user, and
-    # appending to /root/.bashrc would be invisible to them. Written as that user too, so
-    # the file does not end up root-owned in their home directory.
-    local rc="$INSTALL_HOME/.bashrc"
-    if [[ -f $rc ]] && ! grep -q 'GHIDRA_HOME' "$rc" 2>/dev/null; then
-        if printf '\nexport GHIDRA_HOME=%s\n' "$home" \
-             | run_as_install_user tee -a "$rc" >/dev/null 2>&1; then
-            ok "GHIDRA_HOME appended to $rc (new shells only — export it now to use this one)"
-        else
-            warn "could not append GHIDRA_HOME to $rc; set it yourself: export GHIDRA_HOME=$home"
-        fi
+    _sync_ghidra_home "$home"
+}
+
+# _ghidra_install_root — the Ghidra directory an existing install lives in, or empty.
+# Resolves the symlink install.sh itself creates: /usr/local/bin/analyzeHeadless points at
+# <root>/support/analyzeHeadless, so dirname twice on the RESOLVED path gives the root.
+_ghidra_install_root() {
+    local ah root=""
+    if ah="$(command -v analyzeHeadless 2>/dev/null)"; then
+        ah="$(readlink -f -- "$ah" 2>/dev/null)"
+        [[ -n $ah ]] && root="$(dirname -- "$(dirname -- "$ah")")"
     fi
+    [[ -d ${root:-} && -d ${root:-}/Ghidra ]] || root="$(compgen -G "$GHIDRA_DIR/ghidra_*" 2>/dev/null | sort -rV | head -1)"
+    [[ -d ${root:-} ]] && printf '%s' "$root"
+    return 0
+}
+
+# _sync_ghidra_home <root> — make the user's .bashrc export exactly this GHIDRA_HOME.
+#
+# REPLACES a stale line rather than skipping when one exists. The previous version appended
+# only if no GHIDRA_HOME line was present, so the first value written was permanent — and
+# since D12 now makes GHIDRA_HOME *win* over PATH, a stale line is no longer cosmetic: it
+# would silently redirect every scan to whatever install it names.
+_sync_ghidra_home() {
+    local root="$1" rc="$INSTALL_HOME/.bashrc" current=""
+    [[ -n $root ]] || return 0
+    [[ -f $rc ]] || return 0
+
+    current="$(sed -n 's/^[[:space:]]*export[[:space:]]\+GHIDRA_HOME=//p' "$rc" 2>/dev/null | tail -1)"
+    current="${current%\"}"; current="${current#\"}"
+
+    if [[ $current == "$root" ]]; then
+        ok "GHIDRA_HOME in $rc already points at $root"
+        return 0
+    fi
+
+    if [[ -n $current ]]; then
+        # Rewrite in place, as the invoking user so the file does not become root-owned.
+        if run_as_install_user sed -i "s|^[[:space:]]*export[[:space:]]\+GHIDRA_HOME=.*|export GHIDRA_HOME=$root|" "$rc" 2>/dev/null; then
+            ok "GHIDRA_HOME in $rc updated: $current -> $root"
+        else
+            warn "$rc still exports GHIDRA_HOME=$current, which is stale. Fix it by hand: export GHIDRA_HOME=$root"
+        fi
+        return 0
+    fi
+
+    if printf '\nexport GHIDRA_HOME=%s\n' "$root" \
+         | run_as_install_user tee -a "$rc" >/dev/null 2>&1; then
+        ok "GHIDRA_HOME appended to $rc (new shells only — export it now to use this one)"
+    else
+        warn "could not append GHIDRA_HOME to $rc; set it yourself: export GHIDRA_HOME=$root"
+    fi
+    return 0
 }
 
 main() {

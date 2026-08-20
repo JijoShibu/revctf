@@ -992,18 +992,29 @@ z.close()" 2>/dev/null
 test_ghidra() {
     section "real Ghidra (skipped if absent)"
 
-    local gh=""
-    if [[ -n ${GHIDRA_HOME:-} && -x ${GHIDRA_HOME}/support/analyzeHeadless ]]; then
-        gh="$GHIDRA_HOME/support/analyzeHeadless"
-    else
-        gh=$(find "${PF_OPT_ROOT_REAL:-/opt}" -maxdepth 3 -name analyzeHeadless -type f 2>/dev/null | sort -rV | head -1)
+    # ASK REVCTF WHICH GHIDRA IT RESOLVED, rather than repeating the search here.
+    #
+    # This used to run its own `find /opt -name analyzeHeadless | sort -rV | head -1`, which
+    # is a second, independent implementation of discovery — and it disagreed. Observed: an
+    # install renamed to /opt/_disabled_ghidra_12.1.3 (deliberately shelved) was still
+    # matched by the find and won the sort, so this section printed "using:
+    # /opt/_disabled_ghidra_12.1.3" and ran its first three checks against a Ghidra revctf
+    # would never touch, while the stage checks below used the real 11.2.1 through PATH.
+    # One section, two Ghidras, and a header naming the wrong one.
+    #
+    # revctf's own resolution is the only answer that matters, and it already prints it
+    # under --verbose. Asking it also means the D12 precedence is exercised here for free.
+    local gh="" root=""
+    gh=$("$RC" scan "$ROOT/README.md" --verbose 2>&1 \
+         | sed -n 's/^  ghidra  *: [^(]*(\(.*\))$/\1/p' | head -1)
+    if [[ -n $gh && -x $gh ]]; then
+        gh="$(readlink -f -- "$gh" 2>/dev/null || printf '%s' "$gh")"
+        root="$(cd -- "$(dirname -- "$gh")/.." && pwd 2>/dev/null)"
     fi
-    if [[ -z $gh ]]; then
-        skip "real Ghidra checks" "no Ghidra install found"; return
+    if [[ -z $root || ! -d $root/Ghidra ]]; then
+        skip "real Ghidra checks" "revctf resolved no usable Ghidra install"; return
     fi
-
-    local root; root="$(cd -- "$(dirname -- "$gh")/.." && pwd)"
-    printf '  using: %s\n' "$root"
+    printf '  using (as revctf resolved it): %s\n' "$root"
 
     # Detection must agree with what the install actually ships.
     local shipped=""
@@ -1021,7 +1032,7 @@ test_ghidra() {
         skip "headless analysis" "corpus not built"; return
     fi
 
-    # The real thing: headless import + analysis, with the throwaway project deleted.
+    # --- Ghidra's own headless analysis (necessary, nowhere near sufficient) ----------
     local proj="$FIXTURES/ghidraproj" out
     rm -rf "$proj"; mkdir -p "$proj"
     out=$(timeout 900 "$gh" "$proj" HarnessProj \
@@ -1036,6 +1047,56 @@ test_ghidra() {
     else
         no "-deleteProject" "project artifacts survived in $proj"
     fi
+
+    # --- THE STAGE MUST ACTUALLY DECOMPILE SOMETHING ---------------------------------
+    #
+    # WHY THIS EXISTS: everything above this line passed on Ghidra 12.1.3 while revctf's
+    # ghidra stage was failing with an empty capture. v0.3-m5 was tagged against that.
+    #
+    # The reason is that none of it exercised revctf. The invocation above has no
+    # -postScript and no -scriptPath, so it proves Ghidra can analyse a binary — which was
+    # never in doubt. The post-script is the part that broke, and the runtime check above
+    # only asserts preflight NAMES the right runtime, which it did: it correctly said
+    # "pyghidra", and the pyghidra script then died because PyGhidra is not enabled under
+    # plain analyzeHeadless.
+    #
+    # So the check is now the output itself. The corpus crackme's password is a known
+    # answer that ONLY appears if the decompiler ran and the post-script emitted its
+    # pseudo-C. A structural check cannot be satisfied by a stage that produced nothing.
+    local go="$FIXTURES/ghidra-stage"; rm -rf "$go"
+    "$RC" scan "$CORPUS/crackme" --output "$go" >/dev/null 2>&1
+    local gstatus
+    gstatus=$(grep -oE '^ghidra +[a-z]+' "$go/report.txt" 2>/dev/null | awk '{print $2}')
+    if [[ $gstatus == ok ]]; then
+        ok "the ghidra stage completes (status ok)"
+    else
+        no "ghidra stage status" "status was '${gstatus:-absent}', not ok"
+    fi
+    if [[ -s $go/ghidra.txt ]]; then
+        ok "the ghidra stage produced a non-empty capture"
+    else
+        no "ghidra capture" "ghidra.txt is empty — the post-script did not run"
+    fi
+    # The payload check: the decompiled pseudo-C must contain the crackme's password.
+    if grep -q 'sw0rdf1sh' "$go/ghidra.txt" 2>/dev/null; then
+        ok "the decompile recovers the crackme's password (sw0rdf1sh)"
+    else
+        no "ghidra decompile content" \
+           "sw0rdf1sh absent from ghidra.txt — the stage ran but decompiled nothing useful"
+    fi
+    # And it must reach the report — scoped to GHIDRA'S OWN SECTION.
+    #
+    # A bare `grep sw0rdf1sh report.txt` is vacuous here: the crackme's password is visible
+    # to plain `strings`, so the whole-report grep passes with Ghidra contributing nothing.
+    # Caught while verifying the fix above — it passed against the broken 12.1.3 install
+    # alongside the three checks that correctly failed. Scoping to the stage's own section
+    # is what makes it a Ghidra check rather than a strings check.
+    if sed -n '/^### ghidra /,/^### /p' "$go/report.txt" 2>/dev/null | grep -q 'sw0rdf1sh'; then
+        ok "and it reaches the report under the ghidra stage"
+    else
+        no "ghidra -> report" "sw0rdf1sh is absent from the ghidra section of report.txt"
+    fi
+    rm -rf "$go"
 }
 
 # ======================================================================================
