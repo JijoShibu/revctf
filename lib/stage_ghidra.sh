@@ -92,7 +92,7 @@ stage_ghidra() {
     fi
 
     if [[ $rc -eq 124 || $rc -eq 137 ]]; then
-        stage_set_status "$name" failed "timed out after ${ST_T_GHIDRA}s (partial output kept)"
+        stage_set_status "$name" failed "$(st_explain_kill "$rc" "$ST_T_GHIDRA")"
         return 0
     fi
     if [[ $rc -ne 0 ]]; then
@@ -100,8 +100,30 @@ stage_ghidra() {
             "analyzeHeadless exited $rc — $(grep -aiEm1 '(error|exception)' "$err" 2>/dev/null | head -c 160)"
         return 0
     fi
+
+    # analyzeHeadless EXITS 0 EVEN WHEN THE POST-SCRIPT FAILED TO LOAD OR THREW.
+    # Observed on Ghidra 12.1.3: the PyGhidra script died with
+    #   "Ghidra was not started with PyGhidra. Python is not available"
+    # and the stage was recorded as `empty / 0B / exit 0` — a clean-looking negative on a
+    # binary whose password Ghidra 11.2.1 recovers. CLAUDE.md §3 already warned that this
+    # class of failure "shows up only as an empty Ghidra stage, exit 0"; nothing was
+    # actually checking for it. An empty capture plus a script error in stderr is a
+    # FAILURE, and saying so is the difference between "no flag here" and "this tool never
+    # ran".
+    if [[ ! -s $out ]] && _ghidra_saw_script_error "$err"; then
+        stage_set_status "$name" failed \
+            "the Ghidra post-script did not run — $(grep -aoiEm1 '(GhidraScriptLoadException|SCRIPT ERROR)[^\n]{0,120}' "$err" 2>/dev/null | head -c 160)"
+        return 0
+    fi
+
     stage_write "$name"
     return 0
+}
+
+# A post-script that failed to load, or threw, while analyzeHeadless still exited 0.
+_ghidra_saw_script_error() {
+    grep -qaiE 'SCRIPT ERROR|GhidraScriptLoadException|Unable to load script|not started with PyGhidra|Python is not available' \
+        "$1" 2>/dev/null
 }
 
 # _ghidra_attempt <name> <script> <out> <err> <light:0|1>
@@ -114,12 +136,16 @@ _ghidra_attempt() {
     proj="$RUN_WORKDIR/ghidra-proj.$light"
     mkdir -p "$proj" || { printf 'could not create a project directory\n' >> "$err"; return 1; }
 
-    # MAXMEM is tier-driven from M5; until then --maxmem-ghidra or a conservative default.
-    local maxmem="${OPT[maxmem_ghidra]:-1024M}"
+    # MAXMEM is tier-driven (M5). It was previously hardcoded to 1024M — Tier A's value —
+    # so a Tier C host with 2GB of RAM ran Ghidra with double the ceiling its tier
+    # specifies, which is exactly the OOM the tier table exists to prevent. tier_resolve
+    # has already folded --maxmem-ghidra into TIER_MAXMEM_GHIDRA, so the override still
+    # wins here without this file re-reading OPT.
+    local maxmem="${TIER_MAXMEM_GHIDRA:-${OPT[maxmem_ghidra]:-1024M}}"
     export MAXMEM="$maxmem"
     # v4 §4 item 4: a second, percentage-based bound alongside MAXMEM, so the two agree
-    # rather than fight.
-    export _JAVA_OPTIONS="-XX:MaxRAMPercentage=25"
+    # rather than fight. Tier-driven for the same reason as MAXMEM.
+    export _JAVA_OPTIONS="-XX:MaxRAMPercentage=${TIER_JVM_RAM_PCT:-25}"
 
     local -a cmd=(
         "$PF_GHIDRA_HEADLESS" "$proj" revctf

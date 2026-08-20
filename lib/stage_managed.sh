@@ -88,7 +88,7 @@ _managed_dotnet() {
 _managed_classify() {
     local name="$1" tool="$2" rc="$3"
     if [[ $rc -eq 124 || $rc -eq 137 ]]; then
-        stage_set_status "$name" failed "timed out after ${ST_T_DECOMP}s (partial output kept)"
+        stage_set_status "$name" failed "$(st_explain_kill "$rc" "$ST_T_DECOMP")"
     elif [[ $rc -ne 0 ]]; then
         stage_set_status "$name" failed "$tool exited $rc"
     else

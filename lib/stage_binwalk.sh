@@ -40,7 +40,7 @@ stage_binwalk() {
     stage_record_exec "$name" "${cmd[*]}" "$rc"
 
     if [[ $rc -eq 124 || $rc -eq 137 ]]; then
-        stage_set_status "$name" failed "timed out after ${ST_T_BINWALK}s (partial output kept)"
+        stage_set_status "$name" failed "$(st_explain_kill "$rc" "$ST_T_BINWALK")"
         return 0
     fi
     if [[ $rc -ne 0 ]]; then

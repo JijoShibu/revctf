@@ -170,6 +170,83 @@ stage_err_path() { printf '%s/%s.stderr' "$RUN_OUTDIR" "$1"; }
 #   - classifies an empty-but-successful run as `empty` rather than `ok`, so the report
 #     can say "this stage found nothing" instead of showing a blank section (M4 DoD)
 #
+# ======================================================================================
+# Memory bounding (M5)
+# ======================================================================================
+# v4 §4.3 specifies `systemd-run --scope -p MemoryMax=<ceiling>` for every bounded process,
+# with `ulimit -v` as the documented fallback. Both are applied here, in st_run_bounded,
+# because it is already the single place any external tool is launched — the same reason
+# the `ulimit -f` output cap lives here.
+#
+# ST_MEM_CEIL_MB is the ceiling for the stage currently running, in MB, or 0 for
+# "unbounded". stage_run sets it from tier_ceiling_for_stage() and clears it afterwards, so
+# a stage can never inherit the previous stage's limit.
+declare -g ST_MEM_CEIL_MB=0
+declare -g ST_MEM_IS_JVM=0
+# systemd | ulimit | none — resolved once by st_mem_mode() and reported in the run notes.
+declare -g ST_MEM_MODE=""
+
+# st_mem_mode — which bounding mechanism this host actually has.
+#
+# PF_SYSTEMD_RUN_USABLE comes from preflight's live probe (it runs `systemd-run --scope
+# true`), not from "is systemd-run on PATH" — the build sandbox had the binary with systemd
+# unbooted, so every run silently used the fallback for the whole project.
+st_mem_mode() {
+    if [[ -n $ST_MEM_MODE ]]; then printf '%s' "$ST_MEM_MODE"; return 0; fi
+    if [[ ${PF_SYSTEMD_RUN_USABLE:-0} -eq 1 ]]; then
+        ST_MEM_MODE="systemd"
+    elif [[ ${ST_MEM_ALLOW_ULIMIT:-1} -eq 1 ]]; then
+        ST_MEM_MODE="ulimit"
+    else
+        ST_MEM_MODE="none"
+    fi
+    printf '%s' "$ST_MEM_MODE"
+    return 0
+}
+
+# st_mem_prefix <array-name> — fill the named array with the systemd-run wrapper, or empty.
+#
+# `--scope` (not `--service`) is required: a scope runs the command in the CALLER's context,
+# so the stdout/stderr redirections st_run_bounded sets up are inherited and the exit status
+# propagates. Verified on this host: exit codes pass through unchanged, a cgroup OOM kill
+# surfaces as 137 (which stage_capture already reports as "timeout escalation or
+# out-of-memory"), and a SIGTERM to the systemd-run process takes the scope's child with it,
+# so stage_kill_child keeps working untouched.
+#
+# `--collect` is not cosmetic. Without it every OOM-killed scope leaves a `failed` transient
+# unit behind that only `systemctl --user reset-failed` clears — measured: two dead units
+# after two OOM kills. With it, none.
+st_mem_prefix() {
+    local -n _pre="$1"
+    _pre=()
+    [[ $(st_mem_mode) == systemd ]] || return 0
+    is_uint "${ST_MEM_CEIL_MB:-0}" || return 0
+    [[ ${ST_MEM_CEIL_MB:-0} -gt 0 ]] || return 0
+    _pre=(systemd-run --user --scope --quiet --collect
+          -p "MemoryMax=${ST_MEM_CEIL_MB}M"
+          -p "MemorySwapMax=0"
+          --)
+    return 0
+}
+
+# st_mem_apply_ulimit — the fallback bound, applied inside the subshell before exec.
+#
+# MEASURED, AND IT CHANGES THE DESIGN: `ulimit -v` bounds address space, not RSS, and a JVM
+# reserves far more address space than it resides in. On this host a hello-world `java`
+# needs between 2GB and 4GB of virtual size just to initialise, and dies with "Could not
+# reserve enough space for object heap" under less. Applying the tier's 1024M/768M/512M
+# Ghidra ceiling as `ulimit -v` would make Ghidra fail on EVERY host without systemd —
+# turning a memory bound into a silent, total loss of the decompile stage. So a JVM stage
+# is left to MAXMEM and -XX:MaxRAMPercentage, which are heap bounds the JVM enforces itself.
+st_mem_apply_ulimit() {
+    [[ $(st_mem_mode) == ulimit ]] || return 0
+    is_uint "${ST_MEM_CEIL_MB:-0}" || return 0
+    [[ ${ST_MEM_CEIL_MB:-0} -gt 0 ]] || return 0
+    [[ ${ST_MEM_IS_JVM:-0} -eq 1 ]] && return 0
+    ulimit -v $(( ST_MEM_CEIL_MB * 1024 )) 2>/dev/null
+    return 0
+}
+
 # st_run_bounded <timeout> <stdout-file> <stderr-file> -- <command> [args...]
 #
 # The one place any external tool is actually launched. Backgrounding it and `wait`-ing is
@@ -183,13 +260,26 @@ st_run_bounded() {
     local tmo="$1" out="$2" err="$3"; shift 3
     [[ ${1:-} == "--" ]] && shift
     local rc=0
+    local -a _mempre=()
+    st_mem_prefix _mempre
     # `ulimit -f` takes 512-byte blocks and is inherited by the exec'd command. `exec`
     # replaces the subshell, so ST_CHILD_PID is the timeout process itself and the existing
     # kill path still works.
+    #
+    # `timeout` sits INSIDE the scope rather than outside it. Outside, killing systemd-run
+    # from `timeout` would race the scope teardown; inside, the timeout process is itself
+    # bounded and its 124 propagates out through the scope unchanged (verified).
     ( ulimit -f $(( ST_MAX_OUT_KB * 2 )) 2>/dev/null
-      exec timeout -k 5 "$tmo" "$@" >"$out" 2>"$err" ) &
+      st_mem_apply_ulimit
+      exec ${_mempre[@]+"${_mempre[@]}"} timeout -k 5 "$tmo" "$@" >"$out" 2>"$err" ) &
     ST_CHILD_PID=$!
-    wait "$ST_CHILD_PID" || rc=$?
+    # `2>/dev/null` on the wait, not on the job: when a job is killed by a signal bash
+    # prints its own "Killed  ( ulimit -f ...; exec timeout ... )" notice, dumping the whole
+    # internal command line onto the user's terminal. That was rare before M5 (only the
+    # SIGXFSZ output cap) and is now routine, because a cgroup OOM kill is exactly how a
+    # memory ceiling is supposed to announce itself. The exit status still arrives intact —
+    # verified — and stage_capture turns 137 into a sentence a beginner can act on.
+    wait "$ST_CHILD_PID" 2>/dev/null || rc=$?
     ST_CHILD_PID=""
     return "$rc"
 }
@@ -237,10 +327,10 @@ stage_capture() {
         stage_set_status "$name" failed \
             "timed out after ${tmo}s (partial output kept)"
     elif [[ $rc -eq 137 ]]; then
-        # 137 is `timeout -k`'s SIGKILL, but it is equally the OOM killer's. Say both
-        # rather than assert a timeout that may not have happened.
-        stage_set_status "$name" failed \
-            "killed after ${tmo}s — timeout escalation or out-of-memory (partial output kept)"
+        # 137 is `timeout -k`'s SIGKILL, but it is equally the OOM killer's — and since M5
+        # it is also how a cgroup memory ceiling reports itself. Say which, rather than
+        # asserting a timeout that may not have happened.
+        stage_set_status "$name" failed "$(st_explain_kill "$rc" "$tmo")"
     elif [[ $rc -ne 0 ]]; then
         stage_set_status "$name" failed \
             "$(basename "$1") exited $rc$(_st_signal_note "$rc")"
@@ -250,6 +340,33 @@ stage_capture() {
         stage_set_status "$name" ok ""
     fi
     return $rc
+}
+
+# st_explain_kill <rc> <timeout-seconds> — the failure sentence for a 124 or 137.
+#
+# WHY THIS IS SHARED (M5): six stages carried their own `[[ $rc -eq 124 || $rc -eq 137 ]]`
+# and reported BOTH as "timed out after Ns". That was survivable before memory ceilings
+# were enforced, because 137 then meant only `timeout -k`'s SIGKILL escalation. It is not
+# survivable now: 137 is exactly how a cgroup OOM kill announces itself, so a FLOSS run
+# killed at its ceiling after ONE second was reported as "timed out after 300s" — a
+# diagnostic that sends the reader to look at the wrong constant entirely. Observed, not
+# theorised.
+#
+# 124 is unambiguous (only `timeout` produces it). 137 is genuinely ambiguous, so it names
+# both causes and, when a ceiling was in force, the number to look at.
+st_explain_kill() {
+    local rc="$1" tmo="${2:-}"
+    if [[ $rc -eq 124 ]]; then
+        printf 'timed out after %ss (partial output kept)' "$tmo"
+        return 0
+    fi
+    if [[ ${ST_MEM_CEIL_MB:-0} -gt 0 ]]; then
+        printf 'killed (SIGKILL) — most likely the %sMB memory ceiling for this stage; a timeout escalation would look identical (partial output kept)' \
+            "$ST_MEM_CEIL_MB"
+    else
+        printf 'killed (SIGKILL) — out of memory, or a timeout escalation after %ss (partial output kept)' "$tmo"
+    fi
+    return 0
 }
 
 # A tool killed by a signal exits 128+N. Naming the signal turns "exited 139" into
@@ -313,12 +430,31 @@ stage_run() {
     _st_register "$name"
     : "${STAGE_STATUS[$name]:=pending}"
 
+    # M5: resolve this stage's memory ceiling here, at the boundary, so st_run_bounded can
+    # apply it without every stage having to know the tier table — and so a stage can never
+    # inherit the previous stage's limit. Guarded on the function existing because lib/
+    # files are sourced independently by the harness fixtures.
+    ST_MEM_CEIL_MB=0
+    ST_MEM_IS_JVM=0
+    if declare -F tier_ceiling_for_stage >/dev/null 2>&1; then
+        ST_MEM_CEIL_MB="$(tier_ceiling_for_stage "$name")"
+        is_uint "$ST_MEM_CEIL_MB" || ST_MEM_CEIL_MB=0
+        tier_stage_is_jvm "$name" && ST_MEM_IS_JVM=1
+    fi
+
     if [[ ${OPT[verbose]:-0} -eq 1 ]]; then
         printf 'revctf: [%s] %s\n' "$name" "$label" >&2
+        if [[ $ST_MEM_CEIL_MB -gt 0 ]]; then
+            printf 'revctf: [%s] memory ceiling %sMB via %s\n' \
+                "$name" "$ST_MEM_CEIL_MB" "$(st_mem_mode)" >&2
+        fi
     fi
 
     # Local boundary. `|| rc=$?` keeps a non-zero return from propagating anywhere.
     "$fn" || rc=$?
+
+    ST_MEM_CEIL_MB=0
+    ST_MEM_IS_JVM=0
 
     # Strip ANSI from the stderr capture as well as stdout. radare2 writes progress
     # escapes to stderr even with scr.color=0, and M9's diagnostic block quotes a stderr

@@ -36,6 +36,46 @@ TIER_JVM_RAM_PCT="${TIER_JVM_RAM_PCT:-25}"
 TIER_WATCHDOG_PCT="${TIER_WATCHDOG_PCT:-90}"
 
 # --------------------------------------------------------------------------------------
+# Phase-2 ceiling — measured, NOT derived from Ghidra's (M5, deviation D11)
+# --------------------------------------------------------------------------------------
+# v6 §5 sized Phase 2 from the tier's Ghidra MAXMEM, arguing it made Phase 2's worst case
+# identical to Phase 3's. M3 measurement disproved the premise: FLOSS peaked at ~1.46GB on
+# a 220MB target, above Tier A's 1024M and roughly 3x Tier C's.
+#
+# These numbers are DERIVED FROM MEASUREMENT, not from v6 §5. Measured on the target Kali
+# VM (getrusage, exact peaks — full table in implementation-notes.md "M5 — host
+# measurements"). If you move one, re-measure and update that section in the same commit.
+#
+#   FLOSS, 264KB PE, --only static      100MB
+#   FLOSS, 264KB PE, --only stack       864MB
+#   FLOSS, 264KB PE, all modes          899MB
+#   FLOSS, 210MB blob, all modes       1460MB   (revctf skips this: FLOSS_MAX_MB)
+#
+# THE MEASUREMENT THAT SHAPED THE TABLE: FLOSS's peak is driven by vivisect's emulation
+# workspace, not by input size. A 264KB PE — 250x under the FLOSS_MAX_MB=64MB gate — still
+# costs ~900MB the moment any emulation mode runs. So FLOSS_MAX_MB does NOT keep FLOSS
+# "comfortably inside every tier" as its comment claimed; only a real enforced ceiling does.
+#
+# Sized against each tier's worst-case usable RAM, using v3 §8's overhead derivation
+# (RAM - 800MB XFCE - 50MB bash - 300MB Docker), evaluated at the tier's MINIMUM RAM:
+#
+#   Tier A   min 3891MB -> 2741MB usable   ceiling 1536MB (56%)  covers every measured case
+#   Tier B   min 2560MB -> 1410MB usable   ceiling 1024MB (73%)  covers PE emulation (~900MB)
+#   Tier C       2048MB ->  898MB usable   ceiling  512MB (57%)  emulation cannot fit at all
+#
+# Tier C therefore runs FLOSS in static-only mode (see stage_floss.sh), the same degrade-
+# rather-than-fail pattern the tier already applies to Ghidra. Without that, a Tier C host
+# would OOM-kill the FLOSS stage on every single PE — a ceiling that guarantees a failure
+# is worse than no ceiling.
+TIER_A_PHASE2_MB="${TIER_A_PHASE2_MB:-1536}"
+TIER_B_PHASE2_MB="${TIER_B_PHASE2_MB:-1024}"
+TIER_C_PHASE2_MB="${TIER_C_PHASE2_MB:-512}"
+
+# Below this ceiling, FLOSS's emulation modes cannot fit and the stage runs static-only.
+# 900MB is the measured cost of emulation on a small PE; the check is `ceiling < this`.
+TIER_FLOSS_EMULATION_MB="${TIER_FLOSS_EMULATION_MB:-900}"
+
+# --------------------------------------------------------------------------------------
 # Resolved state
 # --------------------------------------------------------------------------------------
 declare -g TIER=""                 # A | B | C
@@ -47,6 +87,8 @@ declare -g TIER_JOBS_GHIDRA=1
 declare -g TIER_MAXMEM_GHIDRA="512M"
 declare -g TIER_DECOMPILE="light"
 declare -g TIER_PHASE2_CEIL_MB=0
+# shellcheck disable=SC2034  # read by lib/stage_floss.sh, which sources this file
+declare -g TIER_FLOSS_STATIC_ONLY=0
 declare -ga TIER_NOTES=()
 
 # --------------------------------------------------------------------------------------
@@ -133,17 +175,40 @@ tier_resolve() {
         TIER_NOTES+=("RAM figure was INJECTED via REVCTF_RAM_MB (${TIER_RAM_MB}MB) — this tier was not measured.")
     fi
 
-    # --- Phase-2 ceiling ---------------------------------------------------------------
-    # v6 §5 derives Phase 2's per-job ceiling as the tier's Ghidra MAXMEM, on the argument
-    # that it makes Phase 2's worst case identical to Phase 3's, which v3 §8 already sized.
-    # M3 measurement DISPROVES the premise: FLOSS peaks at ~1.46GB on a 220MB target, which
-    # exceeds Tier A's 1024M and is roughly 3x Tier C's. The derivation is implemented as
-    # written — inventing a replacement number without measuring would repeat the mistake —
-    # but the gap is stated here and in the plan output, and FLOSS_MAX_MB (64MB) keeps the
-    # one known offender inside every tier meanwhile.
-    TIER_PHASE2_CEIL_MB="${TIER_MAXMEM_GHIDRA%M}"
-    is_uint "$TIER_PHASE2_CEIL_MB" || TIER_PHASE2_CEIL_MB=512
-    TIER_NOTES+=("Phase-2 ceiling inherits Ghidra's ${TIER_MAXMEM_GHIDRA} per v6 §5. Measured FLOSS peak (~1.46GB) exceeds it; FLOSS_MAX_MB=${FLOSS_MAX_MB:-64}MB is the interim guard. Re-derive once measured on this host.")
+    # --- Phase-2 ceiling (deviation D11) -----------------------------------------------
+    # No longer inherited from Ghidra's MAXMEM. v6 §5's derivation is struck: it assumed
+    # Phase 2's worst case was bounded by Phase 3's, and the measured FLOSS peak (~1.46GB,
+    # above Tier A's 1024M and ~3x Tier C's) disproved that. Phase 2 is now sized from its
+    # own measurement — see the constants at the top of this file.
+    case "$TIER" in
+        A) TIER_PHASE2_CEIL_MB="$TIER_A_PHASE2_MB" ;;
+        B) TIER_PHASE2_CEIL_MB="$TIER_B_PHASE2_MB" ;;
+        *) TIER_PHASE2_CEIL_MB="$TIER_C_PHASE2_MB" ;;
+    esac
+    # The coercion below is the QA-1 rule (nothing non-numeric may reach arithmetic
+    # context), but it must not double as a silent repair. A bare `|| =512` here meant an
+    # unusable constant resolved to Tier C's ceiling on every tier — a Tier A host running
+    # Phase 2 at a third of its budget, with nothing on screen to say so. That is the same
+    # class of defect as the derivation D11 removed: a number that is wrong and quiet.
+    if ! is_uint "$TIER_PHASE2_CEIL_MB"; then
+        warn "Phase-2 ceiling for Tier $TIER is not a whole number ('$TIER_PHASE2_CEIL_MB'); falling back to 512MB"
+        TIER_NOTES+=("Phase-2 ceiling constant for Tier $TIER is unusable ('$TIER_PHASE2_CEIL_MB'); using 512MB. This is a build error, not a tuning decision — see TIER_*_PHASE2_MB in lib/tier.sh.")
+        TIER_PHASE2_CEIL_MB=512
+    fi
+
+    # --- FLOSS emulation affordability (M5, measured) ----------------------------------
+    # Not a preference: FLOSS's emulation modes cost ~900MB on even a 264KB PE, because the
+    # cost is vivisect's workspace rather than the input. Where the tier's Phase-2 ceiling
+    # cannot cover that, running them means a guaranteed OOM kill, so the stage degrades to
+    # static-only instead — the same choice Tier C already makes for Ghidra.
+    # shellcheck disable=SC2034  # read by stage_floss() in lib/stage_floss.sh; shellcheck
+    # cannot follow the entry script's `source` loop across files.
+    TIER_FLOSS_STATIC_ONLY=0
+    if [[ $TIER_PHASE2_CEIL_MB -lt $TIER_FLOSS_EMULATION_MB ]]; then
+        # shellcheck disable=SC2034  # same cross-file consumer as above
+        TIER_FLOSS_STATIC_ONLY=1
+        TIER_NOTES+=("Tier $TIER: FLOSS runs static-only. Its stack/tight/decoded emulation needs ~900MB regardless of file size (measured on a 264KB PE), which does not fit this tier's ${TIER_PHASE2_CEIL_MB}MB Phase-2 ceiling. Static strings still run.")
+    fi
 
     # --- Tier C decompilation ----------------------------------------------------------
     if [[ $TIER == C && ${OPT[force_full_decompile]:-0} -eq 0 ]]; then
@@ -168,7 +233,17 @@ tier_resolve() {
     # than a subsystem, an opt-out flag and a privileged write.
     if [[ $TIER != A && $TIER_RAM_MB -gt 0 ]]; then
         local swap_kb=0
-        [[ -r /proc/meminfo ]] && swap_kb="$(awk '/^SwapTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)"
+        # REVCTF_SWAP_MB exists for the same reason as REVCTF_RAM_MB, and with the same
+        # limits: it makes the BRANCH testable on any machine. The diagnostic below only
+        # fires on a host with no swap, so on a developer box that has some, the check
+        # asserting it silently passed by never running — the branch was untested for the
+        # whole of M5's groundwork. Injecting the figure fixes that; it proves nothing
+        # about behaviour on a host that really has no swap.
+        if [[ -n ${REVCTF_SWAP_MB:-} ]] && is_uint "${REVCTF_SWAP_MB:-}"; then
+            swap_kb=$(( REVCTF_SWAP_MB * 1024 ))
+        elif [[ -r /proc/meminfo ]]; then
+            swap_kb="$(awk '/^SwapTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)"
+        fi
         is_uint "$swap_kb" || swap_kb=0
         if [[ $swap_kb -eq 0 ]]; then
             TIER_NOTES+=("Tier $TIER (${TIER_RAM_MB}MB) with no active swap. Ghidra may be OOM-killed on this host. Either run with --skip-ghidra (radare2 substitutes), or add swap yourself — revctf will not modify your system.")
@@ -184,6 +259,68 @@ tier_resolve() {
     fi
     return 0
 }
+
+# --------------------------------------------------------------------------------------
+# tier_ceiling_for_stage <stage-name> — the memory ceiling that stage is held to, in MB.
+# --------------------------------------------------------------------------------------
+# This is the function that turns the tier TABLE into tier ENFORCEMENT. Before M5 the
+# numbers were resolved, printed by --dry-run, and then ignored — the `[PARTIAL: M5]`
+# marker on --jobs-*/--maxmem-ghidra.
+#
+# Prints 0 for a stage with no ceiling, and 0 is meaningful: it means "not bounded", not
+# "bounded at zero". Only the stages v6 §5 actually assigns a number to get one —
+#
+#   radare2                          the tier's radare2 ceiling
+#   strace/floss/managed/pydecomp    the Phase-2 ceiling (§7.2 Phase 2)
+#   ghidra                           the tier's Ghidra MAXMEM (§7.2 Phase 3)
+#
+# The remaining Phase-1 stages (file, strings, binwalk, hexdump, checksec, objdump, ltrace,
+# triage) are deliberately left unbounded. v6 §5 gives Phase 1 a concurrency but no
+# per-job ceiling, and inventing one here would be the same unmeasured-constant mistake
+# D11 exists to correct — the whole Phase-1 group was measured at ~103MB peak on a 220MB
+# target, so there is nothing to bound. The global RSS watchdog is their backstop.
+tier_ceiling_for_stage() {
+    case "${1:-}" in
+        radare2)                          printf '%s' "$TIER_R2_CEIL_MB" ;;
+        strace|floss|managed|pydecomp)    printf '%s' "$TIER_PHASE2_CEIL_MB" ;;
+        ghidra)                           tier_mb_of "$TIER_MAXMEM_GHIDRA" ;;
+        *)                                printf '0' ;;
+    esac
+    return 0
+}
+
+# tier_mb_of <value> — normalise a MAXMEM-style value ("1024M", "2G", "768") to whole MB.
+#
+# `--maxmem-ghidra` accepts a G suffix (validate_opts allows `^[0-9]+[MmGg]?$`), so a bare
+# `${v%[MmGg]}` would read "2G" as 2MB — a 1000x under-bound that would look like a working
+# limit while killing every Ghidra run instantly. Prints 0 for anything unparseable, which
+# the callers treat as "unbounded" rather than "bounded at zero".
+tier_mb_of() {
+    local v="${1:-}" n="${1:-}"
+    n="${n%[MmGg]}"
+    is_uint "$n" || { printf '0'; return 0; }
+    case "$v" in
+        *[Gg]) printf '%s' $(( n * 1024 )) ;;
+        *)     printf '%s' "$n" ;;
+    esac
+    return 0
+}
+
+# tier_stage_is_jvm <stage-name> — true when the stage launches a JVM.
+#
+# This exists because of a measured fact, not a stylistic preference. `ulimit -v` bounds
+# ADDRESS SPACE, and a JVM reserves vastly more address space than it ever resides in:
+# measured on this host, a hello-world `java` needs between 2GB and 4GB of virtual size to
+# initialise at all, and fails with "Could not reserve enough space for object heap" under
+# anything smaller. Applying the tier's 1024M/768M/512M Ghidra ceiling as `ulimit -v` would
+# therefore make Ghidra fail 100% of the time on every host WITHOUT systemd — silently
+# converting a memory bound into a total loss of the decompile stage.
+#
+# So on the ulimit fallback path a JVM stage is bounded by MAXMEM and
+# -XX:MaxRAMPercentage only, which are heap bounds the JVM enforces itself, and the report
+# says the bound is weaker there. Under systemd-run the ceiling is a real RSS limit and
+# applies to Ghidra exactly like anything else.
+tier_stage_is_jvm() { [[ ${1:-} == ghidra || ${1:-} == managed ]]; }
 
 # tier_apply_override <opt-key> <tier-var> — honour a non-empty numeric CLI/config value.
 tier_apply_override() {
@@ -223,7 +360,24 @@ tier_report() {
         "$TIER_MAXMEM_GHIDRA" "$TIER_JVM_RAM_PCT"
     printf '  Phase-2 cap   : %sMB\n' "$TIER_PHASE2_CEIL_MB"
     printf '  Decompilation : %s\n' "$TIER_DECOMPILE"
-    printf '  Watchdog      : kills the job tree above %s%% of RAM\n' "$TIER_WATCHDOG_PCT"
+
+    # How the ceilings above are actually held. This line is the difference between a
+    # number that is printed and a number that is enforced, so it says which mechanism is
+    # in force rather than leaving the reader to assume the better one.
+    local mode="unknown"
+    declare -F st_mem_mode >/dev/null 2>&1 && mode="$(st_mem_mode)"
+    [[ $mode == unknown && ${PF_SYSTEMD_RUN_USABLE:-0} -eq 1 ]] && mode="systemd"
+    [[ $mode == unknown ]] && mode="ulimit"
+    case "$mode" in
+        systemd) printf '  Enforced by   : systemd-run --scope -p MemoryMax (real RSS limit)\n' ;;
+        ulimit)  printf '  Enforced by   : ulimit -v (bounds virtual size, not RSS — weaker)\n'
+                 printf '                  Ghidra is exempt: a JVM needs 2-4GB of virtual size to\n'
+                 printf '                  start at all, so ulimit -v at these ceilings would stop it\n'
+                 printf '                  running. It is held by MAXMEM + MaxRAMPercentage instead.\n' ;;
+        *)       printf '  Enforced by   : nothing (memory bounding disabled)\n' ;;
+    esac
+    printf '  Watchdog      : kills the job tree above %s%% of RAM (%sMB)\n' \
+        "$TIER_WATCHDOG_PCT" "$(( TIER_RAM_MB * TIER_WATCHDOG_PCT / 100 ))"
     if [[ ${#TIER_NOTES[@]} -gt 0 ]]; then
         printf '\nNotes\n'
         for n in "${TIER_NOTES[@]}"; do printf '  - %s\n' "$n"; done

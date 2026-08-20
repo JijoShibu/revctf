@@ -123,12 +123,12 @@ ANALYSIS DEPTH / STAGE CONTROL
 
 RESOURCE TUNING
     --timeout SECONDS     ltrace timeout  [default: 10]
-    --jobs-light N        [PARTIAL: M5] Override tier Phase-1 concurrency
-                          (resolved and reported; not yet enforced)
-    --jobs-ghidra N       [PARTIAL: M5] Override tier Phase-2/3 concurrency
-                          (resolved and reported; not yet enforced)
-    --maxmem-ghidra M     [PARTIAL: M5] Override tier Ghidra MAXMEM
-                          (resolved and reported; not yet enforced)
+    --jobs-light N        [PARTIAL: M7] Override tier Phase-1 concurrency.
+                          Resolved and reported; concurrency itself arrives
+                          with batch mode, as single-file mode runs one at a time
+    --jobs-ghidra N       [PARTIAL: M7] Override tier Phase-2/3 concurrency
+                          (same reason as --jobs-light)
+    --maxmem-ghidra M     Override the tier's Ghidra MAXMEM ceiling
 
 SANDBOXING
     --sandbox             Run ltrace inside a network-isolated Docker container
@@ -428,7 +428,7 @@ cmd_scan() {
     for m in stage stage_dynamic stage_triage stage_file stage_strings stage_binwalk \
              stage_hexdump stage_checksec stage_objdump stage_ltrace stage_radare2 \
              stage_strace stage_floss stage_managed stage_pydecomp stage_ghidra \
-             flagscan tui report; do
+             watchdog flagscan tui report; do
         # shellcheck source=/dev/null
         source "$REVCTF_LIB/$m.sh" || die "cannot load $REVCTF_LIB/$m.sh"
     done
@@ -462,6 +462,10 @@ _abort_run() {
     case "$sig" in INT) num=2 ;; TERM) num=15 ;; HUP) num=1 ;; esac
     trap - INT TERM HUP EXIT
     printf '\nrevctf: %s received — cleaning up\n' "SIG$sig" >&2
+    # Before stage_kill_child, so the poller cannot mistake a deliberate teardown for a
+    # breach and kill the tree a second time. Guarded: the abort path is reachable from
+    # before lib/watchdog.sh is sourced.
+    declare -F watchdog_stop >/dev/null 2>&1 && watchdog_stop
     # Kill the tool the current stage is waiting on, by its recorded PID. Signalling the
     # process group (`kill -- -$$`) was the obvious alternative and is wrong here: revctf
     # is only a process-group leader when a job-control shell made it one, so from a script
@@ -592,10 +596,14 @@ scan_one_file() {
     # `strings` over a large target left orphaned processes behind. This matters more from
     # M3 on, where ltrace and strace *execute the challenge binary* — an orphan there is a
     # piece of untrusted code still running after the user thinks they stopped it.
-    trap 'stage_end_file' EXIT
+    trap 'watchdog_stop; stage_end_file' EXIT
     trap '_abort_run INT'  INT
     trap '_abort_run TERM' TERM
     trap '_abort_run HUP'  HUP
+
+    # M5: the global RSS backstop (v4 §3). Starts after the traps so a breach during the
+    # very first stage still tears down cleanly, and stops in every exit path above.
+    watchdog_start "$TIER_RAM_MB" "$TIER_WATCHDOG_PCT"
 
     # run_stage wraps stage_run with --strict handling. Default behaviour is unchanged:
     # v5 §4.1 isolate-and-continue. --strict (v6 §11 D8) stops at the first failure, for
@@ -609,6 +617,19 @@ scan_one_file() {
         tui_stage_start "$1" "$2"
         stage_run "$1" "$2" "$3"
         tui_stage_end "$1"
+
+        # The watchdog kills the tools, not revctf, so the stage simply looks like it
+        # failed. Without this the report would blame the tool for a kill revctf ordered.
+        # v6 §7.3: the watchdog is one of only two things that stop a run outright — so no
+        # further stage runs, but the partial report is still written.
+        if watchdog_tripped; then
+            stage_set_status "$1" failed "RSS watchdog: $(watchdog_reason)"
+            printf 'revctf: RSS watchdog fired — %s\n' "$(watchdog_reason)" >&2
+            printf 'revctf: stopping after stage "%s"; the partial report will still be written.\n' "$1" >&2
+            aborted=1
+            return 0
+        fi
+
         if [[ ${OPT[strict]} -eq 1 && ${STAGE_STATUS[$1]:-} == failed ]]; then
             printf 'revctf: --strict: stopping after stage "%s" failed (%s)\n' \
                 "$1" "${STAGE_NOTE[$1]:-no detail}" >&2
@@ -669,6 +690,7 @@ scan_one_file() {
     done
 
     trap - INT TERM HUP EXIT
+    watchdog_stop
     stage_end_file
 
     if [[ $failed -gt 0 ]]; then

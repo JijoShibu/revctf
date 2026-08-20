@@ -77,7 +77,11 @@ ie"
         } > "$out"
         cat "$raw" >> "$out" 2>/dev/null; rm -f "$raw"
         stage_record_exec "$name" "r2 -N -q -c '$analysis; ...' $RUN_TARGET" "$rc"
-        stage_set_status "$name" failed "analysis stopped after ${ST_T_RADARE2}s on a ${size_mb}MB target"
+        # Names the real cause rather than asserting the time bound: since M5 a 137 here is
+        # most likely the tier's radare2 ceiling, and reporting that as a timeout sends the
+        # reader to the wrong constant.
+        stage_set_status "$name" failed \
+            "$(st_explain_kill "$rc" "$ST_T_RADARE2") on a ${size_mb}MB target"
         return 0
     fi
 
