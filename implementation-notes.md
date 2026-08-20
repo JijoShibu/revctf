@@ -935,3 +935,258 @@ section itself:
   deliberate and update the ceiling in the same commit.
 - **Every `[NOT YET: Mn]` marker must name a milestone that still exists.** Otherwise a
   marker outlives its milestone and becomes a promise with no owner.
+
+---
+
+## M5 — host measurements, and what they changed
+
+Taken on the target VirtualBox Kali VM (`jijo`, Kali rolling, kernel 7.0.12+kali-amd64),
+2026-08-20. This is the first time any of these numbers came from the machine revctf is
+actually for; every earlier figure was from an 8GB/2-CPU cloud sandbox with no systemd and
+no swap.
+
+```
+RAM total   : 3917 MB      Swap : 5049 MB      CPUs : 3
+systemd booted        : yes
+systemd-run --user    : WORKS  (RSS bounding available)
+cgroup v2             : yes
+docker daemon         : not running        (M6 still blocked)
+```
+
+**`systemd-run` works here.** That matters more than any single number: v4 §4.3's primary
+memory-bounding path had *never executed once* in this project — the cloud sandbox had the
+binary but systemd unbooted, so every run silently fell through to `ulimit -v`. M5 is the
+first milestone whose primary mechanism is real.
+
+The host resolves to **Tier A** at 3917MB, 26MB above the 3891MB boundary. Worth noting
+how close that is: the VM is configured with 4096MB and the kernel reports 3917MB after
+firmware reservations, so a VM given "4GB" lands 26MB inside Tier A. A slightly greedier
+firmware, or 3.8GB of usable RAM, would silently drop the reference host to Tier B.
+
+### The measurement that overturned a design decision
+
+`tools/measure-host.sh` skipped its own key measurement, silently. `/usr/bin/time` is not
+part of a base Kali install (it is the separate `time` package; the shell's `time` keyword
+reports no RSS), so the script took its wall-clock-only branch and simply printed no peak
+figures. The output *looked* complete — the FLOSS number M5's whole Phase-2 decision rests
+on was just absent. A measurement tool that degrades quietly is the same defect class as a
+feature that is documented but absent, so `peak_rss()` now falls back to
+`python3 -c 'resource.getrusage(RUSAGE_CHILDREN)'`, which reads the same kernel counter
+GNU time does and depends only on python3, already mandatory. Validated against a known
+300MB allocation: reports 309MB.
+
+FLOSS peak RSS, exact (getrusage), floss 3.1.1:
+
+| target | size | mode | peak |
+|---|---|---|---|
+| crackme (ELF) | 16KB | static-only (ELF) | 101MB |
+| winsample.exe (PE) | 264KB | `--only static` | 100MB |
+| winsample.exe (PE) | 264KB | `--only stack` | **864MB** |
+| winsample.exe (PE) | 264KB | `--only decoded` | 873MB |
+| winsample.exe (PE) | 264KB | all modes | **899MB** |
+| large_blob.bin | 210MB | all modes | **1460MB** |
+
+The 1460MB reproduces the sandbox's 1.46GB exactly. But **the 899MB on a 264KB file is the
+number that changed the design.** FLOSS's cost is vivisect's emulation workspace, not the
+input: a quarter-megabyte PE costs ~900MB the moment any emulation mode runs, and
+`--only static` on the same file costs 100MB.
+
+That falsifies a claim that was load-bearing. `FLOSS_MAX_MB=64` carried the comment
+"keeps FLOSS comfortably inside every tier", and that comment was the stated reason it was
+safe to defer the unresolved Phase-2 ceiling. It gates on **input size**, and a 264KB PE is
+250x under the gate while needing more RAM than Tier B's and Tier C's entire old ceilings.
+The gate never bounded memory at all. It stays, doing the job it can actually do — keeping
+a 220MB blob out of a tool that would spend three minutes finding nothing in it.
+
+### Deviation D11 — the Phase-2 ceiling, derived from the above
+
+v6 §5 sized Phase 2 as the tier's Ghidra `MAXMEM`, arguing that made Phase 2's worst case
+identical to Phase 3's so "no new memory derivation is required". Disproved. Phase 2 is now
+sized against each tier's worst-case usable RAM using v3 §8's overhead derivation
+(`RAM − 800MB XFCE − 50MB bash − 300MB Docker`), evaluated at the tier's *minimum* RAM:
+
+| Tier | Min RAM | Usable | Ceiling | % | Covers |
+|---|---|---|---|---|---|
+| A | 3891MB | 2741MB | **1536MB** | 56% | every measured case incl. the 1460MB blob |
+| B | 2560MB | 1410MB | **1024MB** | 73% | PE emulation (~900MB) |
+| C | 2048MB | 898MB | **512MB** | 57% | static only — emulation cannot fit |
+
+Tier C therefore runs FLOSS `--only static`. That is not a preference: at 512MB the
+emulation modes are a *guaranteed* OOM kill on every PE, and a ceiling that guarantees a
+stage failure is worse than no ceiling. It mirrors what the tier already does for Ghidra
+(`--light-decompile` auto), and the report says plainly that RAM — not the file format —
+was the reason, so a missing flag never reads as a clean negative.
+
+**Open for M7:** at Tier A's `-P 2`, two concurrent Phase-2 jobs want 3072MB against
+~2946MB usable. Phase-2 concurrency must be decoupled from Phase-3 concurrency in batch
+mode. Recorded in D11 rather than fixed here — single-file mode is sequential, so inventing
+the batch scheduling now would be designing against an untested case.
+
+### `ulimit -v` cannot bound a JVM — the fallback needed a carve-out
+
+v4 §4.3 offers `ulimit -v` as the documented fallback where `systemd-run` is unavailable.
+Measured on this host, applying it at the tier's Ghidra ceiling **stops the JVM from
+starting at all**:
+
+```
+ulimit -v 1024M (Tier A)  ->  Error occurred during initialization of VM
+ulimit -v 2048M           ->  Error occurred during initialization of VM
+ulimit -v 4096M           ->  JVM starts
+ulimit -v  512M (Tier C)  ->  Could not reserve enough space for 262144KB object heap
+```
+
+A hello-world `java` needs between 2GB and 4GB of *virtual* address space; `ulimit -v`
+bounds address space, not RSS, and a JVM reserves vastly more than it resides in. So the
+documented fallback, applied literally, would have converted a memory bound into a total
+loss of the Ghidra stage on every host without systemd — which is exactly the configuration
+the whole project ran in until this milestone. JVM stages are exempt on the `ulimit` path
+and are held by `MAXMEM` + `-XX:MaxRAMPercentage` instead, and the plan output says the
+bound is weaker there rather than implying parity. Non-JVM tools are unaffected: radare2
+runs fine under `ulimit -v` at both 640MB and 400MB.
+
+### `systemd-run` mechanics, verified rather than assumed
+
+- `--scope` (not `--service`) is required: it runs the command in the caller's context, so
+  the stdout/stderr redirections `st_run_bounded` sets up are inherited and the exit status
+  propagates unchanged.
+- A cgroup OOM kill surfaces as **137**, which `stage_capture` already had a branch for.
+- `SIGTERM` to the `systemd-run` process takes the scope's child with it, so
+  `stage_kill_child` and the Ctrl+C path keep working untouched.
+- `timeout` goes **inside** the scope. Outside, killing `systemd-run` would race the scope
+  teardown; inside, its 124 propagates out unchanged.
+- **`--collect` is not cosmetic.** Without it every OOM-killed scope leaves a `failed`
+  transient unit that only `systemctl --user reset-failed` clears — observed two dead units
+  after two OOM kills. With it, none.
+
+### Two bugs this milestone exposed
+
+**Every stage reported 124 and 137 identically.** Six stages carried
+`[[ $rc -eq 124 || $rc -eq 137 ]]` and reported both as "timed out after Ns". That was
+survivable while 137 meant only `timeout -k`'s escalation. It is not survivable once a
+memory ceiling exists, because 137 is precisely how a cgroup kill announces itself: a FLOSS
+run killed at its ceiling after **one second** was reported as *"timed out after 300s"*,
+sending the reader to the wrong constant entirely. Now shared as `st_explain_kill()`, which
+names the ceiling when one was in force and admits the ambiguity when it was not.
+
+**The Phase-2 placeholder failed silently.** While the constants were pending measurement
+they were left as `@@PHASE2_A@@`, and `is_uint "$x" || TIER_PHASE2_CEIL_MB=512` swallowed
+them — a Tier A host resolved to Tier C's ceiling with nothing on screen to say so. The
+coercion is required (QA-1: nothing non-numeric may reach arithmetic context) but it must
+not double as a silent repair. It now warns and pushes a note calling it a build error.
+
+### The harness gap this closed
+
+`test_m5` checked tier **resolution** — given N MB, is the right number chosen and printed?
+Every one of those checks passes on a build that then throws the number away, which is what
+the build did. That is the same gap QA review #2 named: *"M0's gate is satisfied by a flag
+that parses and is ignored."*
+
+`test_m5enforce` is the behavioural counterpart: it runs real scans and asserts the ceiling
+reached the tool, that the **same** stage gets a **different** ceiling on a different tier
+(a hardcoded constant cannot satisfy both), that a breached ceiling is killed *and*
+correctly explained, and that the watchdog fires on a real breach while not false-firing on
+a normal run.
+
+Two of its first failures were defects in the tests, not the product, and both are worth
+recording because both are the same shape — **a check that passes by never executing**:
+
+- The D10 no-swap diagnostic only fires on a host with no swap. The cloud sandbox had none,
+  so the checks passed there; this VM has 5GB, so the branch simply never ran. Fixed with
+  `REVCTF_SWAP_MB`, which exists for exactly the reason `REVCTF_RAM_MB` does and carries
+  the same limitation: it tests the branch, never the behaviour on a host that really has
+  no swap.
+- The watchdog test used `REVCTF_RAM_MB=1`, making the 90% threshold `0MB`, which
+  `watchdog_start` rejects by design — so the watchdog never started and the companion
+  check "the partial report survives a watchdog kill" passed against a perfectly normal
+  run. `REVCTF_RAM_MB=2` puts the threshold at 1MB and trips it for real.
+
+### install.sh — what the first real run exposed
+
+QA review #2 §7 item 1 said an installer that has never executed against its target
+platform is not really written. That was correct, and the first real `sudo ./install.sh`
+proved it: the script was *reviewable* but carried four defects that no amount of reading
+would have found. Recorded here because three of them are general, not specific to this
+script.
+
+**1. `$HOME` under `sudo` is not the user's home — and guessing is silent.** With
+`env_reset` sudo sets `HOME` from the *target* user's passwd entry, and Debian/Kali differ
+from upstream; `/etc/sudoers` is not readable to check. Had it resolved to `/root`,
+`~/.revctf` would have been created as `/root/.revctf` and the `GHIDRA_HOME` line appended
+to root's `.bashrc` — a clean-looking install where the config file revctf actually reads
+never exists. Fixed by keying off `SUDO_USER` + `getent passwd`, and writing anything
+inside the user's home *as that user* (`run_as_install_user`) so the files are not
+root-owned.
+
+**2. Escalating unconditionally made the script untestable.** Every path-writing step
+called `run_root`, so the only way to exercise it was as root against `/opt` and
+`/usr/local/bin` — which is precisely why it sat unrun through five milestones. `run_owner
+<dir> <cmd>` escalates only when the target is not already writable, so pointing `PREFIX`
+and `FLOSS_VENV` at a scratch directory gives a full rehearsal as an ordinary user. That
+rehearsal is what found defect 3.
+
+**3. `ln`'s exit status was ignored, so a failed symlink printed `ok ... linked`.** Found
+in the rootless rehearsal, where `$PREFIX` did not exist yet. Reporting success for work
+that did not happen is the same defect class as a feature documented but absent.
+`link_into_prefix` creates the directory and propagates the status.
+
+**4. Installing "latest" silently broke the decompile stage — the worst of the four.**
+The step asked the releases API for `latest` and used the pinned build only as a fallback,
+so it installed **Ghidra 12.1.3** rather than the 11.2.1 this project is calibrated
+against. 12.x ships PyGhidra and no Jython, PyGhidra is *not* enabled under plain
+`analyzeHeadless`, and the post-script died with `Ghidra was not started with PyGhidra`
+while analyzeHeadless still **exited 0**. Result: `ghidra  empty  6s  0B`, scan exit 0,
+and the corpus crackme's password — which 11.2.1 recovers — simply absent. A clean-looking
+negative on a binary we know the answer to.
+
+This is the version-decay theme of this milestone arriving a third time (after upx's PIE
+bug and radare2 finding `main` in stripped binaries), and the sharpest instance: **an
+installer that auto-upgrades the one dependency the whole project is calibrated against is
+a decay generator.** `install.sh` now installs the pinned build by default; `GHIDRA_LATEST=1`
+opts in with a warning.
+
+Two things came out of it beyond the pin:
+
+- **`lib/preflight.sh` derived the Ghidra root from the binary's path without resolving
+  symlinks.** install.sh puts `analyzeHeadless` on PATH as a symlink, so
+  `dirname/..` yielded `/usr/local` — no `application.properties`, no `Ghidra/Features` —
+  and both probes failed, falling back to "assume Jython" on an install with no Jython.
+  An installer-created symlink broke the detector. Fixed with `readlink -f`.
+- **`stage_ghidra` treated an errored post-script as an *empty* stage.** analyzeHeadless
+  exits 0 even when the script fails to load, and CLAUDE.md §3 had already warned this
+  failure "shows up only as an empty Ghidra stage, exit 0" — but nothing checked for it.
+  Empty capture + a script error in stderr is now a FAILURE
+  (`_ghidra_saw_script_error`), which is the difference between "no flag here" and "this
+  tool never ran".
+
+**Still unsolved:** running the PyGhidra post-script headlessly on Ghidra 12.x.
+`support/pyghidraRun` is the GUI launcher and there is no wired-up `analyzeHeadless`
+equivalent. `scripts/pyghidra_decompile.py` has never successfully executed against a real
+PyGhidra install — it was written from documentation. Anyone moving off the 11.2.x pin has
+to solve that first.
+
+### Deviation D12 — GHIDRA_HOME now beats PATH
+
+Discovered as a consequence of install.sh finally running. v3 §5 step 2 ordered Ghidra
+discovery `PATH -> GHIDRA_HOME -> /opt/ghidra*`, which was fine while nothing put
+`analyzeHeadless` on PATH. install.sh symlinks it into `/usr/local/bin`, so from the moment
+the installer works, PATH always resolves — and `GHIDRA_HOME` became dead configuration on
+every installed machine. You could export it, revctf would ignore it, and nothing said so.
+
+The trigger for noticing was seven harness failures that had nothing to do with the code
+under test: checks that set `GHIDRA_HOME` to a fixture had been passing only because the
+machine happened to have no Ghidra on PATH. They were testing an environment, not a branch.
+
+Two separate fixes came out of that, and it is worth keeping them distinct:
+
+- **Behaviour (D12):** an explicitly-set environment variable should beat an incidental PATH
+  entry that our own installer created. This is not academic — Ghidra 12.x breaks the
+  post-script, and pointing `GHIDRA_HOME` at a known-good 11.2.x install is precisely the
+  workaround, which the old order made impossible.
+- **Tests:** the two checks that exercise the `/opt` scan are testing the *third* branch, so
+  both earlier branches must be absent. They now mask PATH with the existing
+  `mk_masked_path` helper rather than relying on the host having no Ghidra.
+
+The general lesson matches the upx and radare2 ones: **a check that passes because of what
+the machine happens to lack is not a check.** Three instances in one milestone — the swap
+diagnostic (passed because the sandbox had no swap), these Ghidra checks (passed because no
+Ghidra was installed), and the watchdog test (passed because the watchdog never started).

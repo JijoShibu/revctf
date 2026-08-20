@@ -8,7 +8,8 @@
 # Responsibilities (execution masterplan M1):
 #   1. Verify the seven core tools are on PATH; hard-fail with an actionable message.
 #   2. Verify the always-needed v6 tools (deviation D7); hard-fail pointing at install.sh.
-#   3. Discover Ghidra: PATH -> GHIDRA_HOME -> /opt/ghidra*  (v3 §5 step 2).
+#   3. Discover Ghidra: GHIDRA_HOME -> PATH -> /opt/ghidra* (deviation D12; v3 §5 step 2
+#      put PATH first, which install.sh's symlink made GHIDRA_HOME unusable).
 #   4. Detect Ghidra's generation (selects the M3 post-script) and binwalk's major
 #      version (selects M2's parsing branch).
 #   5. Check free disk space.
@@ -157,18 +158,23 @@ pf_check_always() {
 }
 
 # ======================================================================================
-# 3. Ghidra discovery — PATH, then GHIDRA_HOME, then /opt/ghidra*
+# 3. Ghidra discovery — GHIDRA_HOME, then PATH, then /opt/ghidra* (D12; v3 §5 reordered)
 # ======================================================================================
 pf_find_ghidra() {
     local candidate
 
-    # (a) analyzeHeadless directly on PATH
-    if candidate=$(command -v analyzeHeadless 2>/dev/null); then
-        PF_GHIDRA_HEADLESS="$candidate"
-        return 0
-    fi
-
-    # (b) $GHIDRA_HOME
+    # (a) $GHIDRA_HOME — an EXPLICIT choice, so it wins (deviation D12).
+    #
+    # v3 §5 step 2 ordered this PATH -> GHIDRA_HOME -> /opt/ghidra*, and that was defensible
+    # while nothing put analyzeHeadless on PATH. install.sh now always symlinks it into
+    # /usr/local/bin, which made GHIDRA_HOME permanently dead on every machine where the
+    # installer had run: you could export it, revctf would silently ignore it, and nothing
+    # said so. An environment variable the user sets deliberately must beat an incidental
+    # PATH entry the installer created.
+    #
+    # This is not hypothetical. Ghidra 12.x breaks the post-script (CLAUDE.md §3), and
+    # pointing GHIDRA_HOME at a known-good 11.2.x install is exactly how someone works
+    # around that — which the old order made impossible.
     if [[ -n ${GHIDRA_HOME:-} ]]; then
         for candidate in "$GHIDRA_HOME/support/analyzeHeadless" "$GHIDRA_HOME/analyzeHeadless"; do
             if [[ -x $candidate ]]; then
@@ -176,7 +182,13 @@ pf_find_ghidra() {
                 return 0
             fi
         done
-        pf_note "GHIDRA_HOME is set to '$GHIDRA_HOME' but no analyzeHeadless was found under it."
+        pf_note "GHIDRA_HOME is set to '$GHIDRA_HOME' but no analyzeHeadless was found under it; falling back to PATH."
+    fi
+
+    # (b) analyzeHeadless on PATH
+    if candidate=$(command -v analyzeHeadless 2>/dev/null); then
+        PF_GHIDRA_HEADLESS="$candidate"
+        return 0
     fi
 
     # (c) /opt/ghidra* — newest first, so a machine with several installs picks the
@@ -240,8 +252,20 @@ pf_detect_ghidra_runtime() {
 pf_detect_ghidra_version() {
     [[ -n $PF_GHIDRA_HEADLESS ]] || return 1
 
-    local root props ver=""
-    root="$(cd -- "$(dirname -- "$PF_GHIDRA_HEADLESS")/.." && pwd)" || return 1
+    local root props ver="" real
+    # RESOLVE SYMLINKS FIRST. install.sh puts `analyzeHeadless` on PATH as a symlink
+    # (/usr/local/bin/analyzeHeadless -> /opt/ghidra_X/support/analyzeHeadless), and
+    # `dirname/..` on the *link* yields /usr/local — where there is no
+    # application.properties and no Ghidra/Features. Both probes then fail and the
+    # fallback assumes Jython.
+    #
+    # That is not cosmetic. Measured on this host: Ghidra 12.1.3 ships PyGhidra and no
+    # Jython at all, so the Jython post-script would be handed to an install that cannot
+    # run it — and per CLAUDE.md §3 that failure surfaces only as an EMPTY GHIDRA STAGE
+    # THAT EXITS 0. A silent wrong answer, produced by our own installer's symlink.
+    real="$(readlink -f -- "$PF_GHIDRA_HEADLESS" 2>/dev/null)"
+    [[ -n $real && -e $real ]] || real="$PF_GHIDRA_HEADLESS"
+    root="$(cd -- "$(dirname -- "$real")/.." && pwd)" || return 1
 
     for props in "$root/Ghidra/application.properties" "$root/application.properties"; do
         if [[ -r $props ]]; then

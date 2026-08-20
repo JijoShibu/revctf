@@ -107,12 +107,45 @@ if need upx; then
         skip "packed_upx (upx pack failed)"
     fi
 
-    # B1b: packs, but will NOT unpack (PIE + upx 4.2.2 checksum bug). Exercises Stage 0's
-    # unwrap-failure path: mark the stage failed, then continue analysis on the original
-    # bytes rather than aborting the file.
+    # B1b: packs, but will NOT unpack. Exercises Stage 0's unwrap-failure path: mark the
+    # stage failed, then continue analysis on the original bytes rather than aborting.
+    #
+    # THIS USED TO DEPEND ON A UPX BUG, AND THAT WAS A MISTAKE. The original fixture was a
+    # PIE ELF, because upx 4.2.2 packed PIE happily but `upx -d` then failed with
+    # "Exception: checksum error". upx 4.2.4 fixed that — so the fixture silently started
+    # unpacking fine, and the SIX checks that rely on it to force a guaranteed stage failure
+    # (--strict, exit-2, the unwrap diagnostic) all broke at once on a routine apt upgrade.
+    #
+    # It is now broken BY CONSTRUCTION rather than by a vendor defect: pack normally, then
+    # corrupt bytes in the middle of the compressed payload. No upx version can decompress
+    # that, so the fixture cannot silently repair itself again.
+    #
+    # The corruption is deliberately placed mid-file: the `UPX!` magic in the first 4KB has
+    # to SURVIVE, or Stage 0's marker scan would not recognise the file as packed and would
+    # never attempt the unwrap the test is trying to exercise.
     if cp "$OUT/planted_flag" "$OUT/packed_upx_broken" 2>/dev/null &&
        upx -q -9 "$OUT/packed_upx_broken" >/dev/null 2>&1; then
-        made packed_upx_broken
+        # Anchor the corruption STRUCTURALLY, to the trailing `UPX!` packheader, rather than
+        # to a percentage of the file. Measured on this fixture: bytes below ~70% are stub
+        # and slack, and overwriting them leaves `upx -d` perfectly happy; only the region
+        # just before the packheader is live compressed data. A percentage that happens to
+        # land there for a 5,892-byte file would drift into slack for a different one, and
+        # the fixture would go quietly back to unpacking cleanly — the exact failure mode
+        # this rewrite exists to prevent.
+        _last=$(grep -abo 'UPX!' "$OUT/packed_upx_broken" 2>/dev/null | tail -1 | cut -d: -f1)
+        if [[ -n ${_last:-} && $_last -gt 320 ]]; then
+            # 128 bytes ending 64 short of the packheader: inside the compressed stream,
+            # leaving the header itself intact so upx still recognises the file and fails
+            # while DECOMPRESSING rather than refusing to look at it.
+            _off=$(( _last - 192 ))
+            printf '\xff%.0s' $(seq 128) \
+                | dd of="$OUT/packed_upx_broken" bs=1 seek="$_off" conv=notrunc status=none 2>/dev/null
+        fi
+        if upx -t "$OUT/packed_upx_broken" >/dev/null 2>&1; then
+            skip "packed_upx_broken (corruption did not take — it still passes upx -t)"
+        else
+            made packed_upx_broken
+        fi
     else
         skip "packed_upx_broken"
     fi

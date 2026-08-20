@@ -74,6 +74,14 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
   write to stdout. `revctf scan x > report.txt` has to produce a clean file while progress
   still reaches the terminal, and v6 §10 requires the report to be plain text in every
   display mode.
+- **Never report exit 124 and 137 as the same thing.** 124 is a `timeout`; 137 is a
+  SIGKILL, which since M5 is how a cgroup memory ceiling announces itself. Six stages once
+  reported both as "timed out after Ns", so a FLOSS run killed at its ceiling after ONE
+  second was reported as "timed out after 300s" — pointing the reader at the wrong
+  constant. Use `st_explain_kill()`.
+- **A memory ceiling that a stage cannot possibly meet must degrade the stage, not kill
+  it.** Tier C cannot afford FLOSS's ~900MB emulation, so it runs `--only static` and the
+  report says RAM was the reason. A ceiling that guarantees a failure is worse than none.
 - **A shellcheck directive is only valid in front of a complete command**, never a single
   `case` branch — it produces SC1124/SC1072 and breaks parsing. Lift the statement into a
   small function and annotate that instead (see `set_config_path`).
@@ -86,25 +94,88 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
 
 These cost real time to discover. Each one changed the design.
 
-- **Ghidra 11.2.1 runs `.py` post-scripts under Jython 2.7.3, not PyGhidra.** v3 §1's
+**Every fact carries the tool version it was verified against, and that is not decoration.**
+This section exists so facts are not re-derived — but a fact about a third-party tool is
+only true of the version it was measured on, and **two have already decayed**: upx's PIE
+unpack bug was fixed in 4.2.4, and radare2 got better at finding `main` in stripped
+binaries. Both decayed silently, and the upx one broke six harness checks on a routine
+`apt upgrade`.
+
+So: **if a fact below carries a version older than what is installed, re-verify it before
+relying on it — and re-stamp it here.** A fact with no version stamp is a fact nobody has
+checked recently. Current reference host: Kali rolling, verified 2026-08-20.
+
+| Tool | Verified against | Was |
+|---|---|---|
+| upx | **4.2.4** | 4.2.2 (fact decayed — see below) |
+| radare2 | **6.0.5** | unversioned (fact decayed — see below) |
+| binwalk | **2.4.3** | "2.x" |
+| checksec | 2.6.0 | 2.6.0 |
+| floss | **3.1.1** | unversioned |
+| Ghidra | **11.2.1 (pinned)** | 12.1.3 was installed once and broke the stage — see below |
+| file / binutils | 5.47 / 2.47 | — |
+
+- **[Ghidra 12.1.3] PyGhidra is NOT enabled under plain `analyzeHeadless` — the post-script
+  fails and analyzeHeadless still EXITS 0.** Measured 2026-08-20 after `install.sh` pulled
+  the newest release. 12.x ships `Ghidra/Features/PyGhidra` and no Jython, so runtime
+  selection correctly picks the PyGhidra script — which then dies with
+  `GhidraScriptLoadException: Ghidra was not started with PyGhidra. Python is not
+  available`. The stage recorded `empty / 0B / exit 0` and the corpus crackme's password
+  (which 11.2.1 recovers) was silently not found. Two consequences, both now in the code:
+  **(a)** `install.sh` installs the **pinned, verified** build by default; `GHIDRA_LATEST=1`
+  opts into newest with a warning. **(b)** `stage_ghidra` now treats "empty capture + script
+  error in stderr" as a FAILURE (`_ghidra_saw_script_error`) instead of a clean negative.
+  **Running the PyGhidra post-script headlessly on 12.x is UNSOLVED** — `support/pyghidraRun`
+  is the GUI launcher and there is no `analyzeHeadless` equivalent wired up. Anyone moving
+  to 12.x must solve that first; `scripts/pyghidra_decompile.py` has never successfully run
+  against a real PyGhidra install.
+- **[Ghidra 11.2.1] runs `.py` post-scripts under Jython 2.7.3, not PyGhidra.** v3 §1's
   "11.x+ → PyGhidra" boundary is **wrong**; the real boundary is **11.3**, where PyGhidra
   became the bundled default and Jython was removed. `pf_detect_ghidra_runtime()` therefore
   probes `Ghidra/Features/{PyGhidra,Jython}` and only falls back to a version comparison.
-- **FLOSS stack/tight/decoded extraction is PE-only.** On ELF it errors out; only static
+- **[floss 3.1.1] stack/tight/decoded extraction is PE-only.** On ELF it errors out; only static
   strings work. Stage 10 must be format-aware: all modes on PE and shellcode
   (`--format sc32|sc64`), `--only static` on ELF, and the report must say so plainly so a
   missing flag never reads as a clean negative.
 - **`flare-floss` cannot be pip-installed system-wide on modern Debian/Ubuntu** — its `halo`
   dependency fails with `AttributeError: install_layout`. Use a venv.
-- **upx 4.2.2 packs a PIE ELF but cannot unpack it** (`Exception: checksum error`). PIE is
-  the default on modern Kali, so this fires on real challenges. Fail the stage cleanly,
-  preserve upx's real message, and continue on the packed bytes.
-- **binwalk 2.x and upx reject the `--` end-of-options marker** (`Cannot open file --`).
+- **[upx 4.2.2 — DECAYED, fixed in 4.2.4]** upx 4.2.2 packed a PIE ELF but could not
+  unpack it (`Exception: checksum error`). **upx 4.2.4 unpacks it fine.** The product's
+  handling is still correct — fail the stage cleanly, preserve upx's message, continue on
+  the packed bytes — it simply no longer fires here.
+  **The damage was in the harness.** `packed_upx_broken` was a PIE ELF *relying on that
+  bug* to be a guaranteed-unpack-failure fixture, and six checks (`--strict`, exit-2, the
+  unwrap diagnostic) needed it to fail. An apt upgrade silently repaired the fixture and
+  broke all six at once. **Fixed 2026-08-20:** the fixture is now corrupted by construction
+  — pack normally, then overwrite 128 bytes of the compressed stream anchored to the
+  trailing `UPX!` packheader — so no upx version can decompress it. Do not "fix" it back
+  into depending on a vendor defect.
+- **[binwalk 2.4.3, upx 4.2.4] binwalk and upx reject the `--` end-of-options marker** (`Cannot open file --`).
   Omitted for those two; `RUN_TARGET` is absolutised so it is never ambiguous anyway.
-- **checksec 2.6.0 colours unconditionally** — it ignores both `NO_COLOR` and `TERM=dumb`.
+- **[checksec 2.6.0] colours unconditionally** — it ignores both `NO_COLOR` and `TERM=dumb`.
   radare2 also writes progress escapes to *stderr* even with `scr.color=0`.
 - **`xxd` is not part of a base install** (it ships with vim-common). Depending on it made
   the hex decoding sweep a silent no-op.
+- **`/usr/bin/time` is not part of a base install either** (separate `time` package; the
+  shell's `time` keyword reports no RSS). `tools/measure-host.sh` silently took its
+  wall-clock-only branch, so the FLOSS peak M5's Phase-2 ceiling depends on never appeared
+  and the output still looked complete. It now falls back to
+  `python3 -c 'resource.getrusage(RUSAGE_CHILDREN)'` — same kernel counter, already-mandatory
+  dependency.
+- **[radare2 6.0.5] recovers `main` in a *stripped* non-PIE ELF** (it reads the argument
+  to `__libc_start_main`), so `strip -s` no longer forces the `entry0` fallback. The
+  harness check "a stripped binary falls back to entry0" assumes it cannot, and fails.
+  **This is a decayed fact:** the check was written when an older radare2 could not do
+  this. The product is fine — the fallback is still correct when there genuinely is no
+  `main`; the fixture just no longer produces that condition.
+- **`ulimit -v` cannot bound a JVM.** A hello-world `java` needs 2–4GB of *virtual* address
+  space; at the tier ceilings (1024M/768M/512M) the JVM refuses to start at all
+  (`Could not reserve enough space for object heap`). v4 §4.3's documented `ulimit -v`
+  fallback would therefore have converted a memory bound into total loss of the Ghidra
+  stage on every non-systemd host. JVM stages are exempt on that path; see
+  `tier_stage_is_jvm`.
+- **`systemd-run --scope` needs `--collect`**, or every OOM-killed scope leaves a `failed`
+  transient unit that only `systemctl --user reset-failed` clears.
 - **`python3 -m dis` cannot read a `.pyc`** — it treats its argument as source. Unmarshal
   the code object first; see `scripts/pyc_disasm.py`.
 - **Jython 2.7 refuses a source file with any non-ASCII byte** unless it carries a PEP 263
@@ -175,13 +246,15 @@ The WSL notes below are kept in case the host changes:
 revctf                    entry script: arg parsing, config, dispatch, orchestration
 lib/stage.sh              the stage framework — read this before writing a stage
 lib/preflight.sh          tool discovery, versions, Ghidra runtime, disk, systemd-run probe
+                          Ghidra order: GHIDRA_HOME -> PATH -> /opt/ghidra* (D12)
 lib/stage_triage.sh       Stage 0: classify + unwrap (packers, archives, managed, Python)
 lib/stage_*.sh            one file per analysis stage
 lib/flagscan.sh           tiered regex + encoding sweep            (M3)
 lib/config.sh             config key registry + coercion           (M4)
 lib/report.sh             report assembly                          (M4)
 lib/tui.sh                stage table / line / heartbeat, stderr   (M4)
-lib/tier.sh               RAM tier resolution + overrides          (M5 groundwork)
+lib/tier.sh               RAM tiers, ceilings, per-stage limits     (M5)
+lib/watchdog.sh           global RSS watchdog; kills the job tree   (M5)
 scripts/*.py              the two Ghidra headless post-scripts     (M3)
 tools/build-test-corpus.sh  regenerates the 18-artifact corpus (binaries are gitignored)
 tools/run-tests.sh        milestone-gate verification harness
@@ -213,13 +286,24 @@ anywhere. Set `PF_OPT_ROOT_REAL=/opt` to point it at a real install.
 the standard; do not advance past one until its verification actually runs. Each milestone
 adds its own section to the harness so earlier gates keep being re-checked.
 
-**Milestone status:** M0, M1, M2, the QA pass, M3 and **M4** are complete — **262 checks
-green**, tagged `v0.1-mvp`. Single-file scanning works end to end: 14 stages, flag
-detection, a readable report, three display modes.
+**Milestone status:** M0, M1, M2, the QA pass, M3, M4 and **M5** are complete. `v0.1-mvp`
+is tagged; M5 is not yet tagged. Single-file scanning works end to end: 14 stages, flag
+detection, a readable report, three display modes, and enforced per-stage memory ceilings.
 
-Next is **M5**, and it **must be built on real hardware, not in a cloud sandbox** — see
-`HANDOFF.md` §6. Tier B/C cannot be entered on an 8GB host, `systemd-run` cannot run
-without systemd booted, M6 needs a Docker daemon and M8 needs a TTY.
+**M5 was built on the Kali VM**, where `systemd-run --scope -p MemoryMax` works — so v4
+§4.3's primary bounding path executed for the first time in this project.
+
+**Both pre-tag gates have now run (2026-08-20):** `shellcheck -S style` is clean across
+every shell file, and `install.sh` has been executed end-to-end on real Kali — which found
+four defects, including one that silently broke the Ghidra stage. See
+`implementation-notes.md` "install.sh — what the first real run exposed".
+
+Next is **M6** (Docker sandbox) — **unblocked**: Docker 28.5.2 runs on the VM and the full
+`--network=none --read-only --cap-drop=ALL` contract is verified, including no network
+egress. See `HANDOFF.md` §6 for two access traps that make a working daemon look dead
+(a stale `DOCKER_HOST` pointing at a podman socket, and per-process group membership).
+**M7** (batch mode) is the alternative, and D11 flags a prerequisite: Phase-2 concurrency
+must decouple from Phase-3.
 
 ---
 
@@ -245,9 +329,11 @@ Carried in `implementation-notes.md`, repeated here because they affect design c
   Do not "fix" this — it has already been investigated.
 - **Resolved in M3 (deviation D9):** `--sandbox` covers `strace` as well as `ltrace`, and
   refuses the host until M6 builds the container.
-- **M5 must NOT inherit Ghidra's ceiling for Phase 2.** Measured: FLOSS peaks at ~1.46GB on
-  a 220MB target, exceeding Tier A's 1024M and roughly 3x Tier C's. v6 §5's assumption is
-  disproved; size Phase 2 from that number. `FLOSS_MAX_MB` (64MB) is the interim guard.
+- **RESOLVED at M5 (deviation D11): Phase 2 no longer inherits Ghidra's ceiling.** Sized
+  from measurement instead — 1536/1024/512MB. The decisive figure was not the 1.46GB blob
+  but **899MB on a 264KB PE**: FLOSS's cost is vivisect's emulation workspace, not file
+  size, so `FLOSS_MAX_MB` (an input-size gate) never bounded memory at all despite its
+  comment claiming it kept FLOSS "comfortably inside every tier".
 - **Two tools reject the `--` end-of-options marker AND so does radare2** (it analyses
   nothing and every binary looks stripped). Check any new tool for this before trusting it.
 - **`nohup` makes SIGHUP untrappable for every descendant.** It sets SIGHUP to SIG_IGN

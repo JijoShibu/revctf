@@ -101,19 +101,19 @@ The milestone at which the tool is genuinely usable end to end. Currently the ac
 Everything after the MVP: adaptivity, isolation, batch, agency, resilience.
 
 - [x] **M5 · lib/tier.sh — RAM detection, Tier A/B/C, per-value overrides**
-  <br>M: M5 · resolved + reported; limits not yet enforced
-- [ ] **M5 · Re-derive Phase-2 ceiling from the measured FLOSS peak, not Ghidra's**
-  <br>M: M5 · BLOCKS M5 — see Risks
-- [ ] **M5 · systemd-run --scope MemoryMax with ulimit -v fallback + report notice**
-  <br>M: M5 · probe already implemented
-- [ ] **M5 · lib/watchdog.sh — global RSS monitor, kills job tree at 90%**
-  <br>M: M5 · never prompted, by design
+  <br>M: M5 · resolved, reported AND enforced
+- [x] **M5 · Re-derive Phase-2 ceiling from the measured FLOSS peak, not Ghidra's**
+  <br>M: M5 · deviation D11 · 1536/1024/512MB, measured on the Kali VM
+- [x] **M5 · systemd-run --scope MemoryMax with ulimit -v fallback + report notice**
+  <br>M: M5 · ENFORCED in st_run_bounded · systemd path executed for the first time
+- [x] **M5 · lib/watchdog.sh — global RSS monitor, kills job tree at 90%**
+  <br>M: M5 · fires, spares revctf, partial report still written
 - [x] **M5 · Low-RAM/no-swap diagnostic (auto-swap REMOVED, D10)**
   <br>M: M5 · lib/tier.sh · revctf never modifies the host
 - [ ] **M6 · docker/Dockerfile built by install.sh during the network window**
   <br>M: M6 · --sandbox currently refuses
 - [ ] **M6 · Sandboxed ltrace AND strace; verify no network egress**
-  <br>M: M6 · deviation D9
+  <br>M: M6 · deviation D9 · host verified 2026-08-20: `--network=none` gives no egress
 - [ ] **M7 · Batch mode — three-phase concurrency, per-job isolation, flock results**
   <br>M: M7 · directory target exits 1 today
 - [ ] **M7 · Per-file failure isolation + merged run summary**
@@ -158,7 +158,7 @@ Run this block for M5 through M9. It is what kept M0–M4 honest.
 
 What has to be true before calling it v1.0.
 
-- [ ] **install.sh completed — full toolchain, venv FLOSS, Docker image**
+- [x] **install.sh completed — full toolchain, venv FLOSS** (Docker image still M6)
   <br>M: M1/M6 · skeleton only
 - [ ] **Vendor pyinstxtractor (not packaged anywhere)**
   <br>M: M6 · unwrap fails cleanly today
@@ -188,9 +188,17 @@ What has to be true before calling it v1.0.
 Each is tracked to the milestone that resolves it. Two are load-bearing.
 
 - [!] **Phase-2 memory ceiling: FLOSS peaks ~1.46GB, disproving v6 §5's inheritance assumption**
-  <br>Risk · M: M5 · exceeds Tier A 1024M, ~3x Tier C
+  <br>RESOLVED · M: M5 · D11 sizes Phase 2 from its own measurement
+- [!] **upx 4.2.4 unpacks PIE, so `packed_upx_broken` no longer forces a stage failure**
+  <br>Risk · M: M5 · 6 harness checks depend on that fixture failing; needs a version-independent trigger
+- [!] **Tier A `-P 2` cannot afford two concurrent Phase-2 jobs (2x1536 > 2946MB usable)**
+  <br>Risk · M: M7 · Phase-2 concurrency must decouple from Phase-3 · recorded in D11
+- [x] **install.sh run end-to-end on real Kali (2026-08-20)** — 4 defects found and fixed
+  <br>M: M5 · $HOME-under-sudo, unconditional escalation, unchecked ln, "latest" Ghidra
+- [!] **PyGhidra post-script has never run against a real PyGhidra (Ghidra 12.x headless)**
+  <br>Risk · M: M6+ · Ghidra pinned to 11.2.x meanwhile; `support/pyghidraRun` is GUI-only
 - [!] **Tier boundaries 3.8GB / 2.5GB are unvalidated estimates (v4 §10)**
-  <br>Risk · M: M5 · a version boundary was already wrong once
+  <br>Risk · M: M5 · STILL UNMEASURED · the 4GB VM lands 26MB inside Tier A
 - [!] **Ghidra's 1800s time bound is a guess, never tested on a slow-path binary**
   <br>Risk · M: M4/M5 · no prior plan bounded it at all
 - [!] **TUI is the highest-defect-density component; redraw + resize + signals in Bash**

@@ -267,11 +267,17 @@ test_m1() {
         "$RC" scan "$ROOT/README.md" --verbose
 
     # --- discovery under $PF_OPT_ROOT, newest generation winning ---
+    # This is the THIRD discovery branch, so the two ahead of it must both be absent:
+    # -u GHIDRA_HOME covers the first, and PATH has to be masked for the second. Once
+    # install.sh started symlinking analyzeHeadless into /usr/local/bin, an unmasked PATH
+    # satisfied discovery before the /opt scan was ever reached, and these checks passed
+    # or failed depending on whether the machine happened to have Ghidra installed.
+    local noghpath; noghpath=$(mk_masked_path "analyzeHeadless" noghpath)
     assert_match "Ghidra found by scanning the install root" 'ghidra +: 11\.2\.1' \
-        env -u GHIDRA_HOME PF_OPT_ROOT="$FIXTURES/optroot" \
+        env -u GHIDRA_HOME PATH="$noghpath" PF_OPT_ROOT="$FIXTURES/optroot" \
         "$RC" scan "$ROOT/README.md" --verbose
     assert_match "newest of several installs is chosen" 'Multiple Ghidra installs' \
-        env -u GHIDRA_HOME PF_OPT_ROOT="$FIXTURES/optroot" \
+        env -u GHIDRA_HOME PATH="$noghpath" PF_OPT_ROOT="$FIXTURES/optroot" \
         "$RC" scan "$ROOT/README.md" --verbose
 
     # --- Ghidra genuinely absent ---
@@ -494,10 +500,15 @@ test_m2() {
     else
         no "isolate-and-continue" "the pipeline stopped after the triage failure"
     fi
-    if grep -q 'checksum error' "$o/broken/triage.txt" 2>/dev/null; then
-        ok "the real upx diagnostic reaches the report"
+    # Assert the MECHANISM (upx's own text is quoted verbatim), not one vendor phrase.
+    # This used to grep for the literal "checksum error", which was upx 4.2.2's message for
+    # the PIE-unpack bug the old fixture depended on. The fixture is now corrupted by
+    # construction and upx says "compressed data violation" instead — same guarantee,
+    # different wording, and the check failed on a message it was never really about.
+    if grep -qE 'upx:.*(Exception|error)' "$o/broken/triage.txt" 2>/dev/null; then
+        ok "upx's own diagnostic reaches the report verbatim"
     else
-        no "diagnostic" "upx's error message was not preserved"
+        no "diagnostic" "upx's error message was not preserved in the report"
     fi
 
     # --- --no-unwrap ---
@@ -561,9 +572,18 @@ test_m3() {
     else
         no "word-boundary test" "domain_main_init absent; the check proves nothing"
     fi
-    # A stripped binary has no main at all — entry0 fallback.
-    assert_match "a stripped binary falls back to entry0" 'radare2 .*entry0 fallback' \
-        "$RC" scan "$CORPUS/crackme_stripped" --skip-ghidra --output "$o/r2s"
+    # A target with no `main` at all must fall back to entry0.
+    #
+    # This used to use crackme_stripped, on the assumption that `strip -s` removes main.
+    # radare2 6.0.5 disproves that: it recovers main from the argument to
+    # __libc_start_main, so the stripped binary reports "main via symbol table" and the
+    # check failed on a routine radare2 upgrade — the same decay that hit the upx fixture.
+    #
+    # A UPX stub is a structural no-main target rather than a bet on what the disassembler
+    # cannot do: the stub genuinely has no main to find, in any radare2 version.
+    # --no-unwrap keeps Stage 0 from helpfully unpacking it back into one.
+    assert_match "a target with no main falls back to entry0" 'radare2 .*entry0 fallback' \
+        "$RC" scan "$CORPUS/packed_upx" --no-unwrap --skip-ghidra --output "$o/r2s"
 
     # --- dynamic stages execute the target, so the warning must be unmissable ----------
     assert_match "ltrace states it executed the target" 'THIS STAGE EXECUTES THE TARGET' \
@@ -1297,26 +1317,68 @@ test_m5() {
     assert_match "and it says why" 'must be a positive integer' \
         env REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run --jobs-light 0
 
-    # --- the disproved Phase-2 derivation must stay visible ---------------------------
-    # v6 §5 sizes Phase 2 from Ghidra's ceiling; the measured FLOSS peak (~1.46GB) breaks
-    # that. Implemented as specified, but the plan has to keep saying so, or the next
-    # person to read it inherits a silently wrong assumption.
-    assert_match "the plan flags the unresolved Phase-2 ceiling" \
-        'FLOSS peak .*exceeds it' env REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run
+    # --- the Phase-2 ceiling is now measured, not inherited (deviation D11) -----------
+    # This check INVERTED at M5. It used to assert the plan still admitted the ceiling was
+    # unresolved; now it asserts the derivation is gone and the measured numbers are in.
+    # v6 §5 sized Phase 2 from Ghidra's MAXMEM (1024/768/512); the measured FLOSS peaks
+    # replaced that with 1536/1024/512, so a Phase-2 cap equal to MAXMEM on Tier A or B
+    # means the old derivation has crept back.
+    assert_no_match "the disproved v6 §5 derivation is gone from the plan" \
+        'inherits Ghidra' env REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run
+    local p2
+    for c in "8192:1536:1024M" "3000:1024:768M" "2048:512:512M"; do
+        IFS=: read -r ram want_p2 want_mem <<< "$c"
+        out=$(REVCTF_RAM_MB="$ram" "$RC" scan "$t" --dry-run 2>/dev/null)
+        p2=$(grep -E '^  Phase-2 cap' <<< "$out" | awk '{print $4}')
+        if [[ $p2 == "${want_p2}MB" ]]; then
+            ok "  ${ram}MB -> Phase-2 cap ${want_p2}MB (measured, not Ghidra's ${want_mem})"
+        else
+            no "Phase-2 cap at ${ram}MB" "got '$p2', wanted '${want_p2}MB'"
+        fi
+    done
+    # Tier A's Phase-2 cap must differ from its Ghidra MAXMEM, or the inheritance is back.
+    out=$(REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run 2>/dev/null)
+    if [[ $(grep -E '^  Phase-2 cap' <<< "$out" | awk '{print $4}') != \
+          $(grep -E '^  Ghidra MAXMEM' <<< "$out" | awk '{print $4}')B ]]; then
+        ok "Phase-2 cap is independent of Ghidra MAXMEM"
+    else
+        no "Phase-2 derivation" "Phase-2 cap equals Ghidra MAXMEM — v6 §5's struck derivation is back"
+    fi
+
+    # --- tier limits are ENFORCED, not merely reported (M5 exit criteria) -------------
+    # QA review #2 §7: "the flag exists" is not a gate; "the flag changes what happens" is.
+    # These run a real scan and assert the ceiling reached the tool.
+    assert_match "the plan says which mechanism enforces the ceilings" \
+        'Enforced by   : (systemd-run|ulimit -v|nothing)' \
+        env REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run
+    assert_match "the watchdog threshold is reported as an absolute figure" \
+        'Watchdog      : kills the job tree above [0-9]+% of RAM \([0-9]+MB\)' \
+        env REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run
+
+    # --- FLOSS emulation affordability (measured: ~900MB regardless of file size) ------
+    assert_match "a tier too small for FLOSS emulation says so" \
+        'FLOSS runs static-only' env REVCTF_RAM_MB=2048 "$RC" scan "$t" --dry-run
+    assert_no_match "a tier with room for it does not" \
+        'FLOSS runs static-only' env REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run
 
     # --- the diagnostic that replaced auto-swap (deviation D10) -----------------------
     # It must fire on the tiers that can actually be hurt, stay silent on Tier A, and
     # never imply revctf will act on the user's behalf.
+    # REVCTF_SWAP_MB=0 is injected so this branch runs on ANY host. It previously used the
+    # real swap figure, so on a developer box with swap configured (this one has 5GB) every
+    # check below passed by never executing the branch it claimed to test.
     assert_match "Tier C with no swap warns about the OOM risk" 'no active swap' \
-        env REVCTF_RAM_MB=2000 "$RC" scan "$t" --dry-run
+        env REVCTF_RAM_MB=2000 REVCTF_SWAP_MB=0 "$RC" scan "$t" --dry-run
     assert_match "Tier B with no swap warns too" 'no active swap' \
-        env REVCTF_RAM_MB=3000 "$RC" scan "$t" --dry-run
+        env REVCTF_RAM_MB=3000 REVCTF_SWAP_MB=0 "$RC" scan "$t" --dry-run
     assert_no_match "Tier A stays silent about swap" 'no active swap' \
-        env REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run
+        env REVCTF_RAM_MB=8192 REVCTF_SWAP_MB=0 "$RC" scan "$t" --dry-run
     assert_match "the warning names both remedies" 'skip-ghidra' \
-        env REVCTF_RAM_MB=2000 "$RC" scan "$t" --dry-run
+        env REVCTF_RAM_MB=2000 REVCTF_SWAP_MB=0 "$RC" scan "$t" --dry-run
     assert_match "and promises revctf will not act for you" 'will not modify your system' \
-        env REVCTF_RAM_MB=2000 "$RC" scan "$t" --dry-run
+        env REVCTF_RAM_MB=2000 REVCTF_SWAP_MB=0 "$RC" scan "$t" --dry-run
+    assert_no_match "a host WITH swap gets no such warning" 'no active swap' \
+        env REVCTF_RAM_MB=2000 REVCTF_SWAP_MB=4096 "$RC" scan "$t" --dry-run
     assert_exit "--no-auto-swap is gone, not silently accepted" 1 \
         "$RC" scan "$t" --dry-run --no-auto-swap
     local swapcfg="$o/swap.cfg"
@@ -1331,6 +1393,143 @@ test_m5() {
         "$RC" scan "$t" --dry-run --skip-ghidra
     assert_match "--strict is shown in the plan" 'stop at the first failed stage' \
         "$RC" scan "$t" --dry-run --strict
+}
+
+# ======================================================================================
+# m5enforce — the tier limits ACTUALLY BOUND a run (M5 Definition of Done)
+# ======================================================================================
+# WHY THIS IS SEPARATE FROM test_m5
+#
+# test_m5 checks tier RESOLUTION: given N MB of RAM, is the right number chosen and
+# printed? Every one of those checks passes on a machine where the number is then thrown
+# away — which is exactly what the build did before M5, and exactly the gap QA review #2
+# named ("M0's gate is satisfied by a flag that parses and is ignored").
+#
+# These checks run real scans and assert the number reached the tool. They are the
+# difference between a reported ceiling and an enforced one.
+test_m5enforce() {
+    section "M5 — memory bounding is enforced, not just reported"
+
+    if ! have_corpus; then
+        skip "M5 enforcement checks" "run ./tools/build-test-corpus.sh first"; return
+    fi
+    if ! command -v floss >/dev/null 2>&1; then
+        # D7 makes a missing always-tool a hard startup error, so no scan can run at all.
+        skip "M5 enforcement checks" "floss absent — run ./install.sh (D7 blocks every scan)"; return
+    fi
+    local o="$FIXTURES/m5e"; rm -rf "$o"; mkdir -p "$o"
+    local t="$CORPUS/crackme" out
+
+    # --- the ceiling reaches the tool ------------------------------------------------
+    # --verbose prints the resolved ceiling and mechanism per stage. Tier-driven, so the
+    # SAME stage must show a DIFFERENT number on a different tier — a hardcoded constant
+    # (which is what Ghidra's MAXMEM was) cannot satisfy both.
+    out=$(REVCTF_RAM_MB=8192 "$RC" scan "$t" --skip-ghidra --verbose --output "$o/a" 2>&1)
+    assert_match "Tier A: radare2 is bounded at its tier ceiling" \
+        '\[radare2\] memory ceiling 640MB' printf '%s' "$out"
+    assert_match "Tier A: a Phase-2 stage is bounded at the Phase-2 ceiling" \
+        '\[floss\] memory ceiling 1536MB' printf '%s' "$out"
+    rm -rf "$o/a"
+
+    out=$(REVCTF_RAM_MB=2048 "$RC" scan "$t" --skip-ghidra --verbose --output "$o/c" 2>&1)
+    assert_match "Tier C: the same stage gets a DIFFERENT, smaller ceiling" \
+        '\[radare2\] memory ceiling 400MB' printf '%s' "$out"
+    assert_match "Tier C: Phase-2 ceiling drops with the tier" \
+        '\[floss\] memory ceiling 512MB' printf '%s' "$out"
+    rm -rf "$o/c"
+
+    # --- Ghidra MAXMEM is tier-driven, not hardcoded ---------------------------------
+    # It WAS hardcoded to 1024M (Tier A's value), so a 2GB Tier C host ran Ghidra at twice
+    # its tier's ceiling — precisely the OOM the tier table exists to prevent.
+    #
+    # Needs a real Ghidra: without analyzeHeadless, preflight hard-fails (D7) before any
+    # stage runs, so there is no ceiling line to read.
+    if ! command -v analyzeHeadless >/dev/null 2>&1 && [[ -z ${GHIDRA_HOME:-} ]]; then
+        skip "Ghidra MAXMEM enforcement" "no Ghidra install found"
+    else
+    out=$(REVCTF_RAM_MB=2048 "$RC" scan "$t" --verbose --output "$o/g" 2>&1)
+    assert_match "Ghidra MAXMEM follows the tier (512M on Tier C, not the old 1024M)" \
+        '\[ghidra\] memory ceiling 512MB' printf '%s' "$out"
+    rm -rf "$o/g"
+    out=$(REVCTF_RAM_MB=8192 "$RC" scan "$t" --verbose --maxmem-ghidra 2048M --output "$o/g2" 2>&1)
+    assert_match "--maxmem-ghidra overrides the tier at the point of use" \
+        '\[ghidra\] memory ceiling 2048MB' printf '%s' "$out"
+    rm -rf "$o/g2"
+    fi
+
+    # --- a breached ceiling is killed AND correctly explained -------------------------
+    # The regression this pins: every stage reported 124 and 137 identically, so a FLOSS
+    # run OOM-killed at its ceiling after ONE second was reported as "timed out after
+    # 300s" — pointing the reader at the wrong constant entirely.
+    if [[ -f $CORPUS/winsample.exe ]]; then
+        out=$(TIER_A_PHASE2_MB=200 TIER_FLOSS_EMULATION_MB=100 REVCTF_RAM_MB=8192 \
+              "$RC" scan "$CORPUS/winsample.exe" --skip-ghidra --output "$o/k" 2>&1)
+        local rep="$o/k/report.txt"
+        assert_match "a stage killed at its ceiling is reported as killed, not timed out" \
+            'killed \(SIGKILL\).*memory ceiling' cat "$rep"
+        assert_no_match "and is NOT mislabelled with the time bound" \
+            'floss.*timed out after 300s' cat "$rep"
+        rm -rf "$o/k"
+    else
+        skip "ceiling-breach diagnostic" "winsample.exe absent from the corpus"
+    fi
+
+    # --- FLOSS degrades rather than dying on a tier too small for emulation -----------
+    # Measured: emulation costs ~900MB even on a 264KB PE, so a Tier C ceiling of 512MB
+    # would OOM-kill it on EVERY PE. A ceiling that guarantees a failure is worse than none.
+    if [[ -f $CORPUS/winsample.exe ]]; then
+        REVCTF_RAM_MB=2048 "$RC" scan "$CORPUS/winsample.exe" --skip-ghidra --output "$o/f" >/dev/null 2>&1
+        assert_match "Tier C runs FLOSS static-only instead of being OOM-killed" \
+            'static strings only \(emulation does not fit' cat "$o/f/floss.txt"
+        assert_match "and the report explains it was RAM, not the file format" \
+            'not given room to look' cat "$o/f/floss.txt"
+        rm -rf "$o/f"
+        REVCTF_RAM_MB=8192 "$RC" scan "$CORPUS/winsample.exe" --skip-ghidra --output "$o/f2" >/dev/null 2>&1
+        assert_match "Tier A still runs all FLOSS modes on a PE" \
+            'all modes \(static, stack, tight, decoded\)' cat "$o/f2/floss.txt"
+        rm -rf "$o/f2"
+    fi
+
+    # --- the RSS watchdog ------------------------------------------------------------
+    # It must fire on a real breach and must NOT false-fire on a normal run. The second is
+    # the harder guarantee and the one that makes it safe to leave on by default.
+    "$RC" scan "$t" --skip-ghidra --output "$o/w" >/dev/null 2>&1
+    local wrc=$?
+    if [[ $wrc -eq 0 ]]; then
+        ok "watchdog does not false-fire on a normal Tier A scan"
+    else
+        no "watchdog false fire" "a clean scan exited $wrc"
+    fi
+    assert_no_match "and says nothing about the watchdog in a clean report" \
+        'RSS watchdog' cat "$o/w/report.txt"
+    rm -rf "$o/w"
+
+    # 2MB of "total RAM" puts the 90% threshold at 1MB, so any real tool trips it at
+    # once. 1MB would floor the threshold to 0, which watchdog_start rejects by design.
+    # This exercises the real kill path rather than a simulated one.
+    out=$(REVCTF_RAM_MB=2 WATCHDOG_INTERVAL=1 "$RC" scan "$CORPUS/large_blob.bin" \
+          --skip-ghidra --output "$o/wd" 2>&1)
+    assert_match "watchdog fires when the tree exceeds the limit" \
+        'RSS watchdog fired' printf '%s' "$out"
+    assert_match "and says it will still write the report" \
+        'partial report will still be written' printf '%s' "$out"
+    if [[ -f "$o/wd/report.txt" ]]; then
+        ok "the partial report survives a watchdog kill"
+    else
+        no "watchdog report" "no report.txt after a watchdog abort"
+    fi
+    rm -rf "$o/wd"
+
+    # --- the watchdog must survive junk without exiting the shell (QA-1) --------------
+    for bad in banana "" 0; do
+        if REVCTF_RAM_MB="$bad" "$RC" scan "$t" --skip-ghidra --output "$o/j" >/dev/null 2>&1; then
+            ok "a RAM figure of '${bad:-<empty>}' does not break the run"
+        else
+            # Tier C + no swap still exits 0; a non-zero here means an arithmetic abort.
+            no "watchdog robustness" "REVCTF_RAM_MB='$bad' broke the scan"
+        fi
+        rm -rf "$o/j"
+    done
 }
 
 # ======================================================================================
@@ -1443,21 +1642,44 @@ test_docs() {
     # It is currently a stub BY DECISION (it is completed on Kali, where each apt group can
     # be run as it is written). What is not acceptable is a stub that reads as an
     # installer. It must say so on stdout, and README must not call it complete.
-    if grep -q 'stub' "$ROOT/install.sh"; then
+    # M5 flipped this from its stub branch to its live branch. install.sh now installs;
+    # what must not come back is an installer that reads as one while doing nothing.
+    if grep -qE '^[[:space:]]*[^#]*apt-get install' "$ROOT/install.sh"; then
+        ok "install.sh has a live package-install path"
+    elif grep -q 'stub' "$ROOT/install.sh"; then
         ok "install.sh admits in its own output that it is a stub"
     else
-        # Once it is real, this branch is the one that should pass: assert it installs.
-        if grep -qE '^\s*[^#]*apt-get install' "$ROOT/install.sh"; then
-            ok "install.sh has a live package-install path"
-        else
-            no "install.sh" "neither admits to being a stub nor installs anything"
-        fi
+        no "install.sh" "neither admits to being a stub nor installs anything"
     fi
-    if grep -q 'install.sh` dependency installation | \*\*stub' "$readme" \
-       || grep -q 'stub — installs nothing' "$readme"; then
-        ok "README states that install.sh installs nothing"
+
+    # The FLOSS correction must be IN the installer, not only in the notes. QA review #2
+    # §7 rule 4: a finding recorded in implementation-notes.md must be applied everywhere
+    # it applies, in the same commit — this is the exact instance that rule was written
+    # for, since the notes carried the venv fix while install.sh kept the failing pip line.
+    # Match a real invocation, not the message explaining why the method is avoided:
+    # skip comments and skip say/printf/echo lines.
+    if grep -vE '^[[:space:]]*#|say |printf |echo ' "$ROOT/install.sh" \
+       | grep -qE 'pip install .*--break-system-packages'; then
+        no "install.sh FLOSS method" \
+           "still uses pip --break-system-packages, which CLAUDE.md §3 records as failing"
     else
-        no "install.sh documentation" "README does not disclose that install.sh is a stub"
+        ok "install.sh does not use the pip method known to fail"
+    fi
+    if grep -qE 'venv .*floss|floss-venv' "$ROOT/install.sh"; then
+        ok "install.sh installs FLOSS via a venv"
+    else
+        no "install.sh FLOSS method" "no venv-based FLOSS install found"
+    fi
+
+    # README must no longer claim it installs nothing — that became false at M5 — but it
+    # must still disclose that it has not been verified end-to-end on a clean machine.
+    if grep -q 'stub — installs nothing' "$readme"; then
+        no "install.sh documentation" \
+           "README still says install.sh installs nothing; it has a live install path now"
+    elif grep -q 'not yet verified end-to-end' "$readme"; then
+        ok "README discloses install.sh is implemented but unverified"
+    else
+        ok "README makes no stale claim about install.sh"
     fi
 
     # --- the design documents must travel with the repo -------------------------------
@@ -1475,10 +1697,21 @@ test_docs() {
     else
         no "design documents missing" "not in design/: ${missing_design[*]}"
     fi
-    if grep -q 'D10' "$ROOT/design/revctfmasterplan_v6.md"; then
-        ok "the Deviation Register in design/ includes D10"
+    local dv missing_dev=()
+    for dv in D10 D11 D12; do
+        grep -q "| $dv |" "$ROOT/design/revctfmasterplan_v6.md" || missing_dev+=("$dv")
+    done
+    if [[ ${#missing_dev[@]} -eq 0 ]]; then
+        ok "the Deviation Register in design/ includes D10, D11 and D12"
     else
-        no "stale design spec" "design/revctfmasterplan_v6.md predates D10"
+        no "stale design spec" "design/revctfmasterplan_v6.md is missing: ${missing_dev[*]}"
+    fi
+    # D11 struck v6 §5's Phase-2 derivation. The struck text must not read as current, or
+    # a future session inherits the assumption the measurement disproved.
+    if grep -q 'STRUCK — see deviation D11' "$ROOT/design/revctfmasterplan_v6.md"; then
+        ok "v6 §5's disproved Phase-2 derivation is marked struck"
+    else
+        no "design drift" "v6 §5 still presents the Phase-2 derivation as current"
     fi
 
     # --- lib/tui.sh is frozen (QA review #2) ------------------------------------------
@@ -1543,7 +1776,7 @@ test_docs() {
     # The stub inventory may only SHRINK. A new "not yet implemented" placeholder is how
     # a documented-but-absent feature gets created in the first place, so adding one has
     # to be a deliberate act that updates this number in the same commit.
-    local STUB_CEILING=4
+    local STUB_CEILING=3   # was 4; lib/watchdog.sh became a real implementation at M5
     if [[ $stubs -le $STUB_CEILING ]]; then
         ok "$stubs lib/ placeholders (ceiling $STUB_CEILING)"
     else
@@ -1559,7 +1792,7 @@ test_docs() {
 # ======================================================================================
 main() {
     local -a want=("$@")
-    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 m2 m3 m4 m5 qa docs ghidra)
+    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 m2 m3 m4 m5 m5enforce qa docs ghidra)
 
     printf '\033[1mrevctf verification harness\033[0m\n'
     printf 'repo: %s\n' "$ROOT"
@@ -1576,6 +1809,7 @@ main() {
             m3)     test_m3     ;;
             m4)     test_m4     ;;
             m5)     test_m5     ;;
+            m5enforce) test_m5enforce ;;
             qa)     test_qa     ;;
             docs)   test_docs   ;;
             ghidra) test_ghidra ;;

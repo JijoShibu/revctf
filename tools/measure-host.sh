@@ -29,22 +29,51 @@ trap 'rm -rf "$WORK"' EXIT
 hdr() { printf '\n== %s ==\n' "$1"; }
 
 # peak_rss <label> <command...> — run it, report wall time and peak RSS in MB.
-# /usr/bin/time -v is the only portable-enough way to get a true peak; without it the
-# figure would be a sampled approximation, which for a spiky consumer like FLOSS is worse
-# than no number at all.
+#
+# Two ways to get a TRUE peak (not a sampled approximation, which for a spiky consumer like
+# FLOSS is worse than no number at all):
+#
+#   1. /usr/bin/time -v            — GNU time, the obvious one
+#   2. python3 + getrusage()       — RUSAGE_CHILDREN.ru_maxrss, the same kernel counter
+#                                    GNU time reads, via a dependency that is already
+#                                    mandatory for revctf
+#
+# The python3 path exists because of a measured failure of this very script: `/usr/bin/time`
+# is NOT part of a base Kali install (it is the separate `time` package; the shell's `time`
+# keyword is not a substitute and reports no RSS). This script silently took the
+# wall-clock-only branch, printed no peak figure, and the FLOSS measurement that M5's
+# Phase-2 ceiling has to be derived from simply never appeared in the output — the report
+# looked complete. A measurement tool that degrades quietly is the same defect class as a
+# feature documented but absent, so it now falls back rather than skipping.
 peak_rss() {
     local label="$1"; shift
-    local tf="$WORK/time.$$" rss="" secs=""
+    local tf="$WORK/time.$$" rss="" secs="" t0=$SECONDS
+
     if command -v /usr/bin/time >/dev/null 2>&1; then
         /usr/bin/time -v -o "$tf" "$@" >/dev/null 2>&1
         rss="$(awk -F': ' '/Maximum resident set size/{print int($2/1024)}' "$tf" 2>/dev/null)"
         secs="$(awk -F': ' '/Elapsed \(wall clock\)/{print $2}' "$tf" 2>/dev/null)"
-        printf '  %-28s peak %sMB, wall %s\n' "$label" "${rss:-?}" "${secs:-?}"
-    else
-        local t0=$SECONDS
-        "$@" >/dev/null 2>&1
-        printf '  %-28s wall %ss (install "time" for peak RSS)\n' "$label" "$(( SECONDS - t0 ))"
+        printf '  %-28s peak %sMB, wall %s  [GNU time]\n' "$label" "${rss:-?}" "${secs:-?}"
+        return 0
     fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        # ru_maxrss is in KB on Linux and covers the whole waited-for child tree.
+        rss="$(python3 -c '
+import resource, subprocess, sys
+before = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+subprocess.run(sys.argv[1:], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+after = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+print(int(max(after, before) / 1024))
+' "$@" 2>/dev/null)"
+        printf '  %-28s peak %sMB, wall %ss  [getrusage]\n' \
+            "$label" "${rss:-?}" "$(( SECONDS - t0 ))"
+        return 0
+    fi
+
+    "$@" >/dev/null 2>&1
+    printf '  %-28s wall %ss (no peak: install "time" or python3)\n' "$label" "$(( SECONDS - t0 ))"
+    return 0
 }
 
 main() {
@@ -98,14 +127,29 @@ main() {
         "$(docker info >/dev/null 2>&1 && printf 'running (M6 unblocked)' || printf 'not running')"
 
     hdr "Toolchain versions"
-    local t
+    # `--version` is not universal, and assuming it produced a silently blank column here.
+    # binwalk 2.4.3 treats it as a FILENAME ("Cannot open file --version") and radare2
+    # prints its usage banner, so both showed up empty or wrong in the measurement this
+    # milestone was supposed to be derived from. lib/preflight.sh already knew this — it
+    # falls back `--version` -> `-h` -> the python module — and the knowledge simply never
+    # reached this script. Same finding, two places; see QA review #2 §7 rule 4.
+    local t v
     for t in file strings binwalk ltrace strace radare2 checksec objdump upx floss \
              analyzeHeadless python3 java; do
-        if command -v "$t" >/dev/null 2>&1; then
-            printf '  %-16s %s\n' "$t" "$("$t" --version 2>/dev/null | head -1 | cut -c1-60)"
-        else
+        if ! command -v "$t" >/dev/null 2>&1; then
             printf '  %-16s ABSENT\n' "$t"
+            continue
         fi
+        case "$t" in
+            binwalk) v=$(binwalk -h 2>&1 | grep -iEm1 'binwalk +v?[0-9]') ;;
+            radare2) v=$(radare2 -v 2>/dev/null | head -1) ;;
+            java)    v=$(java -version 2>&1 | head -1) ;;   # java prints to stderr
+            *)       v=$("$t" --version 2>/dev/null | head -1) ;;
+        esac
+        # Anything that still came back empty or as an error is reported as unknown rather
+        # than as a blank field that reads like a successful measurement.
+        [[ -z $v || $v == *"Error"* ]] && v="(version not reported by this tool)"
+        printf '  %-16s %s\n' "$t" "$(printf '%s' "$v" | cut -c1-60)"
     done
 
     if [[ ! -f $CORPUS/crackme ]]; then

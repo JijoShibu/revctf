@@ -7,8 +7,9 @@ the four it points at — so no future session needs to carry a long transcript.
 If you are a new session: read this file top to bottom, then `CLAUDE.md`. That
 is enough to start work. Read the others on demand.
 
-Last consolidated: 2026-08-19, after M4 (`v0.1-mvp`) + QA review #2 + the D10 scope
-reduction, before M5.
+Last consolidated: 2026-08-20, after **M5** (memory-bound enforcement, RSS watchdog,
+Phase-2 ceiling measured — deviation D11) on the Kali VM. Previous: 2026-08-19 after M4
+(`v0.1-mvp`) + QA review #2 + the D10 scope reduction.
 
 ---
 
@@ -45,16 +46,37 @@ v6 §11 Deviation Register > v5 + execution masterplan > v4 > v3.**
 
 ## 3. Current state
 
-**M0, M1, M2, the QA pass, M3 and M4 are complete. `v0.1-mvp` is tagged.**
-**M5 is next, and it must be built on real hardware — see §6.**
+**M0, M1, M2, the QA pass, M3, M4 and M5 are complete.** `v0.1-mvp` is tagged; M5 is not
+yet tagged (see the caveats below).
+
+**M5 was built on the target Kali VM, not in the cloud** — which is the whole reason it
+could be finished. `systemd-run --scope -p MemoryMax` works there, so v4 §4.3's primary
+memory-bounding path executed for the first time in this project's history.
+
+**Both pre-tag gates have run (2026-08-20).** `shellcheck -S style` is clean across every
+shell file, and `install.sh` executed end-to-end on real Kali. That run found four defects
+that review had not — including one that made the Ghidra stage silently produce nothing —
+which is exactly why QA review #2 insisted the installer be run rather than read. Detail in
+`implementation-notes.md` under "install.sh — what the first real run exposed".
 
 - All 13 analysis stages plus Stage 0 triage run end to end.
 - Flag detection works, including the base64/base32/hex/ROT13 encoding sweep.
 - Ghidra headless verified against a real 11.2.1 install: it recovers the
   password `sw0rdf1sh` from the corpus crackme's pseudo-C.
 - Single-file scanning works end to end: report with flags first, three display modes.
-- **Verification: `./tools/run-tests.sh` → 262 checks, all green.** Sections:
-  `lint corpus m0 m1 m2 m3 m4 m5 qa docs ghidra`. `REVCTF_TEST_FAST=1` skips the 220 MB
+- **Verification: `./tools/run-tests.sh`. The total check count is NOT a constant — do not
+  chase a number.** Sections self-skip when a tool is absent (`lint` without shellcheck,
+  `ghidra` and part of `m5enforce` without a Ghidra install, the 220MB checks under
+  `REVCTF_TEST_FAST=1`), so the same commit legitimately reports different totals on
+  different machines. Two real data points: **262 in the M0–M4 cloud sandbox**, and
+  **147 passed / 111 failed / 4 skipped on this Kali VM before `install.sh` had been run**
+  — that 111 was almost entirely D7 refusing to scan without FLOSS, not 111 broken things.
+  **The gate is: zero failures, and every skip has a stated reason.** A previous handoff
+  quoted "262 checks, all green" as if it were absolute, and the next session lost time
+  trying to reconcile a number that never applied to its machine.
+  Sections:
+  `lint corpus m0 m1 m2 m3 m4 m5 m5enforce qa docs ghidra`. `m5` checks tier
+  *resolution*; `m5enforce` checks the ceilings actually bound a real scan. `REVCTF_TEST_FAST=1` skips the 220 MB
   target checks (~3 min instead of ~15).
 - Tags `v0.2-m2-qa` and `v0.1-mvp`. Branch `main`, pushed to
   <https://github.com/JijoShibu/revctf> (private).
@@ -66,8 +88,8 @@ Progress: 72% of build tasks; 45 of 84 tracked items done; 5 of 10 milestones.
 | # | Scope | Can this cloud sandbox validate it? |
 |---|---|---|
 | M4 | ~~report, TUI, `--summary-only`, config extraction~~ | **DONE** — but the TUI is verified only as far as a `script(1)` pty allows; run `tools/tui-selftest.sh` on a real terminal |
-| M5 | Tier resolution **done**; remaining: `systemd-run`/`ulimit -v` **enforcement**, RSS watchdog, Ghidra MAXMEM wiring. Swap offer removed (D10) | **No** — systemd is not booted here, so the primary path cannot execute even once |
-| M6 | Docker sandbox image, `install.sh` hardening, vendor `pyinstxtractor`. **Independent of M5** — can run in parallel on the host | **No** — no Docker daemon |
+| M5 | **DONE** — enforcement, RSS watchdog, tier-driven Ghidra MAXMEM, Phase-2 ceiling measured (D11). Swap offer removed (D10) | Built and verified on the Kali VM, where `systemd-run` works |
+| M6 | Docker sandbox image, `install.sh` hardening, vendor `pyinstxtractor`. **Independent of M5** | **Yes** — Docker 28.5.2 runs on the VM; the full `--network=none --read-only --cap-drop=ALL` contract is verified, including no egress |
 | M7 | Batch mode, three-phase scheduling, per-archive-member analysis. **Depends on M5** for tier-driven concurrency | Logic yes, but it is blocked behind M5 |
 | M8 | `--interactive` agency: Continue / Skip stage / Skip file / Abort | **No** — no TTY |
 | M9 | Crash resilience, resume, error-log rotation | Partly |
@@ -155,9 +177,44 @@ Full detail in `CLAUDE.md` §3 and `implementation-notes.md`.
 
 ---
 
-## 6. The build environment — measured 2026-08-18
+## 6. The build environment
 
-This session runs in an Anthropic cloud sandbox, **not** Kali:
+**As of M5 the build environment is the VirtualBox Kali VM** (`jijo`), measured 2026-08-20:
+
+```
+RAM      3917 MB (Tier A, by 26 MB), swap 5049 MB     CPUs 3
+systemd  booted; systemd-run --user --scope WORKS     cgroup v2 yes
+Docker   28.5.2, daemon RUNNING, overlay2, cgroup v2     (M6 UNBLOCKED)
+Distro   Kali GNU/Linux Rolling, kernel 7.0.12+kali-amd64
+Toolchain  complete after install.sh: floss 3.1.1, shellcheck 0.11.0, GNU time,
+           Ghidra pinned to 11.2.x (12.1.3 breaks the post-script — see CLAUDE.md §3)
+```
+
+Note how narrowly the reference host makes Tier A: a VM configured with 4096MB reports
+3917MB after firmware reservations, 26MB above the 3891MB boundary. A slightly greedier
+firmware would silently drop it to Tier B.
+
+**Two Docker access traps, both of which make a working daemon look broken.** Both were hit
+on 2026-08-20 and cost real time:
+
+1. **`DOCKER_HOST` may point at a stale podman socket.** In this session it was
+   `unix:///run/user/1000/podman/podman.sock`, which does not exist, so every `docker`
+   command failed with *"Is the docker daemon running?"* while `dockerd` was active the
+   whole time. It comes from the inherited process environment, not from any dotfile —
+   `grep DOCKER_HOST ~/.bashrc ~/.zshrc ~/.profile /etc/environment` finds nothing.
+   `env -u DOCKER_HOST docker ...` is the check.
+2. **Group membership is per-process and does not apply retroactively.** `jijo` is in the
+   `docker` group in `/etc/group`, but a shell started *before* that change does not have
+   it, and `/var/run/docker.sock` is `root:docker 0660` — so it fails with *permission
+   denied* even though a fresh login works fine. `sg docker -c '...'` gets the group without
+   re-logging-in.
+
+So: if Docker appears broken, verify with
+`sg docker -c "env -u DOCKER_HOST docker info"` before concluding anything. **Do not
+re-diagnose this as "the daemon is not running".**
+
+The cloud sandbox described below is **historical** — it is what M0–M4 were built in, and
+what every pre-M5 measurement came from:
 
 ```
 RAM      8023 MB, swap 0 MB       CPUs    2
@@ -177,7 +234,7 @@ Ghidra   11.2.1 at /opt/ghidra_11.2.1_PUBLIC
 | `systemd-run --scope -p MemoryMax` (v4's preferred bounding) | systemd not booted; the primary path has **never once executed**. Everything falls to the `ulimit -v` fallback |
 | ~~Swap offer~~ | **Removed** (D10) — replaced by a diagnostic; revctf never modifies the host |
 | Tier concurrency (`jobs_light=4` at Tier A) | **2 CPUs** — every concurrency timing here is taken under 2× oversubscription |
-| M6 Docker sandbox (`--network=none --read-only --cap-drop=ALL`) | daemon not running, and with no systemd unlikely to start |
+| M6 Docker sandbox (`--network=none --read-only --cap-drop=ALL`) | *(cloud sandbox only)* daemon not running, and with no systemd unlikely to start. **On the Kali VM this is resolved** |
 | M8 interactive prompts; M4 TUI redraw / SIGWINCH | **no TTY** |
 | `install.sh` on its target platform | not Kali; version parity so far has been luck |
 
@@ -199,8 +256,20 @@ On the 220 MB stress blob, after M3 optimisation:
 | Triage on a 220 MB target | 2 s → 0 s (4 KB marker scan before `upx -t`) | Fixed in the QA pass |
 | Realistic target (15 KB crackme, all 13 stages incl. Ghidra) | ~15 s | Baseline |
 
-Caveat: all of the above were measured on 2 CPUs / 8 GB. **Re-measure on the real
-target hardware at M5** — those are the numbers that matter.
+Caveat: all of the above were measured on 2 CPUs / 8 GB in the cloud sandbox.
+
+### Re-measured on the Kali VM at M5 (these are the numbers that matter)
+
+| Measurement | Result | Consequence |
+|---|---|---|
+| **FLOSS, 264KB PE, all modes** | **899MB** | **The decisive number.** FLOSS's cost is vivisect's emulation workspace, *not* file size. `FLOSS_MAX_MB=64` gates on size, so it never bounded memory at all — a 264KB PE is 250x under the gate |
+| FLOSS, 264KB PE, `--only static` | 100MB | Why Tier C degrades to static-only rather than being OOM-killed on every PE |
+| FLOSS, 210MB blob, all modes | 1460MB | Reproduces the sandbox's 1.46GB exactly |
+| `ulimit -v` at any tier ceiling | **JVM will not start** | A JVM needs 2–4GB of *virtual* size; the documented fallback would have destroyed the Ghidra stage on every non-systemd host |
+| `systemd-run --scope` | works; OOM → 137; `--collect` required | The primary bounding path, executing for the first time |
+
+Phase-2 ceilings derived from these: **Tier A 1536MB, B 1024MB, C 512MB** (deviation D11).
+Full detail in `implementation-notes.md` under "M5 — host measurements".
 
 ---
 
@@ -269,7 +338,8 @@ Decided 2026-08-18 after comparing environments:
    the one thing this environment does better than a laptop.
 
 **As of `bd2927b` there is no remaining milestone work this environment can verify.**
-Every path after M4 is either host-bound (M5 needs systemd, M6 needs Docker, M8 needs a
+*(Written before the M5 cutover; kept for context.)* Every path after M4 is either
+host-bound (M5 needs systemd, M6 needs Docker, M8 needs a
 TTY) or blocked behind one that is. Building M5's enforcement here would mean shipping the
 `systemd-run` primary path with no behavioural check — which is precisely the defect class
 QA review #2 closed, in a new costume.
@@ -282,8 +352,16 @@ session reads them and is current. Migration is not a restart.
 
 ## 11. Open questions carried forward
 
-- **M5 must NOT inherit Ghidra's ceiling for Phase 2** — FLOSS's measured 1.46 GB
-  disproves it. Size Phase 2 from the measurement.
+- ~~**M5 must NOT inherit Ghidra's ceiling for Phase 2**~~ — **RESOLVED at M5 (D11).**
+  Sized from measurement: 1536/1024/512MB. The 264KB-PE figure (899MB) mattered more than
+  the 1.46GB one, because it showed the cost is emulation rather than file size.
+- **`packed_upx_broken` no longer forces a stage failure.** upx 4.2.4 unpacks the PIE ELF
+  that 4.2.2 could not, and six harness checks (`--strict`, exit-2, the unwrap diagnostic)
+  depended on that fixture failing. They need a version-independent way to induce a stage
+  failure. This is harness fragility, not a product defect.
+- **Tier A's `-P 2` cannot afford two concurrent Phase-2 jobs** — 2x1536MB against ~2946MB
+  usable. Phase-2 concurrency must be decoupled from Phase-3 concurrency when M7 lands.
+  Recorded in D11 rather than fixed, because single-file mode is sequential.
 - **Tier boundaries 3.8 GB / 2.5 GB are unvalidated estimates** (v4 §10). The
   Jython version boundary was an estimate too, and it was wrong. Treat these the
   same way once M5 can measure them.

@@ -130,12 +130,25 @@ All tiers carry `-XX:MaxRAMPercentage=25` alongside `MAXMEM`, and use
 **Tier C:** Ghidra is skipped by default, replaced with a radare2-only disassembly pass.
 `--force-full-decompile` overrides, still at `-P 1` / `MAXMEM=512M`.
 
-**Phase-2 budget (new, derived).** Phase 2's per-job memory ceiling is set to the tier's
-Ghidra `MAXMEM` value, and Phase 2 runs at the tier's Ghidra concurrency. This is
-deliberate: it means Phase 2's worst-case aggregate footprint is *identical* to Phase 3's,
-which v3 §8 and v4 §3 already derived and sized. No new memory derivation is required and
-the existing tier numbers remain valid untouched — the only cost is that Phase 2 and
-Phase 3 cannot overlap, which the three-phase model already guarantees (§7.2).
+**Phase-2 budget.** ~~Phase 2's per-job memory ceiling is set to the tier's Ghidra `MAXMEM`
+value... No new memory derivation is required.~~ **STRUCK — see deviation D11.** The
+argument was that reusing Ghidra's ceiling made Phase 2's worst case identical to Phase 3's,
+so nothing new needed deriving. That premise was never measured and is false: FLOSS peaks at
+1460MB on a 220MB blob and **899MB on a 264KB PE**, because its cost comes from vivisect's
+emulation workspace rather than from input size.
+
+Phase 2 is sized from its own measurement, against each tier's worst-case usable RAM:
+
+| Tier | Min RAM | Usable (v3 §8 overheads) | Phase-2 ceiling | FLOSS emulation |
+|---|---|---|---|---|
+| **A** | 3891MB | 2741MB | **1536MB** | full |
+| **B** | 2560MB | 1410MB | **1024MB** | full |
+| **C** | 2048MB |  898MB | **512MB** | `--only static` (does not fit) |
+
+Phase 2 still runs at the tier's Ghidra concurrency in single-file mode, where it is
+sequential anyway. **For batch mode (§7.2) it must not:** at Tier A's `-P 2`, two concurrent
+Phase-2 jobs want 3072MB against ~2946MB usable, so Phase-2 concurrency has to be decoupled
+from Phase-3 concurrency when M7 lands.
 
 **Overrides:** `--jobs-light N`, `--jobs-ghidra N` (applies to Phases 2 and 3),
 `--maxmem-ghidra M`.
@@ -303,8 +316,10 @@ is plain text with no escape sequences in every mode.
 
 ## 11. Deviation Register
 
-Ten documented departures from v3/v4/v5. D1–D9 were decided during the design session;
-D10 was decided after QA review #2, once the build existed to argue about.
+Twelve documented departures from v3/v4/v5. D1–D9 were decided during the design session;
+D10 was decided after QA review #2, once the build existed to argue about; **D11 and D12 were
+forced by measurement during M5** — it is the only one that overturns a derivation this document
+made for itself rather than one inherited from v3/v4/v5.
 
 | # | Deviation | Contradicts | Rationale |
 |---|---|---|---|
@@ -315,6 +330,8 @@ D10 was decided after QA review #2, once the build existed to argue about.
 | D5 | Encoding sweep added to flag detection | v3 §11 / v4 §13 tiered regex only | Base64-in-`.rodata` is among the most common RE-CTF flag hiding techniques; the regex-only scan misses it entirely. |
 | D6 | `~/.revctf/config` configuration file | v3–v5 flags-only surface | Keeps the CLI from growing a flag per new stage while still allowing persistent per-user defaults. Allowlist-validated on load. |
 | D7 | Optional tools are `install.sh`'s responsibility; missing at scan time is a hard error | v3–v5 only preflight the core 7 | Makes runtime behavior predictable — a scan either has its full declared toolchain or tells you to re-run `install.sh`, rather than silently producing a thinner report. Core-7 preflight per v5/M1 is unchanged. |
+| D12 | **Ghidra discovery order becomes `GHIDRA_HOME` → PATH → `/opt/ghidra*`** | v3 §5 step 2, which put PATH first | Defensible while nothing put `analyzeHeadless` on PATH. `install.sh` now always symlinks it into `/usr/local/bin`, which made `GHIDRA_HOME` **permanently dead on every machine where the installer had run** — you could export it, revctf would silently ignore it, and nothing said so. An environment variable the user sets deliberately must beat an incidental PATH entry the installer itself created. Not hypothetical: Ghidra 12.x breaks the post-script (see the Ghidra note in CLAUDE.md §3), and pointing `GHIDRA_HOME` at a known-good 11.2.x install is exactly how someone works around that — which the old order made impossible. A `GHIDRA_HOME` that is set but contains no `analyzeHeadless` now warns and falls through to PATH rather than failing. |
+| D11 | **Phase-2 memory ceiling is measured independently, no longer inherited from Ghidra's `MAXMEM`** | §5's "Phase-2 budget (new, derived)" paragraph, and D4's closing clause "Phase 2 reuses the tier's Ghidra ceiling, so v3 §8's derivation stays valid unmodified" | §5 argued Phase 2 could take the tier's Ghidra `MAXMEM` because that made Phase 2's worst case identical to Phase 3's, which v3 §8 had already sized — so "no new memory derivation is required". The premise was never measured, and it is false. Measured on the target Kali VM: FLOSS peaks at **1460MB** on a 220MB blob and **899MB on a 264KB PE**, against Tier A's 1024M and Tier C's 512M. The second figure is the decisive one — FLOSS's cost is driven by vivisect's emulation workspace, **not by input size**, so the `FLOSS_MAX_MB=64MB` gate that was supposed to keep it "comfortably inside every tier" does nothing of the kind: a 264KB PE is 250x under that gate and still needs ~900MB. Phase 2 is therefore sized from its own measurement, against each tier's worst-case usable RAM under v3 §8's overhead derivation: **Tier A 1536MB, Tier B 1024MB, Tier C 512MB**. Because Tier C's ceiling cannot cover emulation at all, FLOSS there degrades to `--only static` rather than being OOM-killed on every PE — the same degrade-rather-than-fail pattern the tier already applies to Ghidra. A ceiling that guarantees a stage failure is worse than no ceiling. Consequence for M7: at Tier A's `-P 2`, two concurrent Phase-2 jobs would want 3072MB against ~2946MB usable, so **Phase-2 concurrency must be decoupled from Phase-3 concurrency** when batch mode lands. |
 | D10 | **Auto-swap removed entirely**, replaced by a diagnostic | v4 §3 and v5 §3.1 ("auto-creates a 1–2GB swap file when none exists and RAM is low"), and the `--no-auto-swap` flag in v4 §9's new-flag list | Creating a swap file and writing `/etc/fstab` is a system-administration action; revctf reads a binary and writes a report. It needs privilege, mutates the host persistently, and is not what a CTF player expects an analysis tool to do. v5 gated it behind a prompt, which concedes the discomfort without resolving it — and the prompt layer is M8, so every Tier C user before M8 would have got the mutation unprompted. The underlying risk (Ghidra OOM-killed on a small host) is real, so it is now **named rather than acted on**: on Tier B/C with no active swap, `tier_resolve` reports the risk, gives both remedies (`--skip-ghidra`, or add swap yourself) and states that revctf will not modify your system. Removed: `lib/swap.sh`, `--no-auto-swap`, the `auto_swap` config key. CLI surface 28 → 27 flags. Two harness tripwires fail the build if it reappears, because v4 and v5 both still specify it. |
 
 ---

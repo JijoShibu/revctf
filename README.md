@@ -6,11 +6,12 @@ Point it at a challenge binary — or a directory of them — and it runs a stag
 (triage/unwrap, static analysis, dynamic tracing, decompilation) and writes a
 beginner-friendly plain-text report with flag candidates surfaced at the top.
 
-> **Status: M4 complete — this is the MVP (`v0.1-mvp`).** Single-file scanning works end
-> to end: 14 stages including Ghidra headless, flag detection with the
-> base64/base32/hex/ROT13 sweep, a readable report, and three display modes. Verification:
-> **262 checks, all green** (`./tools/run-tests.sh`). M5–M9 add RAM tiers, the Docker
-> sandbox, batch mode, user agency and resilience. New here? Read `HANDOFF.md`.
+> **Status: M5 complete.** Single-file scanning works end to end: 14 stages including
+> Ghidra headless, flag detection with the base64/base32/hex/ROT13 sweep, a readable
+> report, and three display modes — and as of M5 the RAM-tier memory ceilings are
+> *enforced* via `systemd-run --scope`, with a global RSS watchdog behind them.
+> M6–M9 add the Docker sandbox, batch mode, user agency and resilience.
+> New here? Read `HANDOFF.md`.
 
 ---
 
@@ -56,19 +57,31 @@ compete:
 
 RAM is detected at startup and mapped to a tier that sets concurrency and memory ceilings:
 
-| Tier | RAM | Phase-1 jobs | radare2 ceiling | Phase-2/3 jobs | Ghidra `MAXMEM` | Decompile |
+| Tier | RAM | Phase-1 jobs | radare2 ceiling | Phase-2 ceiling | Ghidra `MAXMEM` | Decompile |
 |---|---|---|---|---|---|---|
-| A | ≥ 3.8GB | 4 | 640MB | 2 | 1024M | Full |
-| B | 2.5–3.8GB | 2 | 450MB | 1 | 768M | Full |
-| C | < 2.5GB | 1 | 400MB | 1 (forced only) | 512M | Light (auto) |
+| A | ≥ 3.8GB | 4 | 640MB | 1536MB | 1024M | Full |
+| B | 2.5–3.8GB | 2 | 450MB | 1024MB | 768M | Full |
+| C | < 2.5GB | 1 | 400MB | 512MB | 512M | Light (auto) |
+
+These ceilings are **enforced**, not just reported: every external tool runs under
+`systemd-run --scope -p MemoryMax`, and a stage that exceeds its ceiling is killed and
+reported as killed. Where systemd is unavailable revctf falls back to `ulimit -v` and says
+so — that bounds virtual size rather than RSS, so it is weaker, and JVM stages are exempt
+from it because a JVM needs 2–4GB of *address space* to start at all and would simply fail.
+
+A global RSS watchdog is the backstop: if the whole run reaches 90% of detected RAM it
+kills the running tools, stops the scan, and still writes the partial report.
 
 Override individually with `--jobs-light`, `--jobs-ghidra`, `--maxmem-ghidra`. Use
 `--dry-run` to see the resolved plan — tier, limits, and exactly which stages would run —
 before committing to a large batch. It executes nothing.
 
-> The tier boundaries and the Phase-2 memory ceiling are **not yet measured**. v4 §10 flags
-> them as estimates, and the measured FLOSS peak (~1.46GB) already exceeds every tier's
-> Ghidra ceiling. `--dry-run` says so in its Notes. M5 replaces them with real numbers.
+> **The tier boundaries (3.8GB / 2.5GB) are still estimates** — v4 §10 flags them as such
+> and they have not been measured. The **Phase-2 ceiling has**: it used to inherit Ghidra's
+> `MAXMEM`, which the measured FLOSS peak disproved, so it is now derived from its own
+> measurement (deviation D11). FLOSS costs ~900MB on even a 264KB PE, because the cost is
+> emulation rather than file size — so on Tier C, where that cannot fit, FLOSS runs
+> static-only and the report says it was RAM rather than the file format.
 
 **revctf never modifies your system.** On a Tier B/C host with no active swap it says so
 and names the two remedies — run with `--skip-ghidra`, or add swap yourself — and then
@@ -76,9 +89,8 @@ gets on with the scan. Earlier designs had it create a swap file automatically; 
 removed (deviation D10). Reading a binary and writing a report does not require write
 access to `/etc/fstab`.
 
-**Planned for M5, not in this build:** the RSS watchdog, and actual *enforcement* of the
-tier limits. Today the tier is detected, resolved and reported — `--dry-run` shows exactly
-what it decided — but nothing constrains a stage to those numbers yet.
+Use `--dry-run` to see exactly what was decided — tier, ceilings, which mechanism is
+enforcing them, and the watchdog threshold — before committing to a large batch.
 
 ## Control and safety
 
@@ -179,14 +191,18 @@ harness asserts that this list and that one agree — so neither can drift.
 | `--interactive` / `-i` | parses, no effect | M8 |
 | `--yes` / `-y` | parses, no effect | M8 |
 | `--debug`, `~/.revctf/error.log` | parses, no effect | M9 |
-| `--jobs-light`, `--jobs-ghidra`, `--maxmem-ghidra` | resolved and reported, **not enforced** | M5 |
-| RSS watchdog | not present | M5 |
+| `--jobs-light`, `--jobs-ghidra` | resolved and reported; there is no concurrency to govern until batch mode | M7 |
 | Auto-created swap file | **removed** — replaced by a diagnostic (D10) | n/a |
 | `--sandbox` | *refuses* the executing stages rather than falling back to the host | M6 |
 | Batch mode (a directory target) | exits 1 with a clear message | M7 |
-| `install.sh` dependency installation | **stub — installs nothing** | next |
 
-`tools/bootstrap-kali.sh` covers the `install.sh` gap meanwhile.
+
+`install.sh` is complete and has been run end-to-end on Kali: apt groups, FLOSS and
+uncompyle6 into a venv (a system-wide `pip install` fails on modern Debian/Ubuntu), and
+Ghidra. It installs the **pinned, verified** Ghidra build rather than the newest release —
+`GHIDRA_LATEST=1` opts into newest, but Ghidra 12.x needs PyGhidra wiring that does not
+exist yet. `tools/bootstrap-kali.sh` remains as the alternative that also pulls the
+build-only dependencies the test corpus needs.
 
 ## Requirements
 
@@ -201,7 +217,7 @@ Kali Linux (or Debian-derived), Bash 4+, and the toolchain `install.sh` sets up:
 ```bash
 ./tools/bootstrap-kali.sh                 # one-shot setup on a fresh Kali / WSL Kali
 ./tools/build-test-corpus.sh              # 18 test artifacts (gitignored)
-./tools/run-tests.sh                      # 262 checks (~15 min)
+./tools/run-tests.sh                      # full suite (~15 min)
 ./tools/run-tests.sh m4 m5 docs qa       # just those sections
 REVCTF_TEST_FAST=1 ./tools/run-tests.sh   # skip the 220MB-target checks (~3 min)
 ./tools/tui-selftest.sh                   # 6 interactive checks — needs a real terminal
