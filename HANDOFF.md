@@ -53,6 +53,13 @@ yet tagged (see the caveats below).
 could be finished. `systemd-run --scope -p MemoryMax` works there, so v4 §4.3's primary
 memory-bounding path executed for the first time in this project's history.
 
+**One M5 exit criterion is not closed:** QA review #2 §7 asks for correct tier selection on
+a *genuinely* 2GB host, and `REVCTF_RAM_MB` only tests the branch. To close it, shut the VM
+down, set RAM to 2048MB in VirtualBox, boot, and run
+`./tools/run-tests.sh m5 m5enforce` — Tier C should be selected from real hardware, FLOSS
+should degrade to static-only, and Ghidra should be skipped by default. Everything else in
+M5 is verified on real hardware.
+
 **Both pre-tag gates have run (2026-08-20).** `shellcheck -S style` is clean across every
 shell file, and `install.sh` executed end-to-end on real Kali. That run found four defects
 that review had not — including one that made the Ghidra stage silently produce nothing —

@@ -144,6 +144,12 @@ main() {
             binwalk) v=$(binwalk -h 2>&1 | grep -iEm1 'binwalk +v?[0-9]') ;;
             radare2) v=$(radare2 -v 2>/dev/null | head -1) ;;
             java)    v=$(java -version 2>&1 | head -1) ;;   # java prints to stderr
+            # analyzeHeadless prints its usage banner for --version. The real version lives
+            # in the install's application.properties; follow the symlink install.sh makes.
+            analyzeHeadless)
+                     v=$(sed -n 's/^application\.version=/Ghidra /p' \
+                           "$(dirname -- "$(dirname -- "$(readlink -f -- "$(command -v analyzeHeadless)")")")/Ghidra/application.properties" \
+                           2>/dev/null | head -1) ;;
             *)       v=$("$t" --version 2>/dev/null | head -1) ;;
         esac
         # Anything that still came back empty or as an error is reported as unknown rather

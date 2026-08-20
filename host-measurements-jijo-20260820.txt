@@ -1,0 +1,98 @@
+revctf host measurements
+date        : 2026-08-20 07:26:22 EDT
+host        : jijo
+kernel      : Linux 7.0.12+kali-amd64
+distro      : Kali GNU/Linux Rolling
+revctf      : v0.1-mvp-8-g27e3cab
+
+== Hardware — what tier resolution reads ==
+  RAM total   : 3917 MB
+  RAM avail   : 2704 MB
+  Swap        : 5049 MB
+  CPUs        : 3
+  Governor    : n/a
+  Disk free   : 194G
+  WSL         : no
+
+== Resource isolation — M5's primary mechanism ==
+  systemd booted        : yes
+  systemd-run present   : yes
+  systemd-run --user    : WORKS (RSS bounding available)
+  cgroup v2             : yes
+  docker daemon         : not running
+
+== Toolchain versions ==
+  file             file-5.47
+  strings          GNU strings (GNU Binutils for Debian) 2.47
+  binwalk          Binwalk v2.4.3
+  ltrace           ltrace 0.7.91
+  strace           strace -- version 7.0
+  radare2          radare2 6.0.5 0 @ linux-x86-64
+  checksec         checksec v2.6.0, Brian Davis, github.com/slimm609/checksec.s
+  objdump          GNU objdump (GNU Binutils for Debian) 2.47
+  upx              upx 4.2.4
+  floss            floss 3.1.1
+  analyzeHeadless  Ghidra 12.1.3
+  python3          Python 3.13.14
+  java             openjdk version "21.0.11-ea" 2026-04-21
+
+== Timings — small realistic target (crackme, all stages) ==
+  full scan                    peak 345MB, wall 0:09.66  [GNU time]
+  full scan, --skip-ghidra     peak 101MB, wall 0:03.11  [GNU time]
+
+== Timings — 220MB stress blob ==
+  Sandbox baseline for comparison: total ~78s, binwalk ~74s, strings ~2s.
+  full scan, --skip-ghidra     peak 104MB, wall 0:35.42  [GNU time]
+
+  Per-stage from that run:
+    STAGE       STATUS      TIME      OUTPUT  NOTE
+    triage      ok            0s        217B  
+    file        ok            0s        266B  
+    strings     ok            2s       2.7MB  
+    binwalk     ok           32s         3KB  
+    hexdump     ok            0s         5KB  
+    checksec    ok            0s         1KB  
+    objdump     ok            0s        312B  
+    ltrace      skipped       0s          0B  only runs on ELF targets (this one is other)
+    radare2     ok            0s         1KB  disassembled entry0 via entry0 fallback (no main — binary is probably stripped)
+    strace      skipped       0s         66B  only runs on ELF targets (this one is other); linkage still captured
+    floss       skipped       0s        397B  target is 209MB, over the 64MB limit
+    managed     skipped       0s          0B  not a managed assembly (this one is other)
+    pydecomp    skipped       0s          0B  not Python bytecode (this one is other)
+    ghidra      skipped       0s          0B  skipped by user request (--skip-ghidra); radare2 disassembly substitutes
+    
+
+== FLOSS peak RSS — the number that decides the Phase-2 ceiling ==
+  Sandbox measured ~1.46GB, which exceeds Tier A 1024M and is ~3x Tier C.
+  FLOSS_MAX_MB (default 64) normally gates this; lifted here to measure.
+  floss on the 220MB blob      peak 1461MB, wall 1:55.96  [GNU time]
+
+== Tier that would be selected here ==
+  Hardware
+    RAM detected  : 3917MB (via free -m)
+    CPUs          : 3
+    Swap          :     4G 953.7M
+    Tier          : A  (A >= 3891MB, B >= 2560MB, C below)
+  
+  Resolved limits
+    Phase-1 jobs  : 4
+    radare2 cap   : 640MB
+    Phase-2/3 jobs: 2
+    Ghidra MAXMEM : 1024M  (plus -XX:MaxRAMPercentage=25)
+    Phase-2 cap   : 1536MB
+    Decompilation : full
+    Enforced by   : systemd-run --scope -p MemoryMax (real RSS limit)
+    Watchdog      : kills the job tree above 90% of RAM (3525MB)
+  
+  Stages that would run
+
+== What to do with these numbers ==
+  1. Compare FLOSS peak against the tier Ghidra MAXMEM values (1024M/768M/512M).
+     If it still exceeds them, v6 §5's Phase-2 derivation stays disproved and M5 must
+     size Phase 2 independently — or keep FLOSS_MAX_MB as a permanent size gate.
+  2. If systemd-run is unusable, fix that BEFORE writing M5. Its Definition of Done
+     requires the systemd-run path to work, and it has never once executed in this
+     project.
+  3. Compare RAM/CPU against the tier boundaries (3.8GB / 2.5GB). v4 §10 flags them as
+     unmeasured estimates; this is the run that either confirms or moves them.
+  4. Paste this file into implementation-notes.md under the M5 section.

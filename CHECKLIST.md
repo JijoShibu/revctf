@@ -199,6 +199,8 @@ Each is tracked to the milestone that resolves it. Two are load-bearing.
   <br>Risk · M: M6+ · Ghidra pinned to 11.2.x meanwhile; `support/pyghidraRun` is GUI-only
 - [!] **Tier boundaries 3.8GB / 2.5GB are unvalidated estimates (v4 §10)**
   <br>Risk · M: M5 · STILL UNMEASURED · the 4GB VM lands 26MB inside Tier A
+- [!] **Tier B/C never entered on hardware that really has that much RAM**
+  <br>Risk · M: M5 · REVCTF_RAM_MB tests the branch, never the behaviour. Boot the VM at 2048MB to close QA-REVIEW-2 §7's "forced 2GB host" criterion
 - [!] **Ghidra's 1800s time bound is a guess, never tested on a slow-path binary**
   <br>Risk · M: M4/M5 · no prior plan bounded it at all
 - [!] **TUI is the highest-defect-density component; redraw + resize + signals in Bash**
