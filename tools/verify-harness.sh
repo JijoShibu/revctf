@@ -90,7 +90,7 @@ mutation_meta() {
         )
         ;;
     flag_tiers)
-        M_DESC="the braced-flag regex tier is gutted (matches nothing)"
+        M_DESC="every flag regex tier is gutted (the scanner can match nothing)"
         M_FILES=(lib/flagscan.sh)
         M_SECTIONS=(m2 m3 m4)
         M_EXPECT=(
@@ -174,12 +174,22 @@ mutation_apply() {
         done
         ;;
     flag_tiers)
-        # Replace the braced-wrapper pattern with one that cannot match: the anchor makes
-        # it impossible rather than merely unlikely. The hash-like and generic tiers are
-        # left alone, so anything still found came from a lower tier or from raw stage
-        # output leaking into the report — which is exactly what a weak check would be
-        # passing on.
-        sed -i "s|^_FLAG_BRACED=.*|_FLAG_BRACED='\$^MUTATION_NEVER_MATCHES'|" \
+        # ALL THREE TIERS, and the first version of this mutation got that wrong.
+        #
+        # It gutted only _FLAG_BRACED, on the theory that the wrapper pattern is what finds
+        # a flag. But _FLAG_GENERIC is `[A-Za-z0-9_]{2,}\{[^}]{1,200}\}`, which matches
+        # `flag{...}` perfectly well — so the flag was still recovered, at low confidence
+        # instead of high, and three checks stayed green. They were RIGHT to stay green: the
+        # product still found the flag. The mutation was not the breakage it claimed to be.
+        #
+        # That distinction is worth more than the fix. "A check stayed green" means either
+        # the check is vacuous or the mutation is weaker than advertised, and assuming the
+        # first would have "fixed" three checks that were never broken.
+        #
+        # Anchored so no version can match: `$^` cannot be satisfied by any input.
+        # `#` as the delimiter, not `|`: the alternation below contains `|`, which silently
+        # turns "unknown option to `s'" into a mutation that edits nothing.
+        sed -i -E "s#^(_FLAG_BRACED|_FLAG_HASHLIKE|_FLAG_GENERIC)=.*#\1='\$^MUTATION_NEVER_MATCHES'#" \
             "$ROOT/lib/flagscan.sh"
         ;;
     tier_ceiling)
