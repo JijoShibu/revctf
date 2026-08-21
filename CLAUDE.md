@@ -91,6 +91,15 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
   shows most corpus flags in plain sight, so a whole-report grep passes with the flag
   scanner completely dead. Five checks did exactly that. Identical to the `sw0rdf1sh`
   mistake in the `ghidra` section — knowing the lesson did not stop it recurring.
+- **When a check stays green under a mutation, establish WHICH of two causes it is before
+  changing either side.** Either the check is vacuous, or the mutation is weaker than it
+  claims. These look identical in the output and have opposite fixes. The `flag_tiers`
+  mutation gutted only `_FLAG_BRACED`, but `_FLAG_GENERIC` (`[A-Za-z0-9_]{2,}\{…\}`)
+  matches `flag{…}` too, so the flag was still found — demoted to low confidence, not lost.
+  Three checks correctly reported that the product still worked, and "fixing" them would
+  have deleted real coverage to make the tool report clean. That is the failure mode of the
+  thing that catches the other failure modes: `verify-harness.sh` output is a hypothesis,
+  not a verdict.
 - **Never report exit 124 and 137 as the same thing.** 124 is a `timeout`; 137 is a
   SIGKILL, which since M5 is how a cgroup memory ceiling announces itself. Six stages once
   reported both as "timed out after Ns", so a FLOSS run killed at its ceiling after ONE

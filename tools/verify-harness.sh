@@ -31,7 +31,6 @@ set -uo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 HARNESS="$ROOT/tools/run-tests.sh"
 WORK="${TMPDIR:-/tmp}/revctf-verify-harness.$$"
-BACKUP="$WORK/backup"
 
 # The 220MB stress checks contribute nothing to any mutation here and cost ~12 minutes
 # per harness invocation, and this script invokes the harness once per mutation plus
@@ -230,52 +229,75 @@ mutation_apply() {
 }
 
 # ======================================================================================
-# Snapshot and restore
+# Restore — git is the safety net, not a backup directory
 # ======================================================================================
-# The single most dangerous thing this script does is edit source files. Everything below
-# assumes the process can die at any moment.
-declare -a SNAPPED=()
+# The single most dangerous thing this script does is plant deliberate defects in tracked
+# source files. Everything here assumes the process can die at any moment, because twice in
+# one session it did.
+#
+# Restore is `git checkout --`, not a copy from a scratch directory. That is both simpler
+# (no backup tree to create, verify or clean up) and strictly more robust: it needs nothing
+# that was saved earlier, so it works from any shell, at any later time, after even a
+# SIGKILL that ran no trap at all. The recovery command and the tool's own restore are then
+# the same command, which means the documented recovery is the one that gets exercised on
+# every run.
+#
+# It is only safe because of the dirty-tree refusal below: `git checkout --` discards
+# uncommitted work, so the script guarantees there is none to discard before it starts.
+declare -a MUTATED=()
 
-snapshot() {
-    local f
-    for f in "$@"; do
-        if [[ ! -f $ROOT/$f ]]; then
-            vno "snapshot" "$f does not exist — mutation registry is out of date"
-            return 1
-        fi
-        mkdir -p "$BACKUP/$(dirname -- "$f")"
-        cp -p -- "$ROOT/$f" "$BACKUP/$f" || return 1
-        SNAPPED+=("$f")
-    done
-    return 0
+# require_clean_tree — refuse to run against a tree with uncommitted changes.
+#
+# Two reasons, and the second is the one that matters. First, `git checkout --` would throw
+# away the user's work. Second, a dirty tree makes "did the mutation change the file?"
+# unanswerable, and a *previous* interrupted run is one of the ways a tree gets dirty — so
+# refusing here is also how a planted defect gets caught rather than committed.
+require_clean_tree() {
+    if ! git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+        printf 'verify-harness: %s is not a git repository.\n' "$ROOT" >&2
+        printf 'This tool edits tracked source files in place and relies on git to undo\n' >&2
+        printf 'that. Without it there is no way to guarantee the tree is restored.\n' >&2
+        return 1
+    fi
+    local dirty
+    dirty=$(git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)
+    [[ -z $dirty ]] && return 0
+
+    printf 'verify-harness: refusing to run — the working tree has uncommitted changes.\n\n' >&2
+    printf '%s\n\n' "$dirty" >&2
+    printf 'This tool plants deliberate defects in tracked files and removes them with\n' >&2
+    printf 'git checkout -- , which would discard the changes above. Commit or stash them.\n\n' >&2
+    printf 'If a PREVIOUS run was killed part-way, one of those files may still contain a\n' >&2
+    printf 'planted defect. Check before you commit:  git -C %s diff\n' "$ROOT" >&2
+    return 1
 }
 
-# Restores every snapshotted file and PROVES it, rather than assuming cp worked. A silent
-# restore failure would leave a mutation in the tree and the next commit would ship it.
+# Restores every mutated file and PROVES it, rather than assuming the checkout worked. A
+# silent restore failure leaves a deliberate defect in the tree for the next commit to ship.
 restore_all() {
-    local f rc=0
-    for f in "${SNAPPED[@]}"; do
-        [[ -f $BACKUP/$f ]] || continue
-        cp -p -- "$BACKUP/$f" "$ROOT/$f" || rc=1
-        cmp -s -- "$BACKUP/$f" "$ROOT/$f" || rc=1
-    done
-    return $rc
+    [[ ${#MUTATED[@]} -gt 0 ]] || return 0
+    git -C "$ROOT" checkout -- "${MUTATED[@]}" 2>/dev/null
+    git -C "$ROOT" diff --quiet -- "${MUTATED[@]}" 2>/dev/null || return 1
+    return 0
 }
 
 cleanup() {
     local rc=$?
-    if [[ ${#SNAPPED[@]} -gt 0 ]]; then
+    if [[ ${#MUTATED[@]} -gt 0 ]]; then
         if restore_all; then
-            printf '\n  tree restored (%d file(s))\n' "${#SNAPPED[@]}" >&2
+            printf '\n  tree restored (%d file(s))\n' "${#MUTATED[@]}" >&2
         else
-            printf '\n\033[31mRESTORE FAILED\033[0m — snapshots are in %s\n' "$BACKUP" >&2
-            printf 'Run: git -C %s checkout -- %s\n' "$ROOT" "${SNAPPED[*]}" >&2
+            printf '\n\033[31mRESTORE FAILED — A PLANTED DEFECT IS STILL IN THE TREE.\033[0m\n' >&2
+            printf 'Do not commit. Run: git -C %s checkout -- %s\n' "$ROOT" "${MUTATED[*]}" >&2
+            rm -rf "$WORK"
             exit 1
         fi
     fi
     rm -rf "$WORK"
     exit $rc
 }
+# EXIT covers a normal end and any `exit`; INT and TERM re-exit so EXIT fires for them too.
+# A SIGKILL runs nothing, which is precisely why restore is a git command anybody can repeat.
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -326,7 +348,9 @@ main() {
         fi
     done
 
-    mkdir -p "$BACKUP"
+    require_clean_tree || return 1
+
+    mkdir -p "$WORK"
     printf '\033[1mrevctf harness mutation testing\033[0m\n'
     printf 'repo: %s\n' "$ROOT"
     printf 'mutations: %s\n' "${want[*]}"
@@ -370,23 +394,23 @@ main() {
         vinfo "$M_DESC"
         vinfo "files: ${M_FILES[*]}"
 
-        SNAPPED=()
-        if ! snapshot "${M_FILES[@]}"; then
-            vno "$m" "could not snapshot its files; mutation not applied"
-            continue
-        fi
+        # Registered BEFORE the edit, so the trap can undo a mutation that fails half way.
+        MUTATED=("${M_FILES[@]}")
+        local f missing=0
+        for f in "${M_FILES[@]}"; do
+            [[ -f $ROOT/$f ]] || { vno "$m" "$f does not exist — the registry is stale"; missing=1; }
+        done
+        if [[ $missing -eq 1 ]]; then MUTATED=(); continue; fi
+
         if ! mutation_apply "$m"; then
             vno "$m" "mutation_apply failed"
-            restore_all; SNAPPED=(); continue
+            restore_all; MUTATED=(); continue
         fi
         # A mutation that changes nothing would make every assertion below meaningless.
-        local changed=0 f
-        for f in "${M_FILES[@]}"; do
-            cmp -s -- "$BACKUP/$f" "$ROOT/$f" || changed=1
-        done
-        if [[ $changed -eq 0 ]]; then
+        # git answers this directly, with no copy to compare against.
+        if git -C "$ROOT" diff --quiet -- "${M_FILES[@]}" 2>/dev/null; then
             vno "$m: mutation had no effect" "the edit matched nothing — the registry is stale"
-            restore_all; SNAPPED=(); continue
+            restore_all; MUTATED=(); continue
         fi
         vok "$m: mutation applied and the files differ"
 
@@ -442,10 +466,10 @@ main() {
         if restore_all; then
             vok "$m: tree restored byte-identical"
         else
-            vno "$m: RESTORE FAILED" "snapshots are in $BACKUP — do not commit"
+            vno "$m: RESTORE FAILED" "a planted defect is still in the tree — do not commit"
             return 1
         fi
-        SNAPPED=()
+        MUTATED=()
     done
 
     # --- and green again --------------------------------------------------------------

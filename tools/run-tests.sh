@@ -1253,21 +1253,38 @@ test_m4() {
         printf '%s' "$out"
 
     # --- a failed stage is diagnosed, never silently missing --------------------------
-    # A 1-second bound on a 20MB random blob makes binwalk time out deterministically.
-    local blob="$o/blob.bin"
-    head -c 20000000 /dev/urandom > "$blob" 2>/dev/null
-    out=$(ST_T_BINWALK=1 ST_T_STRINGS=1 "$RC" scan "$blob" --skip-ghidra --summary-only \
-          --output "$o/fail" 2>/dev/null)
-    local rc=$?
-    assert_match "a failed stage produces a DIAGNOSTICS block" 'DIAGNOSTICS' printf '%s' "$out"
-    assert_match "the diagnostics name the command that failed" 'command :' printf '%s' "$out"
-    assert_match "the diagnostics carry the exit code" 'exit    :' printf '%s' "$out"
-    if [[ $rc -eq 2 ]]; then
-        ok "a run with a failed stage exits 2"
+    # THIS USED TO RACE A TIMEOUT AND IT COST A FALSE RED.
+    #
+    # It bounded binwalk to 1 second over a 20MB random blob and called that deterministic.
+    # It is not: on an idle machine binwalk finishes inside the second, nothing fails, and
+    # three checks below fail while the product is perfectly correct. Observed exactly that
+    # during a verify-harness run — the mutation suite had been loading the box, the final
+    # restored-tree pass ran on an idle one, and three checks flipped for reasons entirely
+    # unconnected to the code.
+    #
+    # packed_upx_broken is corrupted BY CONSTRUCTION (tools/build-test-corpus.sh), so its
+    # triage stage cannot succeed on any upx version. A fixture built to fail beats a
+    # stopwatch.
+    if [[ ! -f $CORPUS/packed_upx_broken ]]; then
+        skip "failed-stage diagnostics" "packed_upx_broken absent from the corpus"
     else
-        no "exit 2 on stage failure" "got $rc"
+        out=$("$RC" scan "$CORPUS/packed_upx_broken" --skip-ghidra --summary-only \
+              --output "$o/fail" 2>/dev/null)
+        local rc=$?
+        # Anchored on the block HEADING, not the bare word: "failed = see DIAGNOSTICS"
+        # appears in the status legend of every report, so matching 'DIAGNOSTICS' passed
+        # even when no stage had failed. It did exactly that in the run above — of the four
+        # checks here, the one meant to catch the problem was the one that could not.
+        assert_match "a failed stage produces a DIAGNOSTICS block" \
+            'DIAGNOSTICS . stages that failed' printf '%s' "$out"
+        assert_match "the diagnostics name the command that failed" 'command :' printf '%s' "$out"
+        assert_match "the diagnostics carry the exit code" 'exit    :' printf '%s' "$out"
+        if [[ $rc -eq 2 ]]; then
+            ok "a run with a failed stage exits 2"
+        else
+            no "exit 2 on stage failure" "got $rc"
+        fi
     fi
-    rm -f "$blob"
 
     # --- display modes ----------------------------------------------------------------
     # No TTY at all: a periodic heartbeat, never cursor control.
