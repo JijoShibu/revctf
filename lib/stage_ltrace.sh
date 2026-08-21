@@ -27,12 +27,15 @@ stage_ltrace() {
         return 0
     fi
 
+    # `-o` is not optional. Without it ltrace writes the trace to STDERR, which dyn_run
+    # routes to the stage error file — a file the report reads only when the stage fails.
+    # The capture then contained the banner and the target's own stdout, and nothing else.
     dyn_banner ltrace "${OPT[timeout]}" > "$out"
-    dyn_run "$name" "${OPT[timeout]}" "$out.trace" "$err" \
-        -- ltrace -f "$RUN_TARGET" || rc=$?
-    cat "$out.trace" >> "$out" 2>/dev/null; rm -f "$out.trace"
+    dyn_run "$name" "${OPT[timeout]}" "$out.stdout" "$err" "$out.trace" \
+        -- ltrace -f -o "$out.trace" "$RUN_TARGET" || rc=$?
+    dyn_compose "$out" "$out.trace" "$out.stdout" "library call trace"
 
-    stage_record_exec "$name" "setsid timeout -k 5 ${OPT[timeout]} ltrace -f $RUN_TARGET </dev/null" "$rc"
+    stage_record_exec "$name" "setsid timeout -k 5 ${OPT[timeout]} ltrace -f -o <trace> $RUN_TARGET </dev/null" "$rc"
     dyn_finish "$name" ltrace "${OPT[timeout]}" "$rc"
     return 0
 }

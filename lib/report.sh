@@ -95,6 +95,7 @@ _rp_emit() {
     _rp_header
     _rp_flags
     _rp_table
+    _rp_resources
     if [[ ${OPT[summary_only]:-0} -eq 0 ]]; then
         _rp_detail
     else
@@ -120,6 +121,52 @@ _rp_header() {
     fi
     printf 'Captures  : %s\n' "$RUN_OUTDIR"
     printf 'Finished  : %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    # One line, always. On an ordinary run this is the entire resource story; when anything
+    # non-default is in force it points at the section that explains it.
+    if [[ -n ${TIER:-} ]]; then
+        printf 'Resources : Tier %s, %sMB RAM%s\n' "$TIER" "$TIER_RAM_MB" \
+            "$( [[ ${#TIER_NOTES[@]} -gt 0 || ${TIER:-A} != A ]] \
+                && printf ' — see RESOURCES AND LIMITS below' )"
+    fi
+    return 0
+}
+
+# _rp_resources — the tier, the ceilings that were in force, and the notes that explain
+# anything unusual about them.
+#
+# THIS SECTION DID NOT EXIST, AND ITS ABSENCE MADE A SAFEGUARD LOOK STRONGER THAN IT WAS.
+#
+# tier_report() is called from exactly one place: dry_run_plan(). So the tier, the RAM
+# figure and every entry in TIER_NOTES appeared in `--dry-run` output and NOWHERE in a real
+# scan's report. That included the "RAM figure was INJECTED via REVCTF_RAM_MB" label, which
+# exists specifically so a tier chosen from a fake number can never be mistaken for a
+# measurement — a guarantee that held for the plan and not for the artefact anybody keeps.
+# It also included the no-swap OOM warning and the reason FLOSS had been degraded.
+#
+# Every harness check for those notes asserted against `--dry-run`, so they all passed.
+_rp_resources() {
+    declare -F tier_report >/dev/null 2>&1 || return 0
+    # SHOWN ONLY WHEN SOMETHING NON-DEFAULT IS IN FORCE. The safeguard being restored here
+    # is "a fake number must never look measured", not "every report carries a resource
+    # table". An ordinary Tier A scan with no overrides has nothing to explain, and the
+    # report's design goal is flags first, plain English, no overwhelm — a table of ceilings
+    # nobody came near works against that. The header carries a one-line summary regardless.
+    #
+    # A note is raised for every condition worth reporting: an injected RAM figure or
+    # ceiling, degraded FLOSS, an explicit --jobs-*/--maxmem-ghidra override, the no-swap OOM
+    # warning, automatic light-decompile. A tier below A is the one thing that changes every
+    # ceiling without necessarily raising a note, so it is checked separately.
+    [[ ${#TIER_NOTES[@]} -gt 0 || ${TIER:-A} != A ]] || return 0
+
+    printf '\n'
+    _rp_rule
+    printf ' RESOURCES AND LIMITS\n'
+    _rp_rule
+    printf 'Something non-default applied to this run. These are the limits each stage was\n'
+    printf 'actually held to; a stage reported as killed above was most likely stopped here.\n\n'
+    # Filtered through st_strip_ansi for the same reason every capture is: v6 §10 requires
+    # the report to be plain text in every display mode.
+    tier_report | st_strip_ansi
     return 0
 }
 

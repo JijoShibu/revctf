@@ -52,7 +52,13 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
   `RUN_WORKDIR`.
 - **Report output is plain text**, always, in every display mode. Filter coloured tool
   output through `st_strip_ansi()`.
-- **Every external tool launches through `st_run_bounded`.** It backgrounds the tool and
+- **Every external tool launches through `st_run_bounded`. This has been violated three
+  times, and every time the cost was a memory ceiling that was reported and enforced by
+  nothing.** `lib/stage_dynamic.sh` ran its own `setsid timeout … &` (ltrace, strace) and
+  `lib/stage_pydecomp.sh` ran `timeout … | st_strip_ansi`. In all three the ceiling was
+  resolved, printed by `--verbose`, and applied to nothing — and `ulimit -f`'s output cap
+  was lost too. If a stage needs its own session for the orphan sweep, that is what
+  `ST_OWN_SESSION` is for; do not hand-roll a launcher. It backgrounds the tool and
   `wait`s, which is what makes a run interruptible — bash defers a trap until the current
   foreground command finishes, so a tool run in the foreground swallows Ctrl+C for its whole
   duration (measured: 77 seconds) and orphans the process. It also applies the per-stage
@@ -74,6 +80,17 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
   write to stdout. `revctf scan x > report.txt` has to produce a clean file while progress
   still reaches the terminal, and v6 §10 requires the report to be plain text in every
   display mode.
+- **A test hook that changes behaviour must announce itself in the report.**
+  `REVCTF_RAM_MB` labels itself `INJECTED via …` so a tier chosen from a fake number can
+  never look measured; `REVCTF_CEIL_MB` does the same. An override the report does not
+  mention is indistinguishable from a broken host — a stray `REVCTF_CEIL_MB=1` SIGKILLs
+  every bounded stage. Validate and announce **once**, in `tier_resolve`; consumers read
+  the resolved global, never the environment.
+- **A flag assertion must be scoped to the report's `POSSIBLE FLAGS` section**
+  (`flag_section()` in the harness). The report embeds every stage capture and `strings`
+  shows most corpus flags in plain sight, so a whole-report grep passes with the flag
+  scanner completely dead. Five checks did exactly that. Identical to the `sw0rdf1sh`
+  mistake in the `ghidra` section — knowing the lesson did not stop it recurring.
 - **Never report exit 124 and 137 as the same thing.** 124 is a `timeout`; 137 is a
   SIGKILL, which since M5 is how a cgroup memory ceiling announces itself. Six stages once
   reported both as "timed out after Ns", so a FLOSS run killed at its ceiling after ONE
@@ -280,8 +297,20 @@ tools/bootstrap-kali.sh   one-shot Kali/WSL setup — stopgap until install.sh w
 
 ```bash
 ./tools/build-test-corpus.sh     # 18 artifacts; needs gcc, mingw, JDK, zip, upx, python3
-./tools/run-tests.sh             # sections: lint corpus m0 m1 m2 ghidra
+./tools/run-tests.sh             # the checks
+./tools/verify-harness.sh        # proves the checks would catch a broken product
 ```
+
+**`./tools/verify-harness.sh` is a pre-tag gate, not an optional extra.** It applies five
+known breakages and asserts the named checks flip PASS → FAIL, then restores and asserts
+green. A green harness is evidence only if a broken product turns it red, and four separate
+times in this project it did not. Its first run found three stages whose memory ceiling was
+enforced by nothing, two stages that had never captured any output, and five vacuous flag
+checks. Adding a mutation is two `case` branches — keep it cheap, so the next person who
+fixes a vacuous check pins it in the same commit.
+
+**When you fix a vacuous check, add the mutation that proves the fix.** Otherwise the
+replacement is worth exactly as much as the check it replaced, and nobody can tell.
 
 The `ghidra` section self-skips when no Ghidra is installed, so the harness stays useful
 anywhere. Set `PF_OPT_ROOT_REAL=/opt` to point it at a real install.
@@ -291,8 +320,11 @@ anywhere. Set `PF_OPT_ROOT_REAL=/opt` to point it at a real install.
 the standard; do not advance past one until its verification actually runs. Each milestone
 adds its own section to the harness so earlier gates keep being re-checked.
 
-**Milestone status:** M0, M1, M2, the QA pass, M3, M4 and **M5** are complete. `v0.1-mvp`
-is tagged; M5 is not yet tagged. Single-file scanning works end to end: 14 stages, flag
+**Milestone status:** M0, M1, M2, the QA pass, M3, M4 and **M5** are complete. Tags through
+`v0.3.2-m5`. Two "complete" marks were corrected on 2026-08-21 after mutation testing: M5's
+enforcement claim was false for three of seven bounded stages, and M3's "all 13 stages run
+end to end" was false for `ltrace` and `strace`, which captured nothing. Superseded tags
+are left in place as a record of what was believed. Single-file scanning works end to end: 14 stages, flag
 detection, a readable report, three display modes, and enforced per-stage memory ceilings.
 
 **M5 was built on the Kali VM**, where `systemd-run --scope -p MemoryMax` works — so v4

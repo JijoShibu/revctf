@@ -50,12 +50,14 @@ stage_strace() {
         return 0
     fi
 
+    # `-o` for the same reason as ltrace: strace's default output stream is stderr, so
+    # without it the syscall trace went to the error file and never reached the report.
     dyn_banner strace "$ST_T_STRACE" >> "$out"
-    dyn_run "$name" "$ST_T_STRACE" "$out.trace" "$err" \
-        -- strace -f -tt -T "$RUN_TARGET" || rc=$?
-    cat "$out.trace" >> "$out" 2>/dev/null; rm -f "$out.trace"
+    dyn_run "$name" "$ST_T_STRACE" "$out.stdout" "$err" "$out.trace" \
+        -- strace -f -tt -T -o "$out.trace" "$RUN_TARGET" || rc=$?
+    dyn_compose "$out" "$out.trace" "$out.stdout" "syscall trace"
 
-    stage_record_exec "$name" "setsid timeout -k 5 $ST_T_STRACE strace -f -tt -T $RUN_TARGET </dev/null" "$rc"
+    stage_record_exec "$name" "setsid timeout -k 5 $ST_T_STRACE strace -f -tt -T -o <trace> $RUN_TARGET </dev/null" "$rc"
     dyn_finish "$name" strace "$ST_T_STRACE" "$rc"
     return 0
 }

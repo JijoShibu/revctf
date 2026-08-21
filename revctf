@@ -522,7 +522,13 @@ dry_run_plan() {
     tier_report
 
     printf '\nStages that would run\n'
-    local st label reason
+    # The ceiling is printed per stage, not just as the tier summary above, because this
+    # listing is the ONLY place the mapping from stage to ceiling is visible — and
+    # tools/run-tests.sh now derives its enforcement checks from it rather than hardcoding
+    # stage names. Hardcoding "radare2 and floss" is precisely why dyn_run's bypass of
+    # st_run_bounded survived M5: strace had a ceiling, said so under --verbose, and nothing
+    # enforced it, because no check ever asked which stages have one.
+    local st label reason ceil bound
     for st in triage:"classify and unwrap" file:"identify the file type" \
               strings:"extract printable strings" binwalk:"scan for embedded files" \
               hexdump:"capture a hex view" checksec:"read mitigations and metadata" \
@@ -532,10 +538,14 @@ dry_run_plan() {
               pydecomp:"decompile Python bytecode" ghidra:"decompile with Ghidra"; do
         label="${st#*:}"; st="${st%%:*}"
         reason="$(dry_run_skip_reason "$st")"
+        ceil="$(tier_ceiling_for_stage "$st")"
+        is_uint "$ceil" || ceil=0
+        bound=""
+        [[ $ceil -gt 0 ]] && bound="  [ceiling ${ceil}MB]"
         if [[ -n $reason ]]; then
-            printf '  [skip] %-9s %s — %s\n' "$st" "$label" "$reason"
+            printf '  [skip] %-9s %s — %s%s\n' "$st" "$label" "$reason" "$bound"
         else
-            printf '  [run ] %-9s %s\n' "$st" "$label"
+            printf '  [run ] %-9s %s%s\n' "$st" "$label" "$bound"
         fi
     done
 

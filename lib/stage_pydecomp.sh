@@ -45,7 +45,7 @@ stage_pydecomp() {
         fi
     } > "$out"
 
-    local f n=0 any=0
+    local f n=0 any=0 rc=0 last_rc=0
     for f in "${targets[@]}"; do
         [[ -n $f && -f $f ]] || continue
         n=$(( n + 1 ))
@@ -53,21 +53,44 @@ stage_pydecomp() {
             printf '\n(capped at %s files)\n' "$PYDECOMP_MAX_FILES" >> "$out"; break; }
 
         printf '\n/* ---- %s ---- */\n' "$(basename "$f")" >> "$out"
+        # THROUGH st_run_bounded, not `timeout` directly.
+        #
+        # These two lines used to run `timeout -k 5 ... | st_strip_ansi >> "$out"`, which is
+        # the third place in the codebase a tool was launched outside st_run_bounded. The
+        # cost was the same each time and invisible each time: st_mem_prefix never ran, so
+        # the Phase-2 ceiling this stage reports under --verbose bounded nothing, and
+        # `ulimit -f` never applied either, so the per-stage output cap did not hold on a
+        # decompiler given a pathological .pyc. Found by the derived enforcement check in
+        # tools/run-tests.sh, which asks the product which stages have a ceiling instead of
+        # trusting a hand-written list.
+        #
+        # ANSI stripping moves to after the run: st_run_bounded needs a real file to redirect
+        # into, and a pipe would put the tool on the far side of the bound anyway.
+        rc=0
         if [[ -n $tool ]]; then
-            timeout -k 5 "$ST_T_DECOMP" "$tool" "$f" 2>>"$err" | st_strip_ansi >> "$out" && any=1
+            st_run_bounded "$ST_T_DECOMP" "$out.d" "$err" -- "$tool" "$f" || rc=$?
         else
             # NOT `python3 -m dis`: dis treats its argument as source, so a .pyc fails
             # with "source code string cannot contain null bytes". scripts/pyc_disasm.py
             # unmarshals the code object first.
-            timeout -k 5 "$ST_T_DECOMP" python3 "$REVCTF_SCRIPTS/pyc_disasm.py" "$f" \
-                2>>"$err" >> "$out" && any=1
+            st_run_bounded "$ST_T_DECOMP" "$out.d" "$err" \
+                -- python3 "$REVCTF_SCRIPTS/pyc_disasm.py" "$f" || rc=$?
         fi
+        [[ $rc -eq 0 ]] && any=1
+        [[ $rc -ne 0 ]] && last_rc=$rc
+        st_strip_ansi < "$out.d" >> "$out" 2>/dev/null
+        rm -f "$out.d"
     done
 
     stage_record_exec "$name" "${tool:-pyc_disasm.py} <${n} bytecode file(s)>" 0
     if [[ $any -eq 1 ]]; then
         stage_write "$name" ok
         stage_set_status "$name" ok "${tool:-bytecode listing} over $n file(s)"
+    elif [[ $last_rc -eq 124 || $last_rc -eq 137 ]]; then
+        # 124 and 137 are different events and st_explain_kill is the only place allowed to
+        # say which. Without this the stage reported "could not decompile any bytecode —"
+        # with an empty reason for a run killed at its memory ceiling.
+        stage_set_status "$name" failed "$(st_explain_kill "$last_rc" "$ST_T_DECOMP")"
     else
         stage_set_status "$name" failed \
             "could not decompile any bytecode — $(tail -c 160 "$err" 2>/dev/null | tr '\n' ' ')"

@@ -1281,3 +1281,130 @@ working system cannot distinguish "passes because correct" from "passes because 
 looked". The negative case used here is an unparseable post-script passed via
 `--ghidra-script`, which reproduces the 12.x shape (`empty`, 0 bytes, exit 0) without
 needing 12.x reinstalled.
+
+---
+
+## Mutation testing the harness — and what it found (2026-08-21)
+
+### Why
+
+M5 shipped with five checks that passed without executing the behaviour they named, and
+`v0.3-m5` was tagged against a `ghidra` section reporting 3/0 while the stage produced an
+empty capture. The lesson recorded at the time was "run the new check against a
+known-broken input and confirm it fails". `tools/verify-harness.sh` makes that mechanical
+instead of a habit: it breaks the product on purpose in ways whose consequences are known,
+and asserts the named checks flip PASS → FAIL.
+
+The mechanism that matters is that each expectation names **both** the description a check
+prints when it passes and the one it prints when it fails (the harness uses different
+strings for each), and the pass side is asserted against the **baseline** run. A check that
+was *skipped* therefore cannot be credited with detecting anything — which is precisely the
+hole the five vacuous M5 checks fell through.
+
+Five mutations: an unparseable Ghidra post-script, a gutted `_FLAG_BRACED` tier,
+`tier_ceiling_for_stage` returning 0, `dyn_run` bypassing `st_run_bounded`, and
+`st_explain_kill` folding 137 back into 124.
+
+### Four defects, all one class: a limit that is reported and enforced by nothing
+
+**1. `dyn_run` launched its tracer outside `st_run_bounded`.** It ran
+`setsid timeout -k 5 … &` itself — the only place in the codebase a tool started outside
+the one launcher CLAUDE.md §2 names without exception. The reason was legitimate: the
+executing stages need their own session so `dyn_sweep_orphans` has a process group to
+sweep, and `st_run_bounded` did not offer that. The cost was invisible: `st_mem_prefix`
+never ran, so the Phase-2 ceiling `tier_ceiling_for_stage` returns for `strace` was
+resolved, printed by `--verbose` as `[strace] memory ceiling 1536MB via systemd`, and
+enforced by absolutely nothing. That is the exact "reported but not enforced" defect M5
+existed to eliminate, surviving *inside* M5.
+
+`st_run_bounded` now offers `ST_OWN_SESSION`, which adds `setsid`, closes stdin, and
+publishes `ST_LAST_PGID`. `setsid` must sit **outside** the systemd-run scope: inside, the
+session leader would be a grandchild of the scope and `ST_CHILD_PID` would no longer be the
+process-group leader, so the orphan sweep would signal the wrong group. Verified against
+the `memhog` and `hung` fixtures — ceiling breach reports 137, timeout reports 124, and
+neither leaves an orphan.
+
+**2. `dyn_finish` had a `124|137)` branch.** Both reported as "stopped after ${tmo}s". Six
+stages were converted to `st_explain_kill` at M5; this pair was missed, on the two stages
+that execute the target and therefore carry the ceiling most likely to be breached.
+
+**3. `ltrace` and `strace` never captured a trace at all.** This is the largest one.
+Both tracers write their output to **stderr** unless given `-o`. `dyn_run` routed stderr to
+the stage error file, which the report reads *only when a stage fails*. So for every
+successful run the trace was written to a file nobody reads and dropped, and the capture
+held the banner plus whatever the **target** printed on its own stdout — after which
+`dyn_finish` appended "the trace above is still valid" to a capture containing no trace.
+Two of fourteen stages produced nothing, for the project's whole life. `strace.txt` on the
+corpus crackme went 772B → 4KB once `-o` was passed.
+
+Nothing caught it because every ltrace/strace check matched the banner ("states it executed
+the target", "names the lack of isolation") or a skip path. This makes M3's Definition of
+Done — "all 13 stages run end to end" — false for two stages at the time it was signed off.
+
+**4. `stage_pydecomp` also bypassed `st_run_bounded`**, running
+`timeout -k 5 … | st_strip_ansi >> "$out"` directly. Third instance of the same shape. Found
+*by the new derived check*, not by reading. `ulimit -f` never applied there either, so the
+per-stage output cap did not hold.
+
+Two smaller ones fell out alongside: `dyn_finish`'s `[[ -s $out ]]` tested a file
+`dyn_banner` had already written a header into, so its "empty" and "failed" branches were
+unreachable; and `ltrace` carried no ceiling at all while `strace`, doing the identical
+thing, carried one — the same asymmetry deviation D9 corrected for `--sandbox`, pointing
+the other way.
+
+### The structural guards
+
+Fixing four instances of one shape is worth less than making the shape impossible to
+reintroduce quietly.
+
+- **`m5enforce` derives its stage list from the product.** `--dry-run` now prints
+  `[ceiling NMB]` per stage, computed from `tier_ceiling_for_stage`; the harness parses that
+  and tests every stage it names. Hardcoding "radare2 and floss" is precisely why `dyn_run`'s
+  bypass survived M5 — no check ever asked *which* stages have a ceiling. A bounded stage
+  with no test target now **fails**; a bounded stage whose tool is absent **skips with a
+  stated reason** (`managed`, until M6 packages a Java decompiler).
+- **Enforcement is proven by breach, not by inspection.** `REVCTF_CEIL_MB` overrides the
+  value of an existing ceiling and never invents one. At 1MB every bounded stage is
+  SIGKILLed, uniformly. 16MB is **not** uniform — `MemoryMax` reclaims page cache before it
+  kills anything, so radare2 survives it on a small target.
+- **A `124|137` grep ban outside `st_explain_kill`**, in the same spirit as the PCRE ban:
+  a whole defect class excluded by construction rather than caught case by case.
+- **Checks that the executing stages capture a real traced call**, and that the target's own
+  output is labelled separately so it can never pass for a trace again.
+- **`dyn_bypass` and `kill_conflation` are in the mutation registry**, so the replacement
+  checks are themselves proven non-vacuous. A fixed check that cannot detect the defect it
+  replaced is worth exactly as much as the one it replaced.
+
+### The five vacuous flag checks the tool found
+
+The `flag_tiers` mutation guts `_FLAG_BRACED` so it cannot match anything. Five checks
+stayed green. All five grepped the **whole report**, and the report embeds each stage's
+capture — `strings` on `planted_flag` contains the flag in plain sight, so they passed with
+the scanner completely dead.
+
+This is the identical mistake the `ghidra` section fixed once already, where a bare
+`grep sw0rdf1sh report.txt` passed because the crackme's password is visible to `strings`.
+Knowing the lesson was not enough to stop it recurring four files away; a tool that
+mechanically re-derives it is. All flag assertions now go through `flag_section()`, which
+prints only the `POSSIBLE FLAGS` block — the part only the scanner can populate.
+
+A sixth expectation, "unwrapping reveals a flag that was hidden while packed", also stayed
+green, and that one was **correct**: it greps the strings capture after Stage 0 unwraps a
+UPX binary, so it is a check about unwrapping and has nothing to do with the scanner. The
+expectation was wrong, not the check. Recorded in the registry rather than deleted.
+
+### `REVCTF_CEIL_MB` announces itself
+
+`REVCTF_RAM_MB` was deliberately built to label itself so a tier chosen from a fake number
+could never look measured. A ceiling override is strictly more dangerous — a stray value
+caps every bounded stage and SIGKILLs each one — so it carries the same obligation. It is
+now validated and announced **once**, in `tier_resolve`, and `tier_ceiling_for_stage` reads
+the resolved `TIER_CEIL_OVERRIDE` rather than the environment.
+
+Implementing that honestly exposed a further gap: **`tier_report()` is called only from
+`dry_run_plan()`**. The tier, the RAM figure, the ceilings and every `TIER_NOTES` entry —
+including the RAM injection label, the no-swap OOM warning, and the reason FLOSS had been
+degraded — appeared in the *plan* and in no report anybody keeps. Every existing check for
+them asserts against `--dry-run`, so they all passed while the artefact the user actually
+reads said nothing. The report now carries a `RESOURCES AND LIMITS` section, and the new
+checks assert against `report.txt` rather than the plan.

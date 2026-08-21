@@ -72,6 +72,22 @@ assert_no_match() {
 
 have_corpus() { [[ -f $CORPUS/crackme ]]; }
 
+# flag_section <report-file> — print ONLY the POSSIBLE FLAGS block of a report.
+#
+# WHY EVERY FLAG ASSERTION MUST GO THROUGH THIS.
+#
+# A whole-report grep for the flag string is vacuous. The report embeds each stage's capture,
+# and `strings` on planted_flag contains the flag in plain sight — so the check passes with
+# the flag SCANNER completely dead. Proved, not theorised: tools/verify-harness.sh's
+# flag_tiers mutation guts _FLAG_BRACED so it can never match, and five checks stayed green.
+#
+# This is the identical mistake the ghidra section already fixed once, where a bare
+# `grep sw0rdf1sh report.txt` passed because the crackme's password is visible to strings.
+# Scoping to the section that only the scanner can populate is what makes it a flag check.
+flag_section() {
+    sed -n '/^ POSSIBLE FLAGS$/,/^ WHAT RAN$/p' "$1" 2>/dev/null
+}
+
 # The 220MB stress blob is what proves streaming, output caps and abort latency — but a
 # full pipeline over it costs about four minutes, and several sections use it. Set
 # REVCTF_TEST_FAST=1 to skip those checks during rapid iteration; CI and every milestone
@@ -639,8 +655,9 @@ test_m3() {
                 "hex_flag:flag\{h3x_3nc0d3d_str1ng\}"; do
         f="${pair%%:*}"; want="${pair##*:}"
         [[ -f "$CORPUS/$f" ]] || { skip "flag in $f" "not in corpus"; continue; }
-        assert_match "flag recovered from $f" "$want" \
-            "$RC" scan "$CORPUS/$f" --skip-ghidra --output "$o/fs-$f"
+        rm -rf "$o/fs-$f"
+        "$RC" scan "$CORPUS/$f" --skip-ghidra --output "$o/fs-$f" >/dev/null 2>&1
+        assert_match "flag recovered from $f" "$want" flag_section "$o/fs-$f/report.txt"
     done
     # The encoded ones must be found BY DECODING, not by luck.
     assert_match "base64 flag is credited to the decoding sweep" 'recovered by base64 decoding' \
@@ -662,9 +679,15 @@ test_m3() {
     fi
 
     # High confidence must print before medium/low, or the flag is buried.
-    out=$("$RC" scan "$CORPUS/crackme" --skip-ghidra --output "$o/fs-order" 2>&1)
-    if [[ $(grep -n 'high confidence' <<< "$out" | cut -d: -f1) -lt \
-          $(grep -n 'medium confidence' <<< "$out" | cut -d: -f1 || echo 9999) ]]; then
+    rm -rf "$o/fs-order"
+    "$RC" scan "$CORPUS/crackme" --skip-ghidra --output "$o/fs-order" >/dev/null 2>&1
+    out=$(flag_section "$o/fs-order/report.txt")
+    # Both headings must EXIST before their order means anything. Without that, a scanner
+    # that finds nothing at all satisfies the comparison by way of two empty results.
+    if ! grep -q 'high confidence' <<< "$out"; then
+        no "flag ordering" "the flag section has no high-confidence heading — the scanner found nothing"
+    elif [[ $(grep -n 'high confidence' <<< "$out" | cut -d: -f1) -lt \
+            $(grep -n 'medium confidence' <<< "$out" | cut -d: -f1 || echo 9999) ]]; then
         ok "high-confidence flags are listed first"
     else
         no "flag ordering" "medium confidence printed above high"
@@ -678,8 +701,10 @@ test_m3() {
     # --- managed / Python routing -----------------------------------------------------
     assert_match "a .pyc is routed to Python decompilation" 'pydecomp +ok' \
         "$RC" scan "$CORPUS/secret.pyc" --skip-ghidra --output "$o/pyc"
+    rm -rf "$o/pyc2"
+    "$RC" scan "$CORPUS/secret.pyc" --skip-ghidra --output "$o/pyc2" >/dev/null 2>&1
     assert_match "the .pyc flag is recovered" 'flag\{pyc_d3c0mp1l3d\}' \
-        "$RC" scan "$CORPUS/secret.pyc" --skip-ghidra --output "$o/pyc2"
+        flag_section "$o/pyc2/report.txt"
     assert_match "a .jar is routed to managed decompilation" 'managed +(ok|failed)' \
         "$RC" scan "$CORPUS/challenge.jar" --skip-ghidra --output "$o/jar"
     assert_match "native stages skip a Java target" 'radare2 .*not a native binary' \
@@ -975,6 +1000,65 @@ z.close()" 2>/dev/null
         ok "no PCRE engine is used anywhere in lib/ (ReDoS class excluded by construction)"
     fi
 
+    # --- 124 and 137 may never share a branch outside st_explain_kill ------------------
+    # Same shape as the PCRE ban above: a whole defect class excluded by construction rather
+    # than caught case by case.
+    #
+    # 124 is `timeout`. 137 is a SIGKILL, which since M5 is how a cgroup memory ceiling
+    # announces itself. Six stages once treated them as one event, so a FLOSS run killed at
+    # its ceiling after ONE second was reported as "timed out after 300s" — sending the
+    # reader to the wrong constant. st_explain_kill() was extracted to say the right thing
+    # once; lib/stage_dynamic.sh was then missed in that sweep and kept a `124|137)` branch
+    # for another whole milestone, on the two stages that EXECUTE the target.
+    #
+    # A shared branch is legitimate ONLY where it immediately delegates to st_explain_kill.
+    # Everything else is the bug coming back.
+    local -a conflated=()
+    local cf
+    while read -r cf; do
+        [[ -z $cf ]] && continue
+        # A file is clean if every 124/137 pairing it contains is answered by a call to
+        # st_explain_kill in the same file.
+        grep -q 'st_explain_kill' "$cf" || conflated+=("$(basename "$cf")")
+    done < <(grep -rln --include='*.sh' -E '^[^#]*(124\|137|137\|124|-eq 124.*-eq 137|-eq 137.*-eq 124)' \
+             "$ROOT/lib" "$ROOT/revctf" 2>/dev/null)
+    if [[ ${#conflated[@]} -eq 0 ]]; then
+        ok "no 124/137 branch reports a timeout and an OOM kill as the same event"
+    else
+        no "124/137 conflated" "these treat both as one event without calling st_explain_kill: ${conflated[*]} — a memory-ceiling kill would be reported as a timeout"
+    fi
+
+    # --- the executing stages must capture a TRACE, not just their banner ---------------
+    # ltrace and strace both write their trace to STDERR unless given -o. They were not,
+    # so dyn_run routed the trace to the stage error file — which the report reads only when
+    # a stage FAILS. For every successful run the capture held the banner plus whatever the
+    # TARGET printed, and dyn_finish appended "the trace above is still valid" to a capture
+    # containing no trace. Two of fourteen stages produced nothing for the project's whole
+    # life, and every ltrace/strace check here matched the banner or a skip path.
+    if [[ -f $CORPUS/crackme ]]; then
+        local dyo="$o/dyn"; rm -rf "$dyo"
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --output "$dyo" >/dev/null 2>&1
+        # A real ltrace line names a libc call and its return. The banner cannot satisfy it.
+        if grep -qE '^[0-9]+ [a-z_]+\(.*\) +=' "$dyo/ltrace.txt" 2>/dev/null; then
+            ok "the ltrace capture contains an actual library-call trace"
+        else
+            no "ltrace captured no trace" "ltrace.txt has the banner but no traced call — is -o still passed?"
+        fi
+        # A real strace line is a timestamped syscall with a duration (-tt -T).
+        if grep -qE '[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]+ [a-z_0-9]+\(' "$dyo/strace.txt" 2>/dev/null; then
+            ok "the strace capture contains an actual syscall trace"
+        else
+            no "strace captured no trace" "strace.txt has the banner and ldd but no syscall"
+        fi
+        # The target's own stdout is kept, but must not be mistakable for the trace.
+        if grep -q "target's own output (not part of the trace)" "$dyo/ltrace.txt" 2>/dev/null; then
+            ok "the target's own output is kept but labelled separately from the trace"
+        else
+            no "unlabelled target output" "a usage line printed by the challenge could pass for a trace"
+        fi
+        rm -rf "$dyo"
+    fi
+
     # --- QA-13: hostile filenames must never reach a shell.
     local nasty="$o/a;touch $o/PWNED;b"
     cp "$CORPUS/crackme" "$nasty" 2>/dev/null
@@ -1141,7 +1225,11 @@ test_m4() {
         no "flags first" "POSSIBLE FLAGS at line ${lf:-none}, WHAT RAN at ${lt:-none}"
     fi
 
-    assert_match "the corpus flag reaches the report" 'flag\{cr4ckm3_s0lv3d\}' cat "$rp"
+    # Scoped to the flag section, not the whole report: the crackme's flag is visible to
+    # plain `strings`, and the report embeds every capture, so `cat "$rp"` passed with the
+    # flag scanner entirely disabled. See flag_section() for the full reasoning.
+    assert_match "the corpus flag reaches the report" 'flag\{cr4ckm3_s0lv3d\}' \
+        flag_section "$rp"
     assert_match "every stage appears in the WHAT RAN table" 'ghidra +skipped' cat "$rp"
     assert_match "a beginner blurb is attached to each stage" \
         'RUNS the program and records the library functions' cat "$rp"
@@ -1517,6 +1605,116 @@ test_m5enforce() {
         '\[ghidra\] memory ceiling 2048MB' printf '%s' "$out"
     rm -rf "$o/g2"
     fi
+
+    # --- EVERY BOUNDED STAGE IS ENFORCED — derived, never hardcoded -------------------
+    #
+    # THIS CHECK EXISTS BECAUSE THE ONE ABOVE IT WAS NOT ENOUGH.
+    #
+    # The two blocks above name radare2 and floss. That is a hardcoded pair, and a hardcoded
+    # pair only ever proves things about that pair. lib/stage_dynamic.sh ran its tracers via
+    # its own `setsid timeout ... &` instead of st_run_bounded, so st_mem_prefix never fired
+    # and the Phase-2 ceiling that tier_ceiling_for_stage returns for strace was resolved,
+    # printed by --verbose as "[strace] memory ceiling 1536MB via systemd", and enforced by
+    # nothing at all. It survived the whole of M5 because no check ever asked the product
+    # WHICH stages have a ceiling — they only asked about the two someone had thought of.
+    #
+    # So the list is derived from the plan, which derives it from tier_ceiling_for_stage.
+    # Add a stage to that function and it appears here automatically; if nobody has given it
+    # a target to be tested against, this FAILS rather than skipping. A stage cannot become
+    # bounded-on-paper without someone proving it is bounded in fact.
+    local -a bounded=()
+    mapfile -t bounded < <(REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run 2>/dev/null \
+        | sed -n 's/^  \[[a-z ]*\] \([a-z0-9]*\) .*\[ceiling [0-9]*MB\]$/\1/p')
+    if [[ ${#bounded[@]} -eq 0 ]]; then
+        no "bounded-stage derivation" "the plan listed no stage with a ceiling — either tier_ceiling_for_stage returns 0 for everything, or the plan's [ceiling NMB] marker changed and this check is now blind"
+    else
+        ok "derived ${#bounded[@]} bounded stages from the plan: ${bounded[*]}"
+    fi
+
+    # stage -> a corpus target that actually ROUTES to it. A bounded stage with no entry is
+    # a failure, not a skip: that is the whole point.
+    local -A ceil_target=(
+        [radare2]=crackme  [ltrace]=crackme  [strace]=crackme  [floss]=crackme
+        [managed]=challenge.jar  [pydecomp]=secret.pyc  [ghidra]=crackme
+    )
+    # REVCTF_CEIL_MB=1 is a uniform breach: measured on this host, every bounded stage that
+    # runs is SIGKILLed at 1MB. A larger figure is not uniform — radare2 survives 16MB on a
+    # small target because MemoryMax reclaims page cache before it kills anything.
+    local bst btgt bout brep
+    for bst in "${bounded[@]}"; do
+        btgt="${ceil_target[$bst]:-}"
+        if [[ -z $btgt ]]; then
+            no "no enforcement target for the bounded stage '$bst'" \
+               "tier_ceiling_for_stage gives '$bst' a ceiling but this check has no target that routes to it — add one to ceil_target; do NOT delete the stage from the derivation"
+            continue
+        fi
+        if [[ ! -f $CORPUS/$btgt ]]; then
+            skip "enforcement of $bst" "$btgt absent from the corpus"; continue
+        fi
+        bout="$FIXTURES/ceil-$bst"; rm -rf "$bout"
+        REVCTF_CEIL_MB=1 REVCTF_RAM_MB=8192 "$RC" scan "$CORPUS/$btgt" \
+            --output "$bout" >/dev/null 2>&1
+        brep="$bout/report.txt"
+        local bline; bline=$(grep -E "^$bst " "$brep" 2>/dev/null | head -1)
+        if grep -qE "^$bst +[a-z]+ .*killed \(SIGKILL\).*1MB memory ceiling" "$brep" 2>/dev/null; then
+            ok "  $bst is actually bounded (SIGKILLed at a 1MB ceiling)"
+        elif grep -qE "^$bst +(skipped|failed) .*(not installed|no Java decompiler|is required for|not a native|only runs on)" \
+             "$brep" 2>/dev/null; then
+            # The stage never launched a tool, so there was nothing for a ceiling to bound.
+            # This is a SKIP with a stated reason, not a pass: an absent tool means this
+            # stage's enforcement is simply unverified on this host, and saying so is the
+            # difference between honest coverage and the vacuous kind. (managed lands here
+            # until M6 packages a Java decompiler — CHECKLIST Phase 8.)
+            skip "enforcement of $bst" "the stage did not run a tool here: ${bline:0:90}"
+        else
+            no "$bst reports a ceiling but is not bound by it" \
+               "at REVCTF_CEIL_MB=1 the stage was: ${bline:0:140}"
+        fi
+        rm -rf "$bout"
+    done
+
+    # --- an injected ceiling must ANNOUNCE ITSELF, in the report ----------------------
+    # REVCTF_RAM_MB was built to label itself so a tier chosen from a fake number could never
+    # look measured. REVCTF_CEIL_MB is strictly more dangerous — a stray value caps every
+    # bounded stage and SIGKILLs it — so it carries the same obligation.
+    #
+    # THESE ASSERT AGAINST report.txt, NOT --dry-run, and that distinction is the point.
+    # tier_report() is called only from dry_run_plan(), so for the whole life of the project
+    # the tier, the ceilings and every TIER_NOTES entry — the RAM injection label, the
+    # no-swap OOM warning, the reason FLOSS was degraded — appeared in the PLAN and in no
+    # report anybody keeps. Every existing check for them asserts on --dry-run and passed.
+    local injo="$FIXTURES/inject"; rm -rf "$injo"
+    REVCTF_CEIL_MB=1 REVCTF_RAM_MB=2048 "$RC" scan "$t" --skip-ghidra \
+        --output "$injo" >/dev/null 2>&1
+    assert_match "an injected ceiling is labelled as injected IN THE REPORT" \
+        'INJECTED via REVCTF_CEIL_MB \(1MB\)' cat "$injo/report.txt"
+    assert_match "and it says the stage failures below are the hook's doing" \
+        'TEST HOOK' cat "$injo/report.txt"
+    assert_match "an injected RAM figure is labelled in the report too, not only in --dry-run" \
+        'INJECTED via REVCTF_RAM_MB' cat "$injo/report.txt"
+    assert_match "the report states which mechanism enforced the ceilings" \
+        'Enforced by' cat "$injo/report.txt"
+    rm -rf "$injo"
+
+    local cleano="$FIXTURES/clean"; rm -rf "$cleano"
+    "$RC" scan "$t" --skip-ghidra --output "$cleano" >/dev/null 2>&1
+    assert_no_match "a run with no injection says nothing about one" \
+        'INJECTED' cat "$cleano/report.txt"
+    # An ordinary Tier A run gets ONE header line, not a resource table — the safeguard is
+    # "a fake number must never look measured", not "every report carries a table".
+    assert_no_match "an ordinary run gets no resource table" \
+        'RESOURCES AND LIMITS' cat "$cleano/report.txt"
+    assert_match "but it still states the tier it ran under" \
+        '^Resources : Tier [ABC], [0-9]+MB RAM$' cat "$cleano/report.txt"
+    rm -rf "$cleano"
+
+    # A non-numeric value must warn and be ignored, never reach an arithmetic test
+    # (CLAUDE.md §2 / QA-1) — the same rule REVCTF_RAM_MB already follows.
+    assert_match "a non-numeric REVCTF_CEIL_MB warns and is ignored" \
+        'REVCTF_CEIL_MB is not a whole number' \
+        env REVCTF_CEIL_MB=banana "$RC" scan "$t" --dry-run
+    assert_exit "and the run still completes" 0 \
+        env REVCTF_CEIL_MB=banana "$RC" scan "$t" --dry-run
 
     # --- a breached ceiling is killed AND correctly explained -------------------------
     # The regression this pins: every stage reported 124 and 137 identically, so a FLOSS

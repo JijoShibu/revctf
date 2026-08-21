@@ -63,13 +63,21 @@ The stage framework and all 13 analysis stages.
 - [x] **M2 · Light static stages: file, strings, binwalk, hexdump, checksec, objdump**
   <br>M: M2 · 6 modules
 - [x] **M3 · Dynamic stages: ltrace + strace, setsid, orphan sweep, execution banner**
-  <br>M: M3 · lib/stage_dynamic.sh
+  <br>M: M3 · lib/stage_dynamic.sh · **re-verified 2026-08-21 — was NOT complete when
+  signed off.** Both tracers write to stderr unless given `-o`; without it the trace went
+  to the stage error file, which the report reads only on failure. The captures held the
+  banner plus the target's own stdout, so **these two stages produced no trace at all** and
+  M3's DoD ("all 13 stages run end to end") was false for them. Every ltrace/strace check
+  in the harness matched the banner or a skip path. Fixed with `-o` + `dyn_compose`;
+  the harness now asserts a real traced call appears.
 - [x] **M3 · radare2 — single analysis session, \bmain\b word boundary, entry0 fallback**
   <br>M: M3 · lib/stage_radare2.sh
 - [x] **M3 · FLOSS — format-aware (PE all modes, ELF static-only), size-guarded**
   <br>M: M3 · lib/stage_floss.sh
 - [x] **M3 · Managed + Python decompilation, with an always-available bytecode fallback**
-  <br>M: M3 · stage_managed / stage_pydecomp
+  <br>M: M3 · stage_managed / stage_pydecomp · `stage_pydecomp` launched its tool outside
+  `st_run_bounded` until 2026-08-21, so neither its memory ceiling nor the `ulimit -f`
+  output cap applied
 - [x] **M3 · Ghidra headless + both post-scripts + OOM self-heal**
   <br>M: M3 · verified on real 11.2.1
 - [x] **M3 · Flag detection: confidence tiers, cross-stage attribution, encoding sweep**
@@ -110,9 +118,14 @@ Everything after the MVP: adaptivity, isolation, batch, agency, resilience.
   <br>M: M5 · fires, spares revctf, partial report still written
 - [x] **M5 · Low-RAM/no-swap diagnostic (auto-swap REMOVED, D10)**
   <br>M: M5 · lib/tier.sh · revctf never modifies the host
+- [x] **Mutation-test the verification harness (`tools/verify-harness.sh`)**
+  <br>2026-08-21 · five mutations; found four product defects and five vacuous flag checks
 - [ ] **M6 · docker/Dockerfile built by install.sh during the network window**
   <br>M: M6 · --sandbox currently refuses
-- [ ] **M6 · Sandboxed ltrace AND strace; verify no network egress**
+- [ ] **M6 · Sandboxed ltrace AND strace; verify no network egress** — **PRIORITISED ABOVE
+  M7 (2026-08-21).** The default path executes an untrusted binary on the host and the safe
+  path (`--sandbox`) refuses rather than isolating, so the unsafe option is the only working
+  one. That is the wrong default for a beginner-facing tool.
   <br>M: M6 · deviation D9 · host verified 2026-08-20: `--network=none` gives no egress
 - [ ] **M7 · Batch mode — three-phase concurrency, per-job isolation, flock results**
   <br>M: M7 · directory target exits 1 today

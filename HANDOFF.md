@@ -7,9 +7,10 @@ the four it points at — so no future session needs to carry a long transcript.
 If you are a new session: read this file top to bottom, then `CLAUDE.md`. That
 is enough to start work. Read the others on demand.
 
-Last consolidated: 2026-08-20, after **M5** (memory-bound enforcement, RSS watchdog,
-Phase-2 ceiling measured — deviation D11) on the Kali VM. Previous: 2026-08-19 after M4
-(`v0.1-mvp`) + QA review #2 + the D10 scope reduction.
+Last consolidated: **2026-08-21**, after mutation-testing the verification harness
+(`tools/verify-harness.sh`), which found that M5's enforcement claim was false for three of
+seven bounded stages and that two stages had never captured any output at all. Tagged
+`v0.3.2-m5`. Previous: 2026-08-20 after M5 on the Kali VM; 2026-08-19 after M4 (`v0.1-mvp`).
 
 ---
 
@@ -46,19 +47,41 @@ v6 §11 Deviation Register > v5 + execution masterplan > v4 > v3.**
 
 ## 3. Current state
 
-**M0, M1, M2, the QA pass, M3, M4 and M5 are complete.** `v0.1-mvp` is tagged; M5 is not
-yet tagged (see the caveats below).
+**M0, M1, M2, the QA pass, M3, M4 and M5 are complete.** Tags through `v0.3.2-m5`.
+
+**READ THIS BEFORE TRUSTING A "DONE" MARK.** Two milestones were signed off against
+verification that did not verify:
+
+- **M5's claim "the tier memory ceilings are enforced" was false for `ltrace`, `strace` and
+  `pydecomp`** — three of the seven stages that carry a ceiling. All three launched their
+  tool outside `st_run_bounded`, so the ceiling was resolved, printed by `--verbose`, and
+  enforced by nothing. `m5enforce` hardcoded `radare2` and `floss` and never asked the
+  product which stages have a ceiling. Fixed and re-tagged as `v0.3.2-m5`.
+- **M3's DoD "all 13 stages run end to end" was false for `ltrace` and `strace`**, which
+  captured no trace whatsoever: both tracers write to stderr unless given `-o`, and that
+  stream went to a file the report reads only on failure. Noted against M3 in
+  `CHECKLIST.md` rather than silently corrected.
+
+`v0.3-m5` and `v0.3.1-m5` are left in place. They are accurate records of what was believed
+at the time, which was more than was true.
 
 **M5 was built on the target Kali VM, not in the cloud** — which is the whole reason it
 could be finished. `systemd-run --scope -p MemoryMax` works there, so v4 §4.3's primary
 memory-bounding path executed for the first time in this project's history.
 
 **One M5 exit criterion is not closed:** QA review #2 §7 asks for correct tier selection on
-a *genuinely* 2GB host, and `REVCTF_RAM_MB` only tests the branch. To close it, shut the VM
-down, set RAM to 2048MB in VirtualBox, boot, and run
-`./tools/run-tests.sh m5 m5enforce` — Tier C should be selected from real hardware, FLOSS
-should degrade to static-only, and Ghidra should be skipped by default. Everything else in
-M5 is verified on real hardware.
+a *genuinely* 2GB host, and `REVCTF_RAM_MB` only tests the branch. To close it:
+
+1. Shut the Kali VM down (a running VM cannot be resized).
+2. `VBoxManage modifyvm "<vm-name>" --memory 2048` — or Settings → System → Motherboard →
+   Base Memory = 2048 MB.
+3. Boot, then `cd ~/revctf && ./tools/verify-tier-c.sh`.
+4. Set Base Memory back to 4096 MB.
+
+`tools/verify-tier-c.sh` **refuses to run** unless real detected RAM is under 2560MB, so it
+cannot be satisfied by injecting `REVCTF_RAM_MB` — which is the entire point. Its transcript
+is the evidence; it writes one into the repo only for a run that passed the RAM gate.
+Everything else in M5 is verified on real hardware.
 
 **Both pre-tag gates have run (2026-08-20).** `shellcheck -S style` is clean across every
 shell file, and `install.sh` executed end-to-end on real Kali. That run found four defects
@@ -66,12 +89,26 @@ that review had not — including one that made the Ghidra stage silently produc
 which is exactly why QA review #2 insisted the installer be run rather than read. Detail in
 `implementation-notes.md` under "install.sh — what the first real run exposed".
 
-- All 13 analysis stages plus Stage 0 triage run end to end.
+- All 13 analysis stages plus Stage 0 triage run end to end — and as of 2026-08-21 that is
+  true of `ltrace` and `strace` too, which until then captured no trace at all.
 - Flag detection works, including the base64/base32/hex/ROT13 encoding sweep.
 - Ghidra headless verified against a real 11.2.1 install: it recovers the
   password `sw0rdf1sh` from the corpus crackme's pseudo-C.
 - Single-file scanning works end to end: report with flags first, three display modes.
-- **Verification: `./tools/run-tests.sh`. The total check count is NOT a constant — do not
+- **Verification is now two tools, and the second is the one that keeps the first
+  honest:**
+
+  ```bash
+  ./tools/run-tests.sh        # the checks
+  ./tools/verify-harness.sh   # proves the checks would catch a broken product
+  ```
+
+  `verify-harness.sh` breaks the product on purpose (five known breakages) and asserts the
+  named checks flip PASS → FAIL, then restores and asserts green. It exists because a green
+  harness is evidence only if a broken product turns it red — and four times now it has not.
+  Run it before any tag.
+
+  **The total check count is NOT a constant — do not
   chase a number.** Sections self-skip when a tool is absent (`lint` without shellcheck,
   `ghidra` and part of `m5enforce` without a Ghidra install, the 220MB checks under
   `REVCTF_TEST_FAST=1`), so the same commit legitimately reports different totals on
@@ -85,18 +122,35 @@ which is exactly why QA review #2 insisted the installer be run rather than read
   `lint corpus m0 m1 m2 m3 m4 m5 m5enforce qa docs ghidra`. `m5` checks tier
   *resolution*; `m5enforce` checks the ceilings actually bound a real scan. `REVCTF_TEST_FAST=1` skips the 220 MB
   target checks (~3 min instead of ~15).
-- Tags `v0.2-m2-qa` and `v0.1-mvp`. Branch `main`, pushed to
-  <https://github.com/JijoShibu/revctf> (private).
+- Tags `v0.1-mvp`, `v0.2-m2-qa`, `v0.3-m5`, `v0.3.1-m5`, `v0.3.2-m5`. Branch `main`, pushed
+  to <https://github.com/JijoShibu/revctf> (private). Superseded tags are never moved — each
+  records what was believed at the time.
 
 Progress: 72% of build tasks; 45 of 84 tracked items done; 5 of 10 milestones.
+
+### M6 now outranks M7, and the reason is a safety gap, not a feature gap
+
+A beginner's first action is to download a challenge binary and scan it. revctf runs `ltrace`
+and `strace` on it **by default**, which executes it on the host, while `--sandbox` refuses to
+run those stages at all rather than isolating them. So the safe option is not "slower" — it is
+"does not work", and the unsafe option is the default.
+
+picoCTF binaries are benign. A binary pulled from an arbitrary CTF, a shared drive, or a
+writeup repo is not guaranteed to be, and the user has no way to know before running it. That
+is a poor default for a tool aimed explicitly at beginners, and it is the whole reason
+`--sandbox` was specified in the first place.
+
+Docker 28.5.2 works on this VM and the `--network=none --read-only --cap-drop=ALL` contract is
+already verified, including no egress — so the thing standing between the tool and a safe
+default is build work, not an unknown. **M6 before M7.**
 
 ### Remaining milestones
 
 | # | Scope | Can this cloud sandbox validate it? |
 |---|---|---|
 | M4 | ~~report, TUI, `--summary-only`, config extraction~~ | **DONE** — but the TUI is verified only as far as a `script(1)` pty allows; run `tools/tui-selftest.sh` on a real terminal |
-| M5 | **DONE** — enforcement, RSS watchdog, tier-driven Ghidra MAXMEM, Phase-2 ceiling measured (D11). Swap offer removed (D10) | Built and verified on the Kali VM, where `systemd-run` works |
-| M6 | Docker sandbox image, `install.sh` hardening, vendor `pyinstxtractor`. **Independent of M5** | **Yes** — Docker 28.5.2 runs on the VM; the full `--network=none --read-only --cap-drop=ALL` contract is verified, including no egress |
+| M5 | **DONE** — enforcement (genuinely, as of `v0.3.2-m5`), RSS watchdog, tier-driven Ghidra MAXMEM, Phase-2 ceiling measured (D11). Swap offer removed (D10) | Built and verified on the Kali VM, where `systemd-run` works. Tier C on real 2GB hardware still open — run `tools/verify-tier-c.sh` |
+| M6 | **RAISED IN PRIORITY — do this before M7.** Docker sandbox image, `install.sh` hardening, vendor `pyinstxtractor`. **Independent of M5** | **Yes** — Docker 28.5.2 runs on the VM; the full `--network=none --read-only --cap-drop=ALL` contract is verified, including no egress |
 | M7 | Batch mode, three-phase scheduling, per-archive-member analysis. **Depends on M5** for tier-driven concurrency | Logic yes, but it is blocked behind M5 |
 | M8 | `--interactive` agency: Continue / Skip stage / Skip file / Abort | **No** — no TTY |
 | M9 | Crash resilience, resume, error-log rotation | Partly |

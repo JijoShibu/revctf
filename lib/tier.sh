@@ -87,6 +87,11 @@ declare -g TIER_JOBS_GHIDRA=1
 declare -g TIER_MAXMEM_GHIDRA="512M"
 declare -g TIER_DECOMPILE="light"
 declare -g TIER_PHASE2_CEIL_MB=0
+# The validated REVCTF_CEIL_MB, or empty. Resolved ONCE in tier_resolve so the value is
+# validated and announced in exactly one place; tier_ceiling_for_stage reads it and never
+# touches the environment itself. Reading $REVCTF_CEIL_MB directly per call was how it could
+# take effect without ever appearing in the report.
+declare -g TIER_CEIL_OVERRIDE=""
 # shellcheck disable=SC2034  # read by lib/stage_floss.sh, which sources this file
 declare -g TIER_FLOSS_STATIC_ONLY=0
 declare -ga TIER_NOTES=()
@@ -173,6 +178,27 @@ tier_resolve() {
 
     if [[ $TIER_RAM_SOURCE == injected ]]; then
         TIER_NOTES+=("RAM figure was INJECTED via REVCTF_RAM_MB (${TIER_RAM_MB}MB) — this tier was not measured.")
+    fi
+
+    # REVCTF_CEIL_MB gets the SAME treatment as REVCTF_RAM_MB, for the same reason.
+    #
+    # REVCTF_RAM_MB was deliberately built to label itself in every report so that a tier
+    # chosen from a fake number could never be mistaken for a measurement. A ceiling override
+    # is strictly more dangerous: a stray REVCTF_CEIL_MB=1 in the environment caps every
+    # bounded stage at 1MB, SIGKILLs each of them, and the report would otherwise show a row
+    # of failed stages with nothing anywhere saying the cause was an environment variable.
+    # An override that does not announce itself is indistinguishable from a broken host.
+    if [[ -n ${REVCTF_CEIL_MB:-} ]]; then
+        if is_uint "$REVCTF_CEIL_MB"; then
+            TIER_CEIL_OVERRIDE="$REVCTF_CEIL_MB"
+            TIER_NOTES+=("Every stage memory ceiling was INJECTED via REVCTF_CEIL_MB (${REVCTF_CEIL_MB}MB), replacing this tier's values. This is a TEST HOOK — any stage killed in this run was stopped by it, not by your host.")
+        else
+            TIER_CEIL_OVERRIDE=""
+            warn "REVCTF_CEIL_MB is not a whole number ('$REVCTF_CEIL_MB'); using the tier's ceilings"
+            TIER_NOTES+=("REVCTF_CEIL_MB was set to '$REVCTF_CEIL_MB', which is not a whole number; it was ignored and the tier's own ceilings apply.")
+        fi
+    else
+        TIER_CEIL_OVERRIDE=""
     fi
 
     # --- Phase-2 ceiling (deviation D11) -----------------------------------------------
@@ -279,13 +305,42 @@ tier_resolve() {
 # per-job ceiling, and inventing one here would be the same unmeasured-constant mistake
 # D11 exists to correct — the whole Phase-1 group was measured at ~103MB peak on a 220MB
 # target, so there is nothing to bound. The global RSS watchdog is their backstop.
+#
+# ltrace joins strace here as of 2026-08-21. They are the two stages that EXECUTE the
+# target, so they are the two where a hostile binary can allocate without bound — and
+# strace carried the Phase-2 ceiling while ltrace, doing the identical thing, carried none.
+# That is the same asymmetry deviation D9 corrected for --sandbox (v5 §3 scoped the sandbox
+# to ltrace only, predating strace), just pointing the other way. Bounding one executing
+# stage and not the other is not a defensible position in either direction.
 tier_ceiling_for_stage() {
+    local mb
     case "${1:-}" in
-        radare2)                          printf '%s' "$TIER_R2_CEIL_MB" ;;
-        strace|floss|managed|pydecomp)    printf '%s' "$TIER_PHASE2_CEIL_MB" ;;
-        ghidra)                           tier_mb_of "$TIER_MAXMEM_GHIDRA" ;;
-        *)                                printf '0' ;;
+        radare2)                                printf -v mb '%s' "$TIER_R2_CEIL_MB" ;;
+        ltrace|strace|floss|managed|pydecomp)   printf -v mb '%s' "$TIER_PHASE2_CEIL_MB" ;;
+        ghidra)                                 mb="$(tier_mb_of "$TIER_MAXMEM_GHIDRA")" ;;
+        *)                                      mb=0 ;;
     esac
+
+    # REVCTF_CEIL_MB — a test hook, and a deliberately narrow one. It OVERRIDES the value of
+    # a ceiling that already exists; it never INVENTS one, so a stage the tier leaves
+    # unbounded stays unbounded and the shape of the table cannot be altered by an
+    # environment variable.
+    #
+    # It exists because enforcement can only be tested by breaching it, and breaching a
+    # 512MB ceiling honestly means allocating 512MB. tools/run-tests.sh uses this to drive
+    # every bounded stage into its ceiling in seconds, which is what lets the m5enforce
+    # section DERIVE its stage list from this function instead of hardcoding two names —
+    # the hardcoding is why dyn_run's bypass survived M5 unnoticed.
+    #
+    # TIER_CEIL_OVERRIDE, not $REVCTF_CEIL_MB: tier_resolve has already validated it and
+    # added the "INJECTED via REVCTF_CEIL_MB" note, so the value cannot take effect without
+    # the report saying that it did. Reading the environment here instead was the whole
+    # defect — a silent cap with nothing on screen to explain the failures it causes.
+    if [[ -n $TIER_CEIL_OVERRIDE && $mb -gt 0 ]]; then
+        mb="$TIER_CEIL_OVERRIDE"
+    fi
+
+    printf '%s' "$mb"
     return 0
 }
 

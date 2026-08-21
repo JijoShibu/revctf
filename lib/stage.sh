@@ -255,13 +255,36 @@ st_mem_apply_ulimit() {
 # measured at 70 seconds for a binwalk over a 220MB target, during which revctf looked
 # hung. `wait` is interruptible, so the handler fires at once and can kill the child.
 #
+# ST_OWN_SESSION=1 asks for the launch semantics the two EXECUTING stages need: the tool
+# runs in a session of its own (`setsid`) with stdin closed, and the resulting process-group
+# id is published in ST_LAST_PGID so the caller can sweep whatever the target forked and
+# abandoned. It is opt-in rather than the default so the other twelve stages keep the exact
+# launch semantics they were verified with.
+#
+# WHY IT EXISTS AT ALL (found 2026-08-21 by mutation-testing the harness): lib/stage_dynamic.sh
+# used to run `setsid timeout ... &` itself, which is the one place in the codebase a tool
+# was launched outside this function. The cost was silent — st_mem_prefix never ran, so the
+# Phase-2 ceiling that tier_ceiling_for_stage returns for strace was printed by --verbose and
+# enforced by nothing. m5enforce hardcoded radare2 and floss, so no check looked.
+declare -g ST_OWN_SESSION=0
+declare -g ST_LAST_PGID=""
+
 # Sets ST_CHILD_PID for the duration. Returns the command's exit status; never exits.
 st_run_bounded() {
     local tmo="$1" out="$2" err="$3"; shift 3
     [[ ${1:-} == "--" ]] && shift
     local rc=0
-    local -a _mempre=()
+    local -a _mempre=() _sess=()
     st_mem_prefix _mempre
+    ST_LAST_PGID=""
+    # `setsid` must sit OUTSIDE the systemd-run scope. Inside, the new session leader would
+    # be a grandchild of the scope and ST_CHILD_PID would no longer be the group leader, so
+    # the orphan sweep would signal the wrong group. Outside, revctf is non-interactive and
+    # therefore has no job control, so the backgrounded subshell is NOT a process-group
+    # leader; `setsid` consequently execs in place instead of forking, and ST_CHILD_PID is
+    # both the session leader and the PGID. Verified, not assumed — see the orphan-sweep and
+    # ceiling-breach checks in tools/run-tests.sh.
+    [[ ${ST_OWN_SESSION:-0} -eq 1 ]] && _sess=(setsid)
     # `ulimit -f` takes 512-byte blocks and is inherited by the exec'd command. `exec`
     # replaces the subshell, so ST_CHILD_PID is the timeout process itself and the existing
     # kill path still works.
@@ -269,10 +292,20 @@ st_run_bounded() {
     # `timeout` sits INSIDE the scope rather than outside it. Outside, killing systemd-run
     # from `timeout` would race the scope teardown; inside, the timeout process is itself
     # bounded and its 124 propagates out through the scope unchanged (verified).
-    ( ulimit -f $(( ST_MAX_OUT_KB * 2 )) 2>/dev/null
-      st_mem_apply_ulimit
-      exec ${_mempre[@]+"${_mempre[@]}"} timeout -k 5 "$tmo" "$@" >"$out" 2>"$err" ) &
+    if [[ ${ST_OWN_SESSION:-0} -eq 1 ]]; then
+        # stdin closed: a target that reads input must not block forever waiting for a
+        # terminal that will never answer (v3 §5 step 8).
+        ( ulimit -f $(( ST_MAX_OUT_KB * 2 )) 2>/dev/null
+          st_mem_apply_ulimit
+          exec ${_sess[@]+"${_sess[@]}"} ${_mempre[@]+"${_mempre[@]}"} \
+               timeout -k 5 "$tmo" "$@" >"$out" 2>"$err" </dev/null ) &
+    else
+        ( ulimit -f $(( ST_MAX_OUT_KB * 2 )) 2>/dev/null
+          st_mem_apply_ulimit
+          exec ${_mempre[@]+"${_mempre[@]}"} timeout -k 5 "$tmo" "$@" >"$out" 2>"$err" ) &
+    fi
     ST_CHILD_PID=$!
+    [[ ${ST_OWN_SESSION:-0} -eq 1 ]] && ST_LAST_PGID=$ST_CHILD_PID
     # `2>/dev/null` on the wait, not on the job: when a job is killed by a signal bash
     # prints its own "Killed  ( ulimit -f ...; exec timeout ... )" notice, dumping the whole
     # internal command line onto the user's terminal. That was rare before M5 (only the

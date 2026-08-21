@@ -5,6 +5,67 @@ section references (v3 §8, v5 §4.1, v6 §11) point at the design documents.
 
 ---
 
+## [0.3.2-m5] — 2026-08-21 — the tier ceilings are now actually enforced
+
+`v0.3.1-m5` claimed "the RAM-tier memory ceilings are enforced". That was false for three
+of the seven bounded stages. Mutation-testing the verification harness
+(`tools/verify-harness.sh`, new) found the gap and three more defects of the same shape.
+Earlier tags are left in place: they are an accurate record of what was believed at the
+time, which was more than was true.
+
+### Added
+
+- **`tools/verify-harness.sh` — mutation testing for the verification harness.** Applies a
+  known breakage, asserts the named checks flip PASS → FAIL, restores the tree byte-identical
+  and asserts green again. Each expectation names both the check's pass description and its
+  fail description, and the pass side is asserted against the baseline run — so a check that
+  was *skipped* can never be credited with detecting anything. Five mutations:
+  `ghidra_script`, `flag_tiers`, `tier_ceiling`, `dyn_bypass`, `kill_conflation`.
+- **`tools/verify-tier-c.sh`** — closes the one M5 exit criterion injection cannot close. It
+  **refuses to run** unless real detected RAM is under 2560MB, so it cannot be satisfied by
+  `REVCTF_RAM_MB`.
+- **A `RESOURCES AND LIMITS` section in the report.** `tier_report()` was called only from
+  `dry_run_plan()`, so the tier, the ceilings and every `TIER_NOTES` entry appeared in
+  `--dry-run` and in no report anybody keeps.
+- **`REVCTF_CEIL_MB`** — a narrow test hook that overrides the value of an existing ceiling
+  and never invents one. Validated and announced once in `tier_resolve`, and labelled
+  `INJECTED via REVCTF_CEIL_MB` in the report, exactly as `REVCTF_RAM_MB` is.
+- `--dry-run` prints `[ceiling NMB]` per stage.
+
+### Fixed
+
+- **`dyn_run` bypassed `st_run_bounded`**, so the Phase-2 ceiling reported for `ltrace` and
+  `strace` under `--verbose` was enforced by nothing. `st_run_bounded` now offers
+  `ST_OWN_SESSION` (setsid + closed stdin + `ST_LAST_PGID`) so the executing stages get the
+  session their orphan sweep needs *and* the ceiling every other stage gets.
+- **`stage_pydecomp` bypassed `st_run_bounded`** the same way — third instance. `ulimit -f`
+  never applied there either, so the per-stage output cap did not hold.
+- **`ltrace` and `strace` never captured a trace.** Both write to stderr unless given `-o`;
+  the trace went to the stage error file, which the report reads only on failure. The
+  capture held the banner plus the *target's* own stdout, and `dyn_finish` then appended
+  "the trace above is still valid" to it. **This makes M3's Definition of Done — "all 13
+  stages run end to end" — false for two stages at the time it was signed off.**
+- **`dyn_finish` reported 124 and 137 as the same event**, the regression `st_explain_kill`
+  was extracted to prevent across six other stages.
+- **`dyn_finish`'s `[[ -s $out ]]` tested the banner**, making its "empty" and "failed"
+  branches unreachable.
+- **`ltrace` carried no memory ceiling** while `strace`, doing the identical thing, carried
+  one — the same asymmetry D9 corrected for `--sandbox`, pointing the other way.
+- **Five flag checks were vacuous.** They grepped the whole report, which embeds every
+  capture, so they passed with `_FLAG_BRACED` gutted. All flag assertions now go through
+  `flag_section()`.
+
+### Changed
+
+- **`m5enforce` derives its stage list from `tier_ceiling_for_stage`** via the plan, instead
+  of hardcoding `radare2` and `floss` — that hardcoding is why `dyn_run`'s bypass survived
+  M5. A bounded stage with no test target fails; one whose tool is absent skips with a
+  stated reason.
+- Enforcement is proven by breach: at `REVCTF_CEIL_MB=1` every bounded stage is SIGKILLed.
+- A `124|137` grep ban outside `st_explain_kill`, in the same spirit as the PCRE ban.
+
+---
+
 ## [Unreleased] — scope reduction: auto-swap removed, TUI frozen
 
 Acting on QA review #2's two simplification recommendations.
