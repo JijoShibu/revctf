@@ -115,3 +115,145 @@ estimate made afterwards cannot be quietly shaped by the result. It gets built o
 If it turns out to need a disassembly parser, per-tool output handling, or special cases per
 architecture, it fails the standing rule (a fix must not cost more than the defect it
 prevents) and is recorded as rejected with the reason.
+
+---
+
+# RESULTS — scored against the table above, as written
+
+Run on the Kali VM, idle, 2026-08-21. Full output directories kept in
+`acceptance-artifacts/` as the "before" half of the M6 sandbox before/after pair.
+
+| | `unpackme-upx` | `bbbbloat` |
+|---|---|---|
+| exit | 0 | 0 |
+| wall clock | **102s** | **10s** |
+| stages failed | none | none |
+| flags: high / med / low | 0 / 1 / 2 | 0 / 1 / 0 |
+
+## C1 — Stage 0 unpacks `unpackme-upx`: **PASS**
+
+Predicted YES. `Packer: upx detected`, `Unwrap: OK — analysing the unpacked image`,
+379,108 B → 978KB, reclassified `elf`, and the whole static pipeline then ran against the
+unpacked image. The headline path works on a real target that is harder than the corpus
+fixture (statically linked, no section headers).
+
+## C2 — Flag found: **FAIL, exactly as predicted**
+
+Neither flag was recovered. Zero high-confidence candidates on both targets. What *was*
+reported:
+
+- `unpackme`: one medium (a 40-hex build ID) and two low (`abcdefghijklmnopqrstuvwxyz{|}`
+  and its uppercase twin — an alphabet table in libc, matched by `_FLAG_GENERIC` because it
+  happens to contain `{`).
+- `bbbbloat`: one medium, the GNU BuildID.
+
+The prediction and its reasoning both held: the flag scanner reads stage captures, and no
+capture contained the flag, because a stack string is never in `strings` and FLOSS's
+stack-string extraction is PE-only.
+
+## C3 — Does the report tell a beginner what to do next?
+
+**(a) Does it explain the FLOSS limitation? PASS.** Verbatim from `floss.txt`:
+
+> NOTE: FLOSS can only recover stack, tight and decoded strings from PE binaries. This
+> target is elf, so only static extraction ran. An absent flag here does NOT mean there is
+> no hidden string — it means this tool could not look for one in this format.
+
+That is the right message and it is the difference between an honest empty result and a
+false negative. It was predicted to pass and it did.
+
+**(b) Actionable next step? PARTIAL, as predicted.** Item 6 of WHAT TO TRY NEXT does say
+"Read the ghidra and radare2 sections together: pseudocode tells you what the program
+decides, the disassembly tells you exactly how" — which is, in fact, exactly where both
+flags live. But it is item **6**, below four filler lines of the form "Stage X did not run
+(skipped). If the flag is hiding there, that is the gap in this report" — for `managed` and
+`pydecomp`, which could never apply to an ELF. The one genuinely useful pointer is buried
+under four that are noise.
+
+**(c) Anything actively misleading? PASS, but narrowly.** Nothing states or implies the
+binary has no flag. The medium/low entries are explicitly captioned as leads rather than
+answers. The weakness is the two low-confidence alphabet strings, which are pure noise from
+`_FLAG_GENERIC` matching a libc character table.
+
+## C4 — Ghidra pseudo-C makes the constants actionable: **PASS on both**
+
+**The `unpackme` prediction was UNCERTAIN and it was wrong, in the good direction.** Ghidra
+analysed the 978KB statically-linked image in 89s and produced the decisive function:
+
+```c
+  local_38 = 0x4c75257240343a41;
+  local_30 = 0x30623e306b6d4146;
+  local_28 = 0x3532666630486637;
+  ...
+  if (local_44 == 0xb83cb) {
+    local_40 = (char *)rotate_encrypt(0,&local_38);
+```
+
+`bbbbloat` likewise, including `if (local_48 == 0x86187)`. Everything a solver needs is
+present: the constants, the magic number, and — because `unpackme` is statically linked and
+keeps its symbols — the name `rotate_encrypt`, which names the transform outright.
+
+So by the criterion as written, **revctf did its job on both targets even though it printed
+neither flag** — but only barely, because C3(b) buries the pointer to that output.
+
+## C5 — Wall clock: **PASS on both**
+
+`bbbbloat` 10s (predicted 30–60s; faster). `unpackme-upx` 102s (predicted 2–5 min; inside
+it). Both well under the 10-minute fail line. Ghidra dominates: 89 of the 102s.
+
+## Summary
+
+| Criterion | Predicted | Actual |
+|---|---|---|
+| C1 unpack | YES | **PASS** |
+| C2 flag found | NO | **FAIL (as predicted)** |
+| C3a explains the gap | YES | **PASS** |
+| C3b actionable | PARTIAL | **PARTIAL** |
+| C3c misleading | NO | **PASS** |
+| C4 constants actionable | YES / UNCERTAIN | **PASS / PASS** (prediction beaten) |
+| C5 wall clock | 30–60s / 2–5min | **10s / 102s — PASS** |
+
+## The pre-registered decoder hypothesis: CONFIRMED, and better than expected
+
+The hypothesis was that little-endian decoding of the immediates would recover the flag.
+**Tested against the real constants, that alone produces ciphertext, not the flag:**
+
+```
+bbbbloat  little-endian only -> 'A:4@r%uL4Ff0f9b03=_cf0be55b`e2N'
+```
+
+The stack string is the *encrypted* form — which the pseudo-C says outright, by naming the
+function `rotate_encrypt`. So the hypothesis as originally written would have failed on both
+of these targets, added a fifth decoder, and produced nothing but noise. That is precisely
+the outcome pre-registration exists to make visible rather than quietly reinterpretable.
+
+**But the transform is ROT47** — a constant ±47 shift over printable ASCII, and a standard
+CTF encoding sitting one step beyond the ROT13 the sweep already does:
+
+```
+little-endian decode + ROT47  ->  picoCTF{cu7_7h3_bl047_36dd316a}   MATCH
+little-endian decode + ROT47  ->  picoCTF{up><_m3_f7w_77ad107e}     MATCH
+```
+
+Both flags, exactly, from captures the pipeline already produces. Cost estimate and the
+decision on whether to build it are recorded separately — it is parked behind M6.
+
+## Findings that only a real target could produce
+
+1. **A downloaded binary is mode 644, so the dynamic stages skip.** `unpackme-upx` was
+   scanned exactly as downloaded and both `ltrace` and `strace` skipped with "target is not
+   executable (chmod +x it to enable dynamic analysis)". The message is correct and
+   actionable, but this is the *default* first-run experience for every user who downloads a
+   challenge, and two of fourteen stages silently drop out of it. No corpus fixture caught
+   this because `build-test-corpus.sh` chmods everything it builds.
+
+2. **WHAT TO TRY NEXT pads with irrelevant skips.** Listing `managed` and `pydecomp` as
+   "gaps in this report" for a native ELF is noise that pushes the one useful pointer to
+   position 6.
+
+3. **`_FLAG_GENERIC` matches libc's alphabet table.** `abcdefghijklmnopqrstuvwxyz{|}`
+   contains `{`, so it is reported as a low-confidence candidate on every glibc binary.
+
+4. **Ghidra is the whole cost.** 89 of 102s on `unpackme`, 8 of 10s on `bbbbloat`.
+   The 1800s bound recorded as an unmeasured guess in CLAUDE.md §6 is not close to binding
+   on either.

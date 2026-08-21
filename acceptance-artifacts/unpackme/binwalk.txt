@@ -1,0 +1,14 @@
+
+DECIMAL       HEXADECIMAL     DESCRIPTION
+--------------------------------------------------------------------------------
+0             0x0             ELF, 64-bit LSB executable, AMD x86-64, version 1 (GNU/Linux)
+347831        0x54EB7         ESP Image (ESP32): segment count: 1, flash mode: QUIO, flash speed: 40MHz, flash size: 1MB, entry address: 0xf16f983, hash: none
+734000        0xB3330         Unix path: /usr/share/locale
+749270        0xB6ED6         Unix path: /usr/lib/getconf
+757072        0xB8D50         Unix path: /usr/lib/locale
+759072        0xB9520         Unix path: /usr/lib/locale/locale-archive
+797096        0xC29A8         ESP Image (ESP32): segment count: 3, flash mode: QUIO, flash speed: 40MHz, flash size: 1MB, entry address: 0x0, hash: none
+798560        0xC2F60         ESP Image (ESP32): segment count: 4, flash mode: QUIO, flash speed: 40MHz, flash size: 1MB, entry address: 0x0, hash: none
+839447        0xCCF17         Unix path: /usr/lib/x86_64-linux-gnu/
+924584        0xE1BA8         ESP Image (ESP32-S2): segment count: 1, flash mode: QUIO, flash speed: 40MHz, flash size: 1MB, entry address: 0x0, hash: none
+

@@ -1,0 +1,4 @@
+=== Dynamic linkage (ldd) ===
+	not a dynamic executable
+(not a dynamic executable — likely statically linked)
+
