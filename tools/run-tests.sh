@@ -1742,30 +1742,51 @@ test_m6() {
         'flag\{cr4ckm3_s0lv3d\}' flag_section "$sb/report.txt"
 
     # --- egress, with a positive control -------------------------------------------------
+    #
+    # THE PROBE MUST RUN UNDER sbx_wrap'S OWN ARGV, not under flags this file retypes.
+    # Written the obvious way — `docker run --network=none ... bash -c probe` — this check
+    # proves that DOCKER honours --network=none, which was never in doubt, and says nothing
+    # about whether revctf passes it. Deleting --network=none from lib/sandbox.sh left it
+    # green (mutation `sandbox_bypass`), which is the same mistake as the ghidra section
+    # that ran analyzeHeadless with no -postScript and so tested Ghidra, never revctf.
+    #
+    # So the wrapper is sourced and asked to build the command, exactly as a stage would.
+    # is_uint lives in the entry script, which cannot be sourced here; the one-liner below
+    # is that definition verbatim.
     local probe='exec 3<>/dev/tcp/1.1.1.1/53'
+    local pscratch="$o/probe"; mkdir -p "$pscratch"; chmod 0777 "$pscratch"
+    _m6_contract_run() {
+        ( # shellcheck disable=SC2329  # called by sbx_wrap, which is sourced below
+          is_uint() { [[ $1 =~ ^[0-9]+$ ]]; }
+          # shellcheck source=/dev/null
+          source "$ROOT/lib/sandbox.sh" || exit 99
+          local -a pre=()
+          sbx_wrap pre "$pscratch" "$t" "revctf-m6probe-$$" 512
+          timeout 25 "${pre[@]}" "$@" )
+    }
+
     if ! timeout 25 docker run --rm --network=bridge revctf-sandbox:1 \
             bash -c "$probe" >/dev/null 2>&1; then
         skip "no network egress from the sandbox" \
             "this host cannot reach 1.1.1.1:53 even WITH networking, so the negative result would prove nothing"
-    elif timeout 25 docker run --rm --network=none --read-only --cap-drop=ALL \
-            --security-opt no-new-privileges --user nobody \
-            revctf-sandbox:1 bash -c "$probe" >/dev/null 2>&1; then
+    elif _m6_contract_run bash -c "$probe" >/dev/null 2>&1; then
         no "network egress from the sandbox" \
-            "the target CAN reach the network under the contract — isolation is not holding"
+            "the target CAN reach the network under the argv sbx_wrap builds — isolation is not holding"
     else
         ok "no network egress from the sandbox (same probe succeeds with --network=bridge)"
     fi
 
     # An interface-level assertion, which needs no outbound connectivity at all and so
-    # always runs. Under --network=none the container has loopback and nothing else.
+    # always runs. Under the contract the container has loopback and nothing else. Also
+    # routed through sbx_wrap, for the same reason as the probe above.
     local ifs
-    ifs=$(timeout 25 docker run --rm --network=none revctf-sandbox:1 \
-            ls /sys/class/net 2>/dev/null | tr -d ' \n')
+    ifs=$(_m6_contract_run ls /sys/class/net 2>/dev/null | tr -d ' \n')
     if [[ $ifs == lo ]]; then
         ok "the sandboxed container has only a loopback interface"
     else
         no "unexpected network interfaces in the sandbox" "saw '$ifs', wanted exactly 'lo'"
     fi
+    unset -f _m6_contract_run
     return 0
 }
 
