@@ -1,0 +1,13 @@
+=== file(1) on the target ===
+/tmp/revctf-work.SNg65c/unpacked.unpackme-upx: ELF 64-bit LSB executable, x86-64, version 1 (GNU/Linux), statically linked, BuildID[sha1]=c1b9bc8dd45970af43a7f1c3731c6098a4b974a8, for GNU/Linux 3.2.0, not stripped
+
+=== file(1) on the original (before unwrap) ===
+/home/jijo/revctf-realworld/unpackme-upx: ELF 64-bit LSB executable, x86-64, version 1 (GNU/Linux), statically linked, no section header
+
+=== MIME type ===
+application/x-executable; charset=binary
+
+=== First 16 bytes (magic) ===
+ 7f 45 4c 46 02 01 01 03 00 00 00 00 00 00 00 00  >.ELF............<
+
+resolved format: elf

@@ -1,0 +1,37 @@
+=== Dynamic linkage (ldd) ===
+	not a dynamic executable
+(not a dynamic executable — likely statically linked)
+
+=== STRACE — THIS STAGE EXECUTES THE TARGET ===
+Isolation : Docker container (revctf-sandbox:1) — no network, read-only filesystem,
+            all capabilities dropped, running as an unprivileged user.
+            The target was copied in read-only; nothing it does can reach
+            this machine or the network.
+Contract  : docker run --rm --name revctf-803028-strace --network=none --read-only --cap-drop=ALL --security-opt no-new-privileges --user nobody --pids-limit 128 --memory 1536m --memory-swap 1536m -v /tmp/revctf-work.SNg65c/sbx:/work -v /tmp/revctf-work.SNg65c/sbx-target:/target:ro -w /work revctf-sandbox:1
+Bounds    : killed after 10s; the container is then removed outright
+Arguments : none — the target is run with no argv and stdin closed
+Note      : your file was not executable, so a runnable COPY was made and
+            traced. Your original file was not modified.
+
+=== Syscall trace ===
+11    04:51:41.741472 execve("/target", ["/target"], 0x7ffd820a68e8 /* 3 vars */) = 0 <0.000610>
+11    04:51:41.742832 arch_prctl(0x3001 /* ARCH_??? */, 0x7fff4e9e1b90) = -1 EINVAL (Invalid argument) <0.000273>
+11    04:51:41.743909 brk(NULL)         = 0x8002000 <0.000957>
+11    04:51:41.745149 brk(0x80031c0)    = 0x80031c0 <0.000088>
+11    04:51:41.745481 arch_prctl(ARCH_SET_FS, 0x8002880) = 0 <0.000269>
+11    04:51:41.746349 uname({sysname="Linux", nodename="5be127ac7db4", ...}) = 0 <0.000296>
+11    04:51:41.747163 readlink("/proc/self/exe", "/target", 4096) = 7 <0.000338>
+11    04:51:41.747684 brk(0x80241c0)    = 0x80241c0 <0.000129>
+11    04:51:41.747948 brk(0x8025000)    = 0x8025000 <0.000151>
+11    04:51:41.748242 mprotect(0x4dc000, 12288, PROT_READ) = 0 <0.000149>
+11    04:51:41.748885 fstat(1, {st_mode=S_IFIFO|0600, st_size=0, ...}) = 0 <0.000134>
+11    04:51:41.749210 fstat(0, {st_mode=S_IFCHR|0666, st_rdev=makedev(0x1, 0x3), ...}) = 0 <0.000186>
+11    04:51:41.749571 ioctl(0, TCGETS, 0x7fff4e9e10e0) = -1 ENOTTY (Inappropriate ioctl for device) <0.000146>
+11    04:51:41.749950 read(0, "", 4096) = 0 <0.000117>
+11    04:51:41.750192 write(1, "What's my favorite number? Sorry"..., 49) = 49 <0.000264>
+11    04:51:41.750600 exit_group(0)     = ?
+11    04:51:41.751391 +++ exited with 0 +++
+
+=== The target's own output (not part of the trace) ===
+What's my favorite number? Sorry, that's not it!
+

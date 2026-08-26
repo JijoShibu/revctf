@@ -1,0 +1,511 @@
+======================================================================
+ revctf 0.1.0-dev — analysis report
+======================================================================
+Target    : /home/jijo/revctf-realworld/bbbbloat
+Size      : 14KB
+Format    : elf
+Captures  : acceptance-artifacts/sandboxed/bbbbloat
+Finished  : 2026-08-26 00:53:59
+Resources : Tier A, 3917MB RAM
+
+----------------------------------------------------------------------
+ POSSIBLE FLAGS
+----------------------------------------------------------------------
+[FLAG] Possible flags found: 1 high, 1 medium, 0 low confidence
+
+
+--- high confidence ---
+  picoCTF{cu7_7h3_bl047_36dd316a}
+      found by: ghidra (recovered by stack-string+ROT47 decoding)
+
+--- medium confidence ---
+  99c5c1ce06be240322c15bcabc3cd90318eb2003
+      found by: triage
+
+Note: medium-confidence entries are unwrapped hash-like tokens. Binaries
+are full of these (build IDs, GUIDs, checksums), so treat them as leads
+rather than answers.
+
+----------------------------------------------------------------------
+ WHAT RAN
+----------------------------------------------------------------------
+STAGE       STATUS      TIME      OUTPUT  NOTE
+triage      ok            0s        398B  
+file        ok            0s        459B  
+strings     ok            0s        624B  
+binwalk     ok            0s        215B  
+hexdump     ok            0s         5KB  
+checksec    ok            0s         4KB  
+objdump     ok            0s        29KB  
+ltrace      ok            1s         1KB  
+radare2     ok            0s        13KB  disassembled main via symbol table
+strace      ok            1s         4KB  
+floss       ok            0s         1KB  static strings only
+managed     skipped       0s          0B  not a managed assembly (this one is elf)
+pydecomp    skipped       1s          0B  not Python bytecode (this one is elf)
+ghidra      ok            9s         9KB  
+
+ok = produced output   none = ran, found nothing   failed = see DIAGNOSTICS
+skipped = not applicable to this file, or disabled by a flag
+
+----------------------------------------------------------------------
+ STAGE DETAIL
+----------------------------------------------------------------------
+
+### triage  [ok, 0s]
+Works out what kind of file this actually is, and unpacks it if it is compressed, packed or inside an archive. Everything below analyses whatever this stage found.
+--
+  Target       : /home/jijo/revctf-realworld/bbbbloat
+  Size         : 14KB (14472 bytes)
+  file(1)      : ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=99c5c1ce06be240322c15bcabc3cd90318eb2003, for GNU/Linux 3.2.0, stripped
+  Classified as: elf
+  
+  Routing
+    native ELF — full static pipeline, ltrace and strace enabled
+-- full output: acceptance-artifacts/sandboxed/bbbbloat/triage.txt (7 lines)
+
+### file  [ok, 0s]
+One-line identification: architecture, whether it is stripped of names, and whether it is a Linux, Windows or Mac program.
+--
+  === file(1) on the target ===
+  /home/jijo/revctf-realworld/bbbbloat: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=99c5c1ce06be240322c15bcabc3cd90318eb2003, for GNU/Linux 3.2.0, stripped
+  
+  === MIME type ===
+  application/x-pie-executable; charset=binary
+  
+  === First 16 bytes (magic) ===
+   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00  >.ELF............<
+  
+  resolved format: elf
+-- full output: acceptance-artifacts/sandboxed/bbbbloat/file.txt (10 lines)
+
+### strings  [ok, 0s]
+Every run of readable text inside the binary. Flags are often sitting here in plain sight, so this is the first place to look.
+--
+  /lib64/ld-linux-x86-64.so.2
+  libc.so.6
+  __isoc99_scanf
+  __stack_chk_fail
+  putchar
+  strdup
+  printf
+  strlen
+  stdout
+  __cxa_finalize
+  __libc_start_main
+  GLIBC_2.7
+  GLIBC_2.4
+  GLIBC_2.2.5
+  _ITM_deregisterTMCloneTable
+  __gmon_start__
+  _ITM_registerTMCloneTable
+  A:4@r%uLH
+  4Ff0f9b0H
+  3=_cf0beH
+  55b`e2N
+  dH3<%(
+  []A\A]A^A_
+  What's my favorite number? 
+  Sorry, that's not it!
+  ... 22 more lines
+-- full output: acceptance-artifacts/sandboxed/bbbbloat/strings.txt (47 lines)
+
+### binwalk  [ok, 0s]
+Looks for whole files hidden inside this one — a zip, an image, a filesystem. CTF challenges hide payloads this way.
+--
+  
+  DECIMAL       HEXADECIMAL     DESCRIPTION
+  --------------------------------------------------------------------------------
+  0             0x0             ELF, 64-bit LSB shared object, AMD x86-64, version 1 (SYSV)
+  
+-- full output: acceptance-artifacts/sandboxed/bbbbloat/binwalk.txt (5 lines)
+
+### hexdump  [ok, 0s]
+The raw bytes. Useful for spotting a file header, padding, or an obviously encoded block that other tools missed.
+--
+  === First 512 bytes (preview — use --full-hexdump for the whole file) ===
+  00000000  7f 45 4c 46 02 01 01 00  00 00 00 00 00 00 00 00  |.ELF............|
+  00000010  03 00 3e 00 01 00 00 00  60 11 00 00 00 00 00 00  |..>.....`.......|
+  00000020  40 00 00 00 00 00 00 00  48 31 00 00 00 00 00 00  |@.......H1......|
+  00000030  00 00 00 00 40 00 38 00  0d 00 40 00 1d 00 1c 00  |....@.8...@.....|
+  00000040  06 00 00 00 04 00 00 00  40 00 00 00 00 00 00 00  |........@.......|
+  00000050  40 00 00 00 00 00 00 00  40 00 00 00 00 00 00 00  |@.......@.......|
+  00000060  d8 02 00 00 00 00 00 00  d8 02 00 00 00 00 00 00  |................|
+  00000070  08 00 00 00 00 00 00 00  03 00 00 00 04 00 00 00  |................|
+  00000080  18 03 00 00 00 00 00 00  18 03 00 00 00 00 00 00  |................|
+  00000090  18 03 00 00 00 00 00 00  1c 00 00 00 00 00 00 00  |................|
+  000000a0  1c 00 00 00 00 00 00 00  01 00 00 00 00 00 00 00  |................|
+  000000b0  01 00 00 00 04 00 00 00  00 00 00 00 00 00 00 00  |................|
+  000000c0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+  000000d0  38 08 00 00 00 00 00 00  38 08 00 00 00 00 00 00  |8.......8.......|
+  000000e0  00 10 00 00 00 00 00 00  01 00 00 00 05 00 00 00  |................|
+  000000f0  00 10 00 00 00 00 00 00  00 10 00 00 00 00 00 00  |................|
+  00000100  00 10 00 00 00 00 00 00  35 06 00 00 00 00 00 00  |........5.......|
+  00000110  35 06 00 00 00 00 00 00  00 10 00 00 00 00 00 00  |5...............|
+  00000120  01 00 00 00 04 00 00 00  00 20 00 00 00 00 00 00  |......... ......|
+  00000130  00 20 00 00 00 00 00 00  00 20 00 00 00 00 00 00  |. ....... ......|
+  00000140  b0 01 00 00 00 00 00 00  b0 01 00 00 00 00 00 00  |................|
+  00000150  00 10 00 00 00 00 00 00  01 00 00 00 06 00 00 00  |................|
+  00000160  78 2d 00 00 00 00 00 00  78 3d 00 00 00 00 00 00  |x-......x=......|
+  00000170  78 3d 00 00 00 00 00 00  98 02 00 00 00 00 00 00  |x=..............|
+  ... 46 more lines
+-- full output: acceptance-artifacts/sandboxed/bbbbloat/hexdump.txt (71 lines)
+
+### checksec  [ok, 0s]
+Which security protections the binary was built with, plus its imports and sections. Tells you which exploitation routes are open.
+--
+  === Exploit mitigations (checksec) ===
+  RELRO           STACK CANARY      NX            PIE             RPATH      RUNPATH	Symbols		FORTIFY	Fortified	Fortifiable	FILE
+  Full RELRO      Canary found      NX enabled    PIE enabled     No RPATH   No RUNPATH   No Symbols	  No	0		1		/home/jijo/revctf-realworld/bbbbloat
+  
+  === Mitigations, machine-readable ===
+  { "/home/jijo/revctf-realworld/bbbbloat": { "relro":"full","canary":"yes","nx":"yes","pie":"yes","rpath":"no","runpath":"no","symbols":"no","fortify_source":"no","fortified":"0","fortify-able":"1" } }
+  
+  === Binary info (rabin2 -I) ===
+  arch     x86
+  baddr    0x0
+  binsz    12612
+  bintype  elf
+  bits     64
+  canary   true
+  injprot  false
+  class    ELF64
+  compiler GCC: (Ubuntu 9.3.0-17ubuntu1~20.04) 9.3.0
+  crypto   false
+  endian   little
+  havecode true
+  intrp    /lib64/ld-linux-x86-64.so.2
+  laddr    0x0
+  lang     c
+  linenum  false
+  lsyms    false
+  machine  AMD x86-64 architecture
+  nx       true
+  os       linux
+  pic      true
+  relocs   false
+  relro    full
+  rpath    NONE
+  sanitize false
+  static   false
+  stripped true
+  subsys   linux
+  va       true
+  
+  === Imports (rabin2 -i) ===
+  nth vaddr      bind   type   lib name
+  ... 56 more lines
+-- full output: acceptance-artifacts/sandboxed/bbbbloat/checksec.txt (96 lines)
+
+### objdump  [ok, 0s]
+A second opinion from binutils on the headers and symbols, independent of the tools above. Disagreement between them is itself a clue.
+--
+  === ELF header (readelf -h) ===
+  ELF Header:
+    Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00 
+    Class:                             ELF64
+    Data:                              2's complement, little endian
+    Version:                           1 (current)
+    OS/ABI:                            UNIX - System V
+    ABI Version:                       0
+    Type:                              DYN (Position-Independent Executable file)
+    Machine:                           Advanced Micro Devices X86-64
+    Version:                           0x1
+    Entry point address:               0x1160
+    Start of program headers:          64 (bytes into file)
+    Start of section headers:          12616 (bytes into file)
+    Flags:                             0x0
+    Size of this header:               64 (bytes)
+    Size of program headers:           56 (bytes)
+    Number of program headers:         13
+    Size of section headers:           64 (bytes)
+    Number of section headers:         29
+    Section header string table index: 28
+  
+  === Sections (readelf -S) ===
+  There are 29 section headers, starting at offset 0x3148:
+  
+  Section Headers:
+    [Nr] Name              Type            Address          Off    Size   ES Flg Lk Inf Al
+    [ 0]                   NULL            0000000000000000 000000 000000 00      0   0  0
+    [ 1] .interp           PROGBITS        0000000000000318 000318 00001c 00   A  0   0  1
+    [ 2] .note.gnu.property NOTE            0000000000000338 000338 000020 00   A  0   0  8
+    [ 3] .note.gnu.build-id NOTE            0000000000000358 000358 000024 00   A  0   0  4
+    [ 4] .note.ABI-tag     NOTE            000000000000037c 00037c 000020 00   A  0   0  4
+    [ 5] .gnu.hash         GNU_HASH        00000000000003a0 0003a0 000028 00   A  6   0  8
+    [ 6] .dynsym           DYNSYM          00000000000003c8 0003c8 000180 18   A  7   1  8
+    [ 7] .dynstr           STRTAB          0000000000000548 000548 0000e0 00   A  0   0  1
+    [ 8] .gnu.version      VERSYM          0000000000000628 000628 000020 02   A  6   0  2
+    [ 9] .gnu.version_r    VERNEED         0000000000000648 000648 000040 00   A  7   1  8
+    [10] .rela.dyn         RELA            0000000000000688 000688 0000d8 18   A  6   0  8
+    [11] .rela.plt         RELA            0000000000000760 000760 0000d8 18  AI  6  24  8
+    [12] .init             PROGBITS        0000000000001000 001000 00001b 00  AX  0   0  4
+  ... 527 more lines
+-- full output: acceptance-artifacts/sandboxed/bbbbloat/objdump.txt (567 lines)
+
+### ltrace  [ok, 1s]
+RUNS the program and records the library functions it calls — strcmp, printf, memcmp. A password check often reveals the expected value right here.
+--
+  === LTRACE — THIS STAGE EXECUTES THE TARGET ===
+  Isolation : Docker container (revctf-sandbox:1) — no network, read-only filesystem,
+              all capabilities dropped, running as an unprivileged user.
+              The target was copied in read-only; nothing it does can reach
+              this machine or the network.
+  Contract  : docker run --rm --name revctf-807588-ltrace --network=none --read-only --cap-drop=ALL --security-opt no-new-privileges --user nobody --pids-limit 128 --memory 1536m --memory-swap 1536m -v /tmp/revctf-work.zgz0n4/sbx:/work -v /tmp/revctf-work.zgz0n4/sbx-target:/target:ro -w /work revctf-sandbox:1
+  Bounds    : killed after 10s; the container is then removed outright
+  Arguments : none — the target is run with no argv and stdin closed
+  Note      : your file was not executable, so a runnable COPY was made and
+              traced. Your original file was not modified.
+  
+  === Library call trace ===
+  8 printf("What's my favorite number? ")          = 27
+  8 __isoc99_scanf(0x55dd8cddf020, 0x7ffeacb88c50, 0xd2c49, 0xd2c49) = 0xffffffff
+  8 puts("Sorry, that's not it!")                  = 22
+  8 +++ exited (status 0) +++
+  
+  === The target's own output (not part of the trace) ===
+  What's my favorite number? Sorry, that's not it!
+  
+-- full output: acceptance-artifacts/sandboxed/bbbbloat/ltrace.txt (20 lines)
+
+### radare2  [ok, 0s]
+Disassembles the code: the list of functions, and the instructions of the main one. This is where the actual logic lives.
+--
+  === Analysis summary ===
+  Disassembly target: main  (symbol table)
+  Analysis depth    : aaa
+  
+  === REVCTF-SECTION Binary info ===
+  fd       3
+  file     /home/jijo/revctf-realworld/bbbbloat
+  size     0x3888
+  humansz  14.1K
+  mode     r-x
+  format   elf64
+  iorw     false
+  block    0x100
+  type     DYN (Shared object file)
+  arch     x86
+  baddr    0x0
+  binsz    12612
+  bintype  elf
+  bits     64
+  canary   true
+  injprot  false
+  class    ELF64
+  compiler GCC: (Ubuntu 9.3.0-17ubuntu1~20.04) 9.3.0
+  crypto   false
+  endian   little
+  havecode true
+  intrp    /lib64/ld-linux-x86-64.so.2
+  laddr    0x0
+  lang     c
+  linenum  false
+  lsyms    false
+  machine  AMD x86-64 architecture
+  nx       true
+  os       linux
+  pic      true
+  relocs   false
+  relro    full
+  rpath    NONE
+  sanitize false
+  static   false
+  stripped true
+  subsys   linux
+  va       true
+  
+  === REVCTF-SECTION Functions ===
+  0x000010d0    1     11 sym.imp.free
+  0x000010e0    1     11 sym.imp.putchar
+  0x000010f0    1     11 sym.imp.puts
+  0x00001100    1     11 sym.imp.strlen
+  0x00001110    1     11 sym.imp.__stack_chk_fail
+  0x00001120    1     11 sym.imp.printf
+  0x00001130    1     11 sym.imp.fputs
+  0x00001140    1     11 sym.imp.__isoc99_scanf
+  0x00001150    1     11 sym.imp.strdup
+  0x00001160    1     46 entry0
+  0x00001307    6    675 main
+  0x00001240    5     60 entry.init0
+  0x00001200    5     54 entry.fini0
+  0x000010c0    1     11 fcn.000010c0
+  0x00001190    4     34 fcn.00001190
+  ... 199 more lines
+-- full output: acceptance-artifacts/sandboxed/bbbbloat/radare2.txt (259 lines)
+
+### strace  [ok, 1s]
+RUNS the program and records the system calls it makes — files opened, network used. Shows what the program touches outside itself.
+--
+  === Dynamic linkage (ldd) ===
+  	linux-vdso.so.1 (0x00007ff4d37b1000)
+  	libc.so.6 => /usr/lib/x86_64-linux-gnu/libc.so.6 (0x00007ff4d3592000)
+  	/lib64/ld-linux-x86-64.so.2 (0x00007ff4d37b3000)
+  
+  === STRACE — THIS STAGE EXECUTES THE TARGET ===
+  Isolation : Docker container (revctf-sandbox:1) — no network, read-only filesystem,
+              all capabilities dropped, running as an unprivileged user.
+              The target was copied in read-only; nothing it does can reach
+              this machine or the network.
+  Contract  : docker run --rm --name revctf-807588-strace --network=none --read-only --cap-drop=ALL --security-opt no-new-privileges --user nobody --pids-limit 128 --memory 1536m --memory-swap 1536m -v /tmp/revctf-work.zgz0n4/sbx:/work -v /tmp/revctf-work.zgz0n4/sbx-target:/target:ro -w /work revctf-sandbox:1
+  Bounds    : killed after 10s; the container is then removed outright
+  Arguments : none — the target is run with no argv and stdin closed
+  Note      : your file was not executable, so a runnable COPY was made and
+              traced. Your original file was not modified.
+  
+  === Syscall trace ===
+  9     04:53:47.327554 execve("/target", ["/target"], 0x7ffcae647778 /* 3 vars */) = 0 <0.000423>
+  9     04:53:47.328063 brk(NULL)         = 0x563e2dc34000 <0.000002>
+  9     04:53:47.333100 mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7fd88fc30000 <0.000009>
+  9     04:53:47.333136 access("/etc/ld.so.preload", R_OK) = -1 ENOENT (No such file or directory) <0.000003>
+  9     04:53:47.333352 openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3 <0.000007>
+  9     04:53:47.333376 fstat(3, {st_mode=S_IFREG|0644, st_size=4419, ...}) = 0 <0.000002>
+  9     04:53:47.333390 mmap(NULL, 4419, PROT_READ, MAP_PRIVATE, 3, 0) = 0x7fd88fc2e000 <0.000007>
+  9     04:53:47.333403 close(3)          = 0 <0.000002>
+  9     04:53:47.333413 openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libc.so.6", O_RDONLY|O_CLOEXEC) = 3 <0.000006>
+  9     04:53:47.333425 read(3, "\177ELF\2\1\1\3\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0p\236\2\0\0\0\0\0"..., 832) = 832 <0.000003>
+  9     04:53:47.333434 pread64(3, "\6\0\0\0\4\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0"..., 840, 64) = 840 <0.000002>
+  9     04:53:47.333442 fstat(3, {st_mode=S_IFREG|0755, st_size=1995216, ...}) = 0 <0.000002>
+  9     04:53:47.333450 pread64(3, "\6\0\0\0\4\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0"..., 840, 64) = 840 <0.000002>
+  9     04:53:47.333458 mmap(NULL, 2047568, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x7fd88fa3a000 <0.000003>
+  9     04:53:47.333467 mmap(0x7fd88fa62000, 1454080, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x28000) = 0x7fd88fa62000 <0.000007>
+  9     04:53:47.333480 mmap(0x7fd88fbc5000, 352256, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x18b000) = 0x7fd88fbc5000 <0.000004>
+  9     04:53:47.333489 mmap(0x7fd88fc1b000, 24576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1e0000) = 0x7fd88fc1b000 <0.000003>
+  9     04:53:47.333502 mmap(0x7fd88fc21000, 52816, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0x7fd88fc21000 <0.000002>
+  9     04:53:47.333810 close(3)          = 0 <0.000003>
+  9     04:53:47.333832 mmap(NULL, 12288, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7fd88fa37000 <0.000005>
+  9     04:53:47.333851 arch_prctl(ARCH_SET_FS, 0x7fd88fa37780) = 0 <0.000002>
+  9     04:53:47.333858 set_tid_address(0x7fd88fa37a50) = 9 <0.000001>
+  9     04:53:47.333865 set_robust_list(0x7fd88fa37a60, 24) = 0 <0.000001>
+  ... 20 more lines
+-- full output: acceptance-artifacts/sandboxed/bbbbloat/strace.txt (60 lines)
+
+### floss  [ok, 0s]
+Finds strings that ordinary tools miss because the program builds or decodes them at runtime. Obfuscated flags surface here.
+--
+  === FLOSS (static strings only) ===
+  NOTE: FLOSS can only recover stack, tight and decoded strings from PE
+        binaries. This target is elf, so only static extraction ran.
+        An absent flag here does NOT mean there is no hidden string —
+        it means this tool could not look for one in this format.
+  
+  /lib64/ld-linux-x86-64.so.2
+  libc.so.6
+  __isoc99_scanf
+  __stack_chk_fail
+  putchar
+  strdup
+  printf
+  strlen
+  stdout
+  fputs
+  __cxa_finalize
+  __libc_start_main
+  free
+  GLIBC_2.7
+  GLIBC_2.4
+  GLIBC_2.2.5
+  _ITM_deregisterTMCloneTable
+  __gmon_start__
+  _ITM_registerTMCloneTable
+  u+UH
+  < ~XH
+  A:4@r%uLH
+  4Ff0f9b0H
+  3=_cf0beH
+  55b`e2N
+  VUUUH
+  VUUUH
+  VUUUH
+  VUUUH
+  VUUUH
+  VUUUH
+  VUUUH
+  VUUUH
+  dH3<%(
+  ... 36 more lines
+-- full output: acceptance-artifacts/sandboxed/bbbbloat/floss.txt (76 lines)
+
+### managed  [skipped, 0s]
+Java and .NET keep near-complete source inside the file. This recovers it, so you can read the challenge almost as it was written.
+-- skipped: not a managed assembly (this one is elf)
+
+### pydecomp  [skipped, 1s]
+Turns compiled Python back into readable Python, or failing that into bytecode you can still follow line by line.
+-- skipped: not Python bytecode (this one is elf)
+
+### ghidra  [ok, 9s]
+Full decompilation to C-like pseudocode. The slowest stage and usually the most valuable: this is where a hidden password or algorithm becomes readable.
+--
+  Program        : bbbbloat
+  Language       : x86:LE:64:default
+  Compiler spec  : gcc
+  Image base     : 00100000
+  Functions found: 50
+  Mode           : full decompile
+  
+  === Function inventory ===
+    _DT_INIT                                 00101000  (27 bytes)
+    FUN_00101020                             00101020  (13 bytes)
+    FUN_001010c0                             001010c0  (11 bytes)
+    free                                     001010d0  (11 bytes)
+    putchar                                  001010e0  (11 bytes)
+    puts                                     001010f0  (11 bytes)
+    strlen                                   00101100  (11 bytes)
+    __stack_chk_fail                         00101110  (11 bytes)
+    printf                                   00101120  (11 bytes)
+    fputs                                    00101130  (11 bytes)
+    __isoc99_scanf                           00101140  (11 bytes)
+    strdup                                   00101150  (11 bytes)
+    entry                                    00101160  (47 bytes)
+    FUN_00101190                             00101190  (34 bytes)
+    FUN_001011c0                             001011c0  (51 bytes)
+    _FINI_0                                  00101200  (54 bytes)
+    _INIT_0                                  00101240  (9 bytes)
+    FUN_00101249                             00101249  (190 bytes)
+    FUN_00101307                             00101307  (675 bytes)
+    FUN_001015b0                             001015b0  (101 bytes)
+    FUN_00101620                             00101620  (5 bytes)
+    _DT_FINI                                 00101628  (13 bytes)
+    free                                     00105000  (1 bytes)
+    putchar                                  00105008  (1 bytes)
+    _ITM_deregisterTMCloneTable              00105010  (1 bytes)
+    puts                                     00105018  (1 bytes)
+    strlen                                   00105020  (1 bytes)
+    __stack_chk_fail                         00105028  (1 bytes)
+    printf                                   00105030  (1 bytes)
+    fputs                                    00105038  (1 bytes)
+    __libc_start_main                        00105040  (1 bytes)
+    __gmon_start__                           00105048  (1 bytes)
+    __isoc99_scanf                           00105050  (1 bytes)
+    _ITM_registerTMCloneTable                00105058  (1 bytes)
+    strdup                                   00105060  (1 bytes)
+    __cxa_finalize                           00105068  (1 bytes)
+  
+  === Decompiled pseudo-C ===
+  /* ---- FUN_00101020 @ 00101020 ---- */
+  
+  void FUN_00101020(void)
+  
+  {
+    (*(code *)PTR_00103f88)();
+    return;
+  }
+  
+  
+  
+  /* ---- FUN_001010c0 @ 001010c0 ---- */
+  
+  void FUN_001010c0(void)
+  ... 358 more lines
+-- full output: acceptance-artifacts/sandboxed/bbbbloat/ghidra.txt (418 lines)
+
+----------------------------------------------------------------------
+ WHAT TO TRY NEXT
+----------------------------------------------------------------------
+1. Submit the high-confidence candidates above first. If one is rejected,
+   check it is complete — a flag cut off at a buffer boundary looks valid.
+2. Read the ghidra and radare2 sections together: pseudocode tells you what
+   the program decides, the disassembly tells you exactly how.
+
+Captures kept in: acceptance-artifacts/sandboxed/bbbbloat
