@@ -150,7 +150,7 @@ default is build work, not an unknown. **M6 before M7.**
 |---|---|---|
 | M4 | ~~report, TUI, `--summary-only`, config extraction~~ | **DONE** — but the TUI is verified only as far as a `script(1)` pty allows; run `tools/tui-selftest.sh` on a real terminal |
 | M5 | **DONE** — enforcement (genuinely, as of `v0.3.2-m5`), RSS watchdog, tier-driven Ghidra MAXMEM, Phase-2 ceiling measured (D11). Swap offer removed (D10) | Built and verified on the Kali VM, where `systemd-run` works. Tier C on real 2GB hardware still open — run `tools/verify-tier-c.sh` |
-| M6 | **RAISED IN PRIORITY — do this before M7.** Docker sandbox image, `install.sh` hardening, vendor `pyinstxtractor`. **Independent of M5** | **Yes** — Docker 28.5.2 runs on the VM; the full `--network=none --read-only --cap-drop=ALL` contract is verified, including no egress |
+| M6 | **DONE — shipped in v1.0.** Sandbox ON by default (D13), `--no-sandbox` opts out, no Docker → the executing stages skip. `lib/sandbox.sh` owns the contract; `m6` has 17 checks and the `sandbox_bypass` mutation | n/a |
 | M7 | Batch mode, three-phase scheduling, per-archive-member analysis. **Depends on M5** for tier-driven concurrency | Logic yes, but it is blocked behind M5 |
 | M8 | `--interactive` agency: Continue / Skip stage / Skip file / Abort | **No** — no TTY |
 | M9 | Crash resilience, resume, error-log rotation | Partly |
@@ -437,7 +437,9 @@ session reads them and is current. Migration is not a restart.
   for review.
 - **Polyglot targets** (packed *and* archive) route down one path only; the depth
   cap bounds the damage.
-- **`pyinstxtractor` is not packaged** — PyInstaller extraction fails cleanly with
+- **`pyinstxtractor` is not packaged** — `install.sh` now fetches it into `scripts/` (see
+  `implementation-notes.md` § M6 for why it is fetched and not vendored). Historically,
+  PyInstaller extraction failed cleanly with
   an install hint. `install.sh` should vendor it in M6.
 - **Resolved (D9):** `--sandbox` covers `strace` as well as `ltrace`, and refuses
   the host until M6 builds the container.

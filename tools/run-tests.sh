@@ -204,8 +204,8 @@ test_m0() {
     # v5 §3.3 / §3.4: these warn, they must not be fatal.
     assert_match "-i + -y warns, --yes wins" 'mutually exclusive' \
         "$RC" scan "$ROOT/README.md" -i -y --skip-ghidra
-    assert_match "--sandbox + --skip-ltrace notice" 'no-op with --skip-ltrace' \
-        "$RC" scan "$ROOT/README.md" --sandbox --skip-ltrace --skip-ghidra
+    assert_match "--sandbox + both skips notice" 'no-op with both --skip-ltrace' \
+        "$RC" scan "$ROOT/README.md" --sandbox --skip-ltrace --skip-strace --skip-ghidra
 
     # --- config file: allowlist + precedence ---
     local cfg="$REVCTF_HOME/config"
@@ -604,19 +604,36 @@ test_m3() {
     # --- dynamic stages execute the target, so the warning must be unmissable ----------
     assert_match "ltrace states it executed the target" 'THIS STAGE EXECUTES THE TARGET' \
         cat "$o/r2/ltrace.txt"
-    assert_match "ltrace names the lack of isolation" 'Isolation : NONE' \
-        cat "$o/r2/ltrace.txt"
+    # This asserted 'Isolation : NONE' until M6, when the sandbox became the default and the
+    # honest answer changed. What must never change is that the banner STATES which of the
+    # two happened — a capture that says nothing about isolation is the failure mode here,
+    # not either particular answer. The two specific wordings are asserted in m6, where the
+    # state is forced rather than inherited from whatever Docker is doing on this host.
+    assert_match "ltrace names its isolation state either way" \
+        'Isolation : (NONE|Docker container)' cat "$o/r2/ltrace.txt"
     assert_match "a non-ELF target skips ltrace" 'ltrace .*only runs on ELF' \
         "$RC" scan "$CORPUS/winsample.exe" --skip-ghidra --output "$o/pe"
     assert_match "--skip-ltrace is honoured" 'ltrace .*--skip-ltrace' \
         "$RC" scan "$CORPUS/crackme" --skip-ghidra --skip-ltrace --output "$o/nolt"
     assert_match "--skip-strace is honoured" 'strace .*--skip-strace' \
         "$RC" scan "$CORPUS/crackme" --skip-ghidra --skip-strace --output "$o/nost"
-    # D9: --sandbox must cover strace too, and must refuse the host until M6 builds it.
-    assert_match "--sandbox refuses to run ltrace on the host" 'ltrace .*refusing to run the target on the host' \
-        "$RC" scan "$CORPUS/crackme" --skip-ghidra --sandbox --output "$o/sbx"
-    assert_match "--sandbox covers strace as well (D9)" 'strace .*refusing to run the target on the host' \
-        "$RC" scan "$CORPUS/crackme" --skip-ghidra --sandbox --output "$o/sbx2"
+    # D9: the sandbox covers strace as well as ltrace. Before M6 that was asserted through
+    # the refusal message; now it is asserted through the isolation itself, which is what
+    # D9 was ever about. Forcing an impossible image name exercises both stages' gate
+    # without depending on whether this host has a working Docker.
+    local sbxout
+    sbxout=$(REVCTF_SBX_IMAGE="revctf-doesnotexist:0" \
+        "$RC" scan "$CORPUS/crackme" --skip-ghidra --sandbox --output "$o/sbx" 2>&1)
+    if grep -Eq 'ltrace .*sandbox is unavailable' <<< "$sbxout"; then
+        ok "an unavailable sandbox stops ltrace rather than falling back to the host"
+    else
+        no "ltrace sandbox gate" "ltrace did not report the unavailable sandbox"
+    fi
+    if grep -Eq 'strace .*sandbox is unavailable' <<< "$sbxout"; then
+        ok "--sandbox covers strace as well (D9)"
+    else
+        no "strace sandbox gate (D9)" "strace did not report the unavailable sandbox"
+    fi
 
     # The hung binary is what proves the timeout and orphan sweep actually work.
     if [[ -f $CORPUS/hung ]]; then
@@ -697,6 +714,60 @@ test_m3() {
         "$RC" scan "$CORPUS/crackme" --skip-ghidra --no-flag-scan --output "$o/fs-off"
     assert_match "--flag-format adds a custom high-confidence pattern" 'sw0rdf1sh' \
         "$RC" scan "$CORPUS/crackme" --skip-ghidra --flag-format 'sw0rdf1sh' --output "$o/fs-fmt"
+
+    # --- stack strings: the gap the first real-world run exposed -----------------------
+    # A stack string is assembled from immediate stores, so `strings` cannot see it and
+    # FLOSS's stack mode is PE-only. Both picoCTF 2022 targets hid their flag this way and
+    # revctf reported 0 high-confidence candidates on both.
+    #
+    # The constants below are the real ones from picoCTF 2022 bbbbloat, in the exact shape
+    # Ghidra emits. They are the test input because a synthetic one would only prove the
+    # decoder decodes what I chose to feed it.
+    local ssf="$o/stackstr.pseudo"
+    cat > "$ssf" <<'STACKC'
+  local_10 = *(long *)(in_FS_OFFSET + 0x28);
+  local_38 = 0x4c75257240343a41;
+  local_30 = 0x3062396630664634;
+  local_28 = 0x65623066635f3d33;
+  local_20 = 0x4e326560623535;
+  printf("What's my favorite number? ");
+STACKC
+    if [[ ! -r $ROOT/scripts/le_decode.py ]]; then
+        no "stack-string decoder missing" "scripts/le_decode.py is absent"
+    else
+        # Decoding alone must yield the CIPHERTEXT. If this ever yields the flag directly,
+        # the ROT47 pass below has stopped being what recovers it and this test has drifted.
+        assert_match "immediates decode little-endian to the stack buffer" \
+            'A:4@r%uL' python3 "$ROOT/scripts/le_decode.py" "$ssf"
+        # And decode + ROT47 must yield the flag exactly.
+        if python3 "$ROOT/scripts/le_decode.py" < "$ssf" 2>/dev/null \
+           | tr '!-~' 'P-~!-O' | grep -q 'picoCTF{cu7_7h3_bl047_36dd316a}'; then
+            ok "decode + ROT47 recovers the real picoCTF stack-string flag"
+        else
+            no "stack-string recovery" "the constants did not produce picoCTF{cu7_7h3_bl047_36dd316a}"
+        fi
+        # A trailing partial store is part of the run. unpackme-upx ends with `= 0x4e`,
+        # two hex digits, which is the flag's closing brace; an 8-digit floor drops it and
+        # produces a flag that looks complete and is not.
+        printf '  local_1c = 0x4e;\n' >> "$ssf"
+        if python3 "$ROOT/scripts/le_decode.py" < "$ssf" 2>/dev/null | grep -q 'N$'; then
+            ok "a short trailing immediate continues a run rather than ending it"
+        else
+            no "truncated stack string" "the 2-digit trailing store was dropped — flags will be cut short"
+        fi
+    fi
+    # The sweep must actually be wired in, not merely present as a script.
+    assert_match "the sweep runs the stack-string decoder" 'le_decode.py' \
+        cat "$ROOT/lib/flagscan.sh"
+    assert_match "ROT47 is in the encoding sweep alongside ROT13" "rot47" \
+        cat "$ROOT/lib/flagscan.sh"
+
+    # --- libc's alphabet table is not a flag candidate ---------------------------------
+    # glibc carries `abcdefghijklmnopqrstuvwxyz{|}` — ASCII simply continues past 'z' into
+    # '{' — so a 1-character brace body made _FLAG_GENERIC fire on every glibc binary.
+    # Seen on both real targets.
+    assert_no_match "libc's alphabet table is not reported as a flag candidate" \
+        'abcdefghijklmnopqrstuvwxyz' flag_section "$o/fs-order/report.txt"
 
     # --- managed / Python routing -----------------------------------------------------
     assert_match "a .pyc is routed to Python decompilation" 'pydecomp +ok' \
@@ -1553,8 +1624,8 @@ test_m5() {
         "$RC" scan "$t" --dry-run --config "$swapcfg"
 
     # --- flag surface reflected in the plan -------------------------------------------
-    assert_match "--sandbox is shown as refusing the executing stages" \
-        'refused: --sandbox has no container until M6' "$RC" scan "$t" --dry-run --sandbox
+    assert_match "the plan states what will happen to the executing stages" \
+        'sandboxed:|skipped:|WILL EXECUTE' "$RC" scan "$t" --dry-run --sandbox
     assert_match "--skip-ghidra is shown in the plan" 'skipped by --skip-ghidra' \
         "$RC" scan "$t" --dry-run --skip-ghidra
     assert_match "--strict is shown in the plan" 'stop at the first failed stage' \
@@ -1563,6 +1634,141 @@ test_m5() {
 
 # ======================================================================================
 # m5enforce — the tier limits ACTUALLY BOUND a run (M5 Definition of Done)
+# ======================================================================================
+# M6 — the Docker sandbox
+# ======================================================================================
+# WHY THIS SECTION IS SHAPED THE WAY IT IS
+#
+# The claim M6 makes is "the target cannot reach your network or your files". That claim is
+# worth exactly as much as the test behind it, and the obvious test — grep the run flags for
+# --network=none — proves only that revctf types the flag, not that the flag does anything.
+# Worse, ANY egress test passes trivially on a machine with no outbound connectivity, which
+# is the shape of vacuous check that has bitten this project four times.
+#
+# So the egress check carries a POSITIVE CONTROL: the identical probe is run once with
+# --network=bridge, where it must SUCCEED, and once under the real contract, where it must
+# FAIL. If the bridge run also fails, this host cannot demonstrate egress at all and the
+# check SKIPS with that reason — it never passes by default.
+_m6_docker() { command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; }
+
+# The stage section of a report, so an assertion cannot be satisfied by the legend, the
+# WHAT RAN note, or another stage's text. Same lesson as flag_section().
+stage_section() {
+    sed -n "/^### $2  \[/,/^### /p" "$1" 2>/dev/null
+}
+
+test_m6() {
+    section "M6 — Docker sandbox"
+    local o="$FIXTURES/m6"; rm -rf "$o"; mkdir -p "$o"
+    local t="$CORPUS/crackme"
+
+    # --- the CLI surface -------------------------------------------------------------
+    assert_match "--sandbox is the default (D13)" \
+        'sandboxed:|skipped:.*--no-sandbox' "$RC" scan "$t" --dry-run
+    assert_match "--no-sandbox says it will execute on this machine" \
+        'WILL EXECUTE THE TARGET ON THIS MACHINE' "$RC" scan "$t" --dry-run --no-sandbox
+    assert_match "--sandbox is still accepted explicitly" \
+        'sandboxed:|skipped:' "$RC" scan "$t" --dry-run --sandbox
+    assert_match "--sandbox + both skips is called a no-op" \
+        'no-op with both --skip-ltrace and --skip-strace' \
+        "$RC" scan "$t" --dry-run --sandbox --skip-ltrace --skip-strace
+
+    # --- the no-Docker path ------------------------------------------------------------
+    # Forced with an image name that cannot exist, which exercises the same branch a
+    # missing daemon does. The point is the WORDING: a skip the reader cannot act on is a
+    # gap with a sentence in front of it.
+    local nd="$o/nodocker"
+    REVCTF_SBX_IMAGE="revctf-doesnotexist:0" \
+        "$RC" scan "$t" --skip-ghidra --no-tui --output "$nd" >"$o/nd.txt" 2>&1
+    local ndrc=$?
+    if grep -q 'is not built' "$o/nd.txt" && grep -q -- '--no-sandbox' "$o/nd.txt"; then
+        ok "no sandbox image: the skip names the cause AND --no-sandbox as the override"
+    else
+        no "no-sandbox-image skip reason" "did not name both the cause and the override"
+    fi
+    if [[ $ndrc -eq 0 ]]; then
+        ok "a skipped sandbox does not change the exit status"
+    else
+        no "sandbox skip changed the exit status" "exit $ndrc, wanted 0"
+    fi
+    assert_match "the rest of the scan still runs without the sandbox" \
+        'strings +ok' cat "$nd/report.txt"
+
+    # --- --no-sandbox actually executes, and says so ------------------------------------
+    local ns="$o/nosbx"
+    "$RC" scan "$t" --skip-ghidra --skip-strace --no-sandbox --no-tui --output "$ns" >/dev/null 2>&1
+    assert_match "--no-sandbox states the target ran unisolated" \
+        'Isolation : NONE' cat "$ns/ltrace.txt"
+    assert_match "--no-sandbox is named as the reason it was unisolated" \
+        'You asked for this' cat "$ns/ltrace.txt"
+
+    if ! _m6_docker; then
+        skip "the sandboxed run" "docker is not usable here${DOCKER_HOST:+ (DOCKER_HOST=$DOCKER_HOST)}"
+        skip "no network egress from the sandbox" "docker is not usable here"
+        return 0
+    fi
+
+    # --- the sandboxed run --------------------------------------------------------------
+    local sb="$o/sbx"
+    "$RC" scan "$t" --skip-ghidra --no-tui --output "$sb" >/dev/null 2>&1
+
+    # THE TRACE, NOT THE BANNER. Both stages wrote a banner and no trace for the whole life
+    # of the project while every check matched the banner. Under the sandbox the trace
+    # arrives over a bind mount, which is one more thing that can silently produce nothing,
+    # so it is the trace content that is asserted — a real symbol from a real call.
+    assert_match "ltrace captures a real trace from inside the container" \
+        'printf\(' cat "$sb/ltrace.txt"
+    assert_match "strace captures a real trace from inside the container" \
+        'execve\("/target"' cat "$sb/strace.txt"
+    assert_match "the sandboxed target runs as /target, not its host path" \
+        'Isolation : Docker container' cat "$sb/ltrace.txt"
+
+    # The contract must be VISIBLE, not merely applied: stage_record_exec's command line
+    # only reaches the report for a FAILED stage, so on a successful run the banner is the
+    # only place a reader — or this check — can see what was actually passed.
+    local c=0 f
+    for f in --network=none --read-only --cap-drop=ALL --security-opt --user; do
+        grep -q -- "$f" "$sb/ltrace.txt" || c=$((c+1))
+    done
+    if [[ $c -eq 0 ]]; then
+        ok "the isolation contract is printed in the capture, not just claimed"
+    else
+        no "isolation contract not visible" "$c of 5 flags missing from the ltrace capture"
+    fi
+    assert_match "the tier's Phase-2 ceiling is passed to docker, not left to systemd" \
+        -- '--memory [0-9]+m' cat "$sb/ltrace.txt"
+
+    assert_match "the sandboxed report still reaches the flag" \
+        'flag\{cr4ckm3_s0lv3d\}' flag_section "$sb/report.txt"
+
+    # --- egress, with a positive control -------------------------------------------------
+    local probe='exec 3<>/dev/tcp/1.1.1.1/53'
+    if ! timeout 25 docker run --rm --network=bridge revctf-sandbox:1 \
+            bash -c "$probe" >/dev/null 2>&1; then
+        skip "no network egress from the sandbox" \
+            "this host cannot reach 1.1.1.1:53 even WITH networking, so the negative result would prove nothing"
+    elif timeout 25 docker run --rm --network=none --read-only --cap-drop=ALL \
+            --security-opt no-new-privileges --user nobody \
+            revctf-sandbox:1 bash -c "$probe" >/dev/null 2>&1; then
+        no "network egress from the sandbox" \
+            "the target CAN reach the network under the contract — isolation is not holding"
+    else
+        ok "no network egress from the sandbox (same probe succeeds with --network=bridge)"
+    fi
+
+    # An interface-level assertion, which needs no outbound connectivity at all and so
+    # always runs. Under --network=none the container has loopback and nothing else.
+    local ifs
+    ifs=$(timeout 25 docker run --rm --network=none revctf-sandbox:1 \
+            ls /sys/class/net 2>/dev/null | tr -d ' \n')
+    if [[ $ifs == lo ]]; then
+        ok "the sandboxed container has only a loopback interface"
+    else
+        no "unexpected network interfaces in the sandbox" "saw '$ifs', wanted exactly 'lo'"
+    fi
+    return 0
+}
+
 # ======================================================================================
 # WHY THIS IS SEPARATE FROM test_m5
 #
@@ -2068,7 +2274,7 @@ test_docs() {
 # ======================================================================================
 main() {
     local -a want=("$@")
-    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 m2 m3 m4 m5 m5enforce qa docs ghidra)
+    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 m2 m3 m4 m5 m5enforce m6 qa docs ghidra)
 
     printf '\033[1mrevctf verification harness\033[0m\n'
     printf 'repo: %s\n' "$ROOT"
@@ -2086,6 +2292,7 @@ main() {
             m4)     test_m4     ;;
             m5)     test_m5     ;;
             m5enforce) test_m5enforce ;;
+            m6)     test_m6     ;;
             qa)     test_qa     ;;
             docs)   test_docs   ;;
             ghidra) test_ghidra ;;

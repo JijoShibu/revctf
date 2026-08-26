@@ -173,7 +173,10 @@ What has to be true before calling it v1.0.
 
 - [x] **install.sh completed — full toolchain, venv FLOSS** (Docker image still M6)
   <br>M: M1/M6 · skeleton only
-- [ ] **Vendor pyinstxtractor (not packaged anywhere)**
+- [x] **pyinstxtractor** — fetched by `install.sh` into `scripts/`, with a `scripts/`
+      fallback in `lib/stage_triage.sh`. NOT vendored into the repo: it is GPLv3 and revctf
+      declares no licence, so committing it would decide revctf's licensing as a side
+      effect. See `implementation-notes.md` § M6.
   <br>M: M6 · unwrap fails cleanly today
 - [ ] **Package a Java decompiler — none installable in the build sandbox**
   <br>M: M6 · managed stage unverified on a real .jar

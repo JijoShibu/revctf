@@ -72,7 +72,7 @@ vinfo() { printf '  ..    %s\n' "$1"; }
 # rules out the failure mode this script exists to catch: a check that is skipped, or
 # absent, cannot be credited with detecting anything.
 
-MUTATIONS=(ghidra_script flag_tiers tier_ceiling dyn_bypass kill_conflation)
+MUTATIONS=(ghidra_script flag_tiers tier_ceiling dyn_bypass kill_conflation sandbox_bypass)
 
 mutation_meta() {
     M_DESC=""; M_FILES=(); M_SECTIONS=(); M_GREEN=(); M_EXPECT=()
@@ -140,6 +140,23 @@ mutation_meta() {
         M_EXPECT=(
             "  ltrace is actually bounded  =>  ltrace reports a ceiling but is not bound by it"
             "  strace is actually bounded  =>  strace reports a ceiling but is not bound by it"
+        )
+        ;;
+    sandbox_bypass)
+        M_DESC="the sandbox stops passing --network=none, so the target gets the network back"
+        M_FILES=(lib/sandbox.sh)
+        M_SECTIONS=(m6)
+        # THE POINT OF THIS ONE is to separate two checks that look interchangeable and are
+        # not. "the isolation contract is printed" proves revctf TYPES the flag; "no network
+        # egress" proves the flag DOES something. Only the second is a security property.
+        # Both must flip: if the contract check flipped alone, the egress check would be
+        # passing on a host that cannot reach the network rather than on the isolation —
+        # which is why it carries a --network=bridge positive control and skips instead of
+        # passing when that control fails.
+        M_EXPECT=(
+            "no network egress from the sandbox  =>  network egress from the sandbox"
+            "the sandboxed container has only a loopback interface  =>  unexpected network interfaces in the sandbox"
+            "the isolation contract is printed in the capture  =>  isolation contract not visible"
         )
         ;;
     kill_conflation)
@@ -215,6 +232,13 @@ mutation_apply() {
             !skip
         ' "$ROOT/lib/stage_dynamic.sh" > "$WORK/dyn.mut" \
           && mv -f "$WORK/dyn.mut" "$ROOT/lib/stage_dynamic.sh"
+        ;;
+    sandbox_bypass)
+        # One flag removed and nothing else. Docker then falls back to its default bridge
+        # network, which is precisely the regression that matters: everything still runs,
+        # the traces still arrive, the report still finds the flag, and the only thing that
+        # changed is the guarantee.
+        sed -i '/^        --network=none$/d' "$ROOT/lib/sandbox.sh"
         ;;
     kill_conflation)
         # Fold 137 back into the 124 branch — exactly the shape the six converted stages

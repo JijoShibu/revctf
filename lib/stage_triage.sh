@@ -233,12 +233,19 @@ _triage_unwrap_pyinstaller() {
 
     # PyInstaller archives are readable by python's own tooling when pyinstxtractor is
     # unavailable, but extraction quality differs enough that the dedicated tool wins.
-    if ! command -v pyinstxtractor >/dev/null 2>&1; then
-        TRIAGE_FAIL_REASON="pyinstxtractor is not installed"
+    # It is packaged nowhere, so install.sh fetches it into scripts/. PATH is still checked
+    # first: someone who installed it themselves should not be overridden.
+    local -a pyx=()
+    if command -v pyinstxtractor >/dev/null 2>&1; then
+        pyx=(pyinstxtractor)
+    elif [[ -r ${REVCTF_SCRIPTS:-}/pyinstxtractor.py ]]; then
+        pyx=(python3 "$REVCTF_SCRIPTS/pyinstxtractor.py")
+    else
+        TRIAGE_FAIL_REASON="pyinstxtractor is not installed (install.sh fetches it into scripts/)"
         return 1
     fi
     local rc=0
-    ( cd "$dir" && timeout -k 5 "$ST_T_UNWRAP" pyinstxtractor "$RUN_TARGET" >/dev/null 2>&1 ) || rc=$?
+    ( cd "$dir" && timeout -k 5 "$ST_T_UNWRAP" "${pyx[@]}" "$RUN_TARGET" >/dev/null 2>&1 ) || rc=$?
     if [[ $rc -ne 0 ]]; then
         TRIAGE_FAIL_REASON="pyinstxtractor exited $rc"
         return 1

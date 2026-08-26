@@ -18,24 +18,18 @@ stage_ltrace() {
     fi
     dyn_guard "$name" ltrace || return 0
 
-    if [[ ${OPT[sandbox]:-0} -eq 1 ]]; then
-        # The container path is M6. Failing loudly is the right behaviour meanwhile: a
-        # silent fall-back to the host would run untrusted code the user explicitly asked
-        # to isolate.
-        stage_skip "$name" \
-            "--sandbox was requested but the container is not built until M6; refusing to run the target on the host"
-        return 0
-    fi
-
     # `-o` is not optional. Without it ltrace writes the trace to STDERR, which dyn_run
     # routes to the stage error file — a file the report reads only when the stage fails.
     # The capture then contained the banner and the target's own stdout, and nothing else.
+    #
+    # Under the sandbox DYN_EXEC_ARG and DYN_TRACE_ARG are CONTAINER paths (/target,
+    # /work/trace.ltrace); without it they are host paths. dyn_guard resolves which.
     dyn_banner ltrace "${OPT[timeout]}" > "$out"
-    dyn_run "$name" "${OPT[timeout]}" "$out.stdout" "$err" "$out.trace" \
-        -- ltrace -f -o "$out.trace" "$RUN_TARGET" || rc=$?
-    dyn_compose "$out" "$out.trace" "$out.stdout" "library call trace"
+    dyn_run "$name" "${OPT[timeout]}" "$out.stdout" "$err" "$DYN_TRACE_HOST" \
+        -- ltrace -f -o "$DYN_TRACE_ARG" "$DYN_EXEC_ARG" || rc=$?
+    dyn_compose "$out" "$DYN_TRACE_HOST" "$out.stdout" "library call trace"
 
-    stage_record_exec "$name" "setsid timeout -k 5 ${OPT[timeout]} ltrace -f -o <trace> $RUN_TARGET </dev/null" "$rc"
+    stage_record_exec "$name" "$(dyn_cmdline ltrace "${OPT[timeout]}" "-f -o $DYN_TRACE_ARG $DYN_EXEC_ARG")" "$rc"
     dyn_finish "$name" ltrace "${OPT[timeout]}" "$rc"
     return 0
 }

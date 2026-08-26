@@ -46,6 +46,9 @@ REVCTF_HOME="${REVCTF_HOME:-$INSTALL_HOME/.revctf}"
 # dependency dies with `AttributeError: install_layout` (CLAUDE.md §3). A venv is the
 # working route; uncompyle6 rides along in the same venv as the Python-decompile fallback.
 FLOSS_VENV="${FLOSS_VENV:-/opt/floss-venv}"
+# Must match lib/sandbox.sh's default, or install.sh builds an image revctf never looks for.
+SBX_IMAGE="${REVCTF_SBX_IMAGE:-revctf-sandbox:1}"
+PYINSTX_URL="${PYINSTX_URL:-https://raw.githubusercontent.com/extremecoders-re/pyinstxtractor/master/pyinstxtractor.py}"
 
 # Ghidra is not in apt. Resolved from the GitHub releases API, with a fallback to a build
 # already verified against this codebase — the release API returned 403 in one build
@@ -107,6 +110,92 @@ run_as_install_user() {
     else
         "$@"
     fi
+}
+
+# --------------------------------------------------------------------------------------
+# pyinstxtractor (M6)
+# --------------------------------------------------------------------------------------
+# PyInstaller-packed challenges are common and revctf could not unwrap a single one:
+# lib/stage_triage.sh looks for `pyinstxtractor` and gives up when it is absent, which is
+# always, because it is packaged nowhere — not apt, not pip.
+#
+# WHY IT IS FETCHED HERE RATHER THAN COMMITTED INTO THE REPO. It is GPLv3 and revctf
+# currently declares no licence of its own. Committing GPLv3 source into an unlicensed
+# repository decides revctf's licensing as a side effect of a convenience, which is not
+# this script's call to make. revctf runs it as a separate process, so nothing here is
+# linking against it. If revctf later adopts a compatible licence, vendoring the file into
+# scripts/ is a strictly better answer (it would work offline) and this step goes away.
+step_pyinstxtractor() {
+    say "pyinstxtractor (unwraps PyInstaller executables; packaged nowhere, so fetched)"
+    local dest="$REVCTF_ROOT/scripts/pyinstxtractor.py"
+    if [[ -s $dest ]]; then
+        ok "already present at $dest"
+        return 0
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        warn "curl is missing; PyInstaller targets will fail to unwrap"
+        FAILED+=("pyinstxtractor (curl missing)")
+        return 0
+    fi
+    if curl -fsSL --retry 2 -o "$dest.part" "$PYINSTX_URL" 2>/dev/null \
+       && head -n 40 "$dest.part" | grep -q 'PyInstaller Extractor'; then
+        # The grep is not decoration. A captive portal, a 404 page or a rate-limit body all
+        # arrive as a perfectly successful 200 with HTML in it, and a `.py` full of HTML
+        # fails at triage time with a SyntaxError that points at revctf rather than at the
+        # download.
+        mv -f "$dest.part" "$dest" && chmod 0755 "$dest" 2>/dev/null
+        chown "$INSTALL_USER" "$dest" 2>/dev/null
+        ok "installed $dest"
+    else
+        rm -f "$dest.part"
+        warn "could not fetch pyinstxtractor; PyInstaller targets will fail to unwrap with an install hint"
+        FAILED+=("pyinstxtractor download")
+    fi
+    return 0
+}
+
+# --------------------------------------------------------------------------------------
+# The sandbox image (M6)
+# --------------------------------------------------------------------------------------
+# Built here because this is the script's one network window: `docker build` pulls
+# debian:stable-slim and apt-gets two tracers, and a scan is not the moment to discover
+# that. If it does not get built, revctf does not silently run the target on the host —
+# the two executing stages skip and say why (deviation D13). So a failure here degrades
+# revctf, it does not break it, and it belongs in FAILED rather than being fatal.
+step_sandbox() {
+    say "Sandbox image ($SBX_IMAGE) — isolation for the stages that execute the target"
+    if ! command -v docker >/dev/null 2>&1; then
+        warn "docker is not installed; ltrace and strace will skip unless you pass --no-sandbox"
+        FAILED+=("docker (sandbox image not built)")
+        return 0
+    fi
+    # NOT BEING IN THE `docker` GROUP LOOKS EXACTLY LIKE A DEAD DAEMON, and the fix is one
+    # command the user will not guess. Group membership is per-process, so it does not take
+    # effect in the shell that ran `usermod` either — which is the part that makes people
+    # conclude the install failed.
+    if ! docker info >/dev/null 2>&1; then
+        if [[ -n ${DOCKER_HOST:-} ]]; then
+            warn "the docker daemon is unreachable and DOCKER_HOST is set to '${DOCKER_HOST}' — if that socket is stale, unset it and re-run"
+        elif ! id -nG "$INSTALL_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+            warn "$INSTALL_USER is not in the 'docker' group. Fix with:"
+            printf '        sudo usermod -aG docker %s   # then: newgrp docker\n' "$INSTALL_USER"
+        else
+            warn "the docker daemon is not reachable (is it running? sudo systemctl start docker)"
+        fi
+        FAILED+=("docker daemon unreachable (sandbox image not built)")
+        return 0
+    fi
+    if docker image inspect "$SBX_IMAGE" >/dev/null 2>&1; then
+        ok "$SBX_IMAGE already built"
+        return 0
+    fi
+    if docker build -q -t "$SBX_IMAGE" "$REVCTF_ROOT/docker" >/dev/null 2>&1; then
+        ok "built $SBX_IMAGE"
+    else
+        warn "docker build failed; re-run manually to see why: docker build -t $SBX_IMAGE $REVCTF_ROOT/docker"
+        FAILED+=("sandbox image build")
+    fi
+    return 0
 }
 
 step_apt() {
@@ -334,6 +423,8 @@ main() {
     step_apt
     step_floss
     step_ghidra
+    step_sandbox
+    step_pyinstxtractor
 
     say "Linking revctf into $PREFIX"
     if link_into_prefix "$REVCTF_ROOT/revctf" revctf; then

@@ -6,11 +6,13 @@ Point it at a challenge binary — or a directory of them — and it runs a stag
 (triage/unwrap, static analysis, dynamic tracing, decompilation) and writes a
 beginner-friendly plain-text report with flag candidates surfaced at the top.
 
-> **Status: M5 complete.** Single-file scanning works end to end: 14 stages including
-> Ghidra headless, flag detection with the base64/base32/hex/ROT13 sweep, a readable
-> report, and three display modes — and as of M5 the RAM-tier memory ceilings are
-> *enforced* via `systemd-run --scope`, with a global RSS watchdog behind them.
-> M6–M9 add the Docker sandbox, batch mode, user agency and resilience.
+> **Status: v1.0 — M6 complete.** Single-file scanning works end to end: 14 stages
+> including Ghidra headless, flag detection with the base64/base32/hex/ROT13/ROT47 sweep
+> plus a stack-string decoder, a readable report, and three display modes. The RAM-tier
+> memory ceilings are *enforced* via `systemd-run --scope`, with a global RSS watchdog
+> behind them, and the two stages that execute the challenge binary run inside a
+> network-isolated Docker container **by default**.
+> Batch mode (M7), the prompt layer (M8) and the debug log (M9) are post-1.0.
 > New here? Read `HANDOFF.md`.
 
 ---
@@ -30,9 +32,8 @@ a silently thinner report. Run it while online.
 
 ```bash
 revctf scan ./crackme                                   # single file
-revctf scan ./challenges/ --summary-only                # batch, flags first
 revctf scan ./bin --flag-format 'picoCTF\{.*?\}'        # custom flag pattern
-revctf scan ./sample --sandbox                          # ltrace in a container
+revctf scan ./sample --no-sandbox                       # opt out of the container
 revctf scan ./big.elf --dry-run                         # resolved plan, runs nothing
 revctf --help                                           # every flag
 ```
@@ -98,13 +99,21 @@ enforcing them, and the watchdog threshold — before committing to a large batc
 - `--skip-ghidra` — skip decompilation; radare2 substitutes
 - `--strict` — stop at the first failed stage. By default a failure is isolated and the
   run continues
-- `--sandbox` — run the executing stages inside a `--network=none --read-only
-  --cap-drop=ALL` container. Until M6 builds the image, `--sandbox` **refuses** to run them
-  rather than quietly falling back to the host
+- **The sandbox is on by default.** `ltrace` and `strace` execute the challenge binary, so
+  they run inside a `--network=none --read-only --cap-drop=ALL` container, as an
+  unprivileged user, with the tier's memory ceiling applied by `docker --memory`. The exact
+  flags are printed in the capture, so the guarantee is auditable rather than asserted
+- `--no-sandbox` — execute the binary **directly on this machine**. The report says so in
+  as many words
+- **Without a usable Docker, those two stages are skipped**, not run unisolated. The skip
+  names Docker as the cause and `--no-sandbox` as the deliberate override. revctf never
+  silently drops the isolation: a command that is a security boundary on one machine and
+  not on another, with the user believing they were isolated either way, is worse than no
+  isolation at all
 - Prompts appear only on a TTY; piped output never blocks waiting for input
 
-`--sandbox` combined with a large batch is the tightest resource combination on 4GB
-hardware. It is supported, not blocked — just be aware.
+The sandbox costs one container start per executing stage (~1s here). If Docker is not
+available and you accept the risk, `--no-sandbox` is the explicit opt-out.
 
 ### Exit status
 
@@ -193,7 +202,6 @@ harness asserts that this list and that one agree — so neither can drift.
 | `--debug`, `~/.revctf/error.log` | parses, no effect | M9 |
 | `--jobs-light`, `--jobs-ghidra` | resolved and reported; there is no concurrency to govern until batch mode | M7 |
 | Auto-created swap file | **removed** — replaced by a diagnostic (D10) | n/a |
-| `--sandbox` | *refuses* the executing stages rather than falling back to the host | M6 |
 | Batch mode (a directory target) | exits 1 with a clear message | M7 |
 
 
@@ -208,9 +216,14 @@ build-only dependencies the test corpus needs.
 
 Kali Linux (or Debian-derived), Bash 4+, and the toolchain `install.sh` sets up: `file`,
 `strings`, `binwalk`, `hexdump`, `ltrace`, `strace`, `radare2`, `checksec`, `objdump`,
-`readelf`, `upx`, FLOSS, Java/.NET/Python decompilers, and Ghidra (10.x or 11.x+, found via
-`PATH`, `GHIDRA_HOME`, or `/opt/ghidra*`). Docker is needed only for `--sandbox`;
-`systemd-run` is preferred for memory bounding, with a documented `ulimit -v` fallback.
+`readelf`, `upx`, FLOSS, Java/.NET/Python decompilers, and Ghidra (**11.2.1, pinned** —
+12.x breaks the headless post-script; `GHIDRA_LATEST=1` opts in with a warning), found via
+`PATH`, `GHIDRA_HOME`, or `/opt/ghidra*`. **Docker is required for the default sandbox**;
+without it the two executing stages skip. `systemd-run` is preferred for memory bounding,
+with a documented `ulimit -v` fallback.
+
+The verification harness needs the test corpus, which is gitignored — a fresh clone must
+run `./tools/build-test-corpus.sh` before `./tools/run-tests.sh`.
 
 ## Development
 

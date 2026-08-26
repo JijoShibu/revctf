@@ -54,7 +54,7 @@ declare -A OPT=(
     [jobs_light]=""                 # empty => tier-resolved (v6 §5)
     [jobs_ghidra]=""
     [maxmem_ghidra]=""
-    [sandbox]=0
+    [sandbox]=1
     [interactive]=0
     [assume_yes]=0
     [tui]=1
@@ -110,7 +110,7 @@ ANALYSIS DEPTH / STAGE CONTROL
     --full-hexdump        Dump the whole file instead of the 512-byte preview
     --skip-ltrace         Skip the ltrace stage
     --skip-strace         Skip the strace stage. Both it and ltrace execute the
-                          challenge binary; --sandbox isolates them (M6).
+                          challenge binary; the sandbox isolates them.
     --skip-ghidra         Skip Ghidra; radare2 disassembly substitutes
     --no-unwrap           Disable the triage/unwrap pre-stage (packers, archives,
                           managed and Python artifacts)
@@ -131,7 +131,13 @@ RESOURCE TUNING
     --maxmem-ghidra M     Override the tier's Ghidra MAXMEM ceiling
 
 SANDBOXING
-    --sandbox             Run ltrace inside a network-isolated Docker container
+    --sandbox             Run the executing stages (ltrace, strace) inside a
+                          network-isolated Docker container. THIS IS THE DEFAULT;
+                          the flag is accepted so it can be stated explicitly.
+    --no-sandbox          Execute the challenge binary DIRECTLY ON THIS MACHINE,
+                          with your network and files reachable. The report says
+                          so. Without Docker the two stages are skipped instead —
+                          revctf never silently drops the isolation.
 
 AGENCY & INTERACTIVITY
     -i, --interactive     [NOT YET: M8] Pause before each stage: Continue /
@@ -169,8 +175,8 @@ EXIT STATUS
 
 EXAMPLES
     revctf scan ./crackme
-    revctf scan ./challenges/ --summary-only
-    revctf scan ./bin --flag-format 'picoCTF\{.*?\}' --sandbox
+    revctf scan ./sample --no-sandbox        # opt out of the container
+    revctf scan ./bin --flag-format 'picoCTF\{.*?\}'
     revctf scan ./packed.exe --no-unwrap --verbose
     revctf scan ./big.elf --dry-run
 
@@ -246,7 +252,8 @@ parse_args() {
             --maxmem-ghidra) need_value "$1" $#; set_opt maxmem_ghidra "$2"; shift 2 ;;
 
             # --- sandboxing ---
-            --sandbox) set_opt sandbox 1; shift ;;
+            --sandbox)    set_opt sandbox 1; shift ;;
+            --no-sandbox) set_opt sandbox 0; shift ;;
 
             # --- agency & interactivity ---
             -i|--interactive) set_opt interactive 1; shift ;;
@@ -358,8 +365,13 @@ validate_opts() {
         warn "--interactive and --yes are mutually exclusive; --yes wins, continuing non-interactively"
         OPT[interactive]=0
     fi
-    if [[ ${OPT[sandbox]} -eq 1 && ${OPT[skip_ltrace]} -eq 1 ]]; then
-        warn "--sandbox is a no-op with --skip-ltrace (the sandbox only ever wraps ltrace)"
+    # This warning predated the strace stage and said the sandbox "only ever wraps ltrace",
+    # which deviation D9 made false: it wraps every stage that executes the target. It is
+    # therefore a no-op only when BOTH are skipped, and it is only worth saying when the
+    # user asked for the sandbox by name — it is the default now, so firing it on every
+    # `--skip-ltrace --skip-strace` run would be noise.
+    if [[ ${OPT[sandbox]} -eq 1 && ${OPT[skip_ltrace]} -eq 1 && ${OPT[skip_strace]} -eq 1 ]]; then
+        warn "--sandbox is a no-op with both --skip-ltrace and --skip-strace (nothing is left to isolate)"
     fi
     if [[ ${OPT[light_decompile]} -eq 1 && ${OPT[force_full_decompile]} -eq 1 ]]; then
         die "--light-decompile and --force-full-decompile are mutually exclusive"
@@ -412,6 +424,10 @@ cmd_scan() {
     # Resolved once per run, not per file (v6 §5), so a batch cannot drift between files.
     # shellcheck source=/dev/null
     source "$REVCTF_LIB/tier.sh" || die "cannot load $REVCTF_LIB/tier.sh"
+    # Sourced here, beside tier.sh, because --dry-run asks it whether the sandbox is usable
+    # and --dry-run returns before the stage modules are loaded.
+    # shellcheck source=/dev/null
+    source "$REVCTF_LIB/sandbox.sh" || die "cannot load $REVCTF_LIB/sandbox.sh"
     tier_resolve
 
     # --dry-run must run NOTHING. It was previously parsed and then ignored, so a flag the
@@ -567,6 +583,23 @@ dry_run_plan() {
 
 # dry_run_skip_reason <stage> — why a stage would not run, or empty if it would.
 # Only reasons knowable WITHOUT touching the target; format-based skips belong to Stage 0.
+# dry_run_isolation — what --dry-run says will happen to a stage that executes the target.
+#
+# --dry-run has to answer "would this run, and how?", and for these two stages "how" is the
+# whole safety question. It probes Docker for real rather than assuming, so the plan tells
+# the truth about THIS machine — the case that matters is the one where the user believes
+# they are isolated and Docker is not actually reachable.
+dry_run_isolation() {
+    if [[ ${OPT[sandbox]} -eq 0 ]]; then
+        printf 'WILL EXECUTE THE TARGET ON THIS MACHINE, unisolated (--no-sandbox)'
+    elif sbx_available; then
+        printf 'sandboxed: %s, --network=none --read-only --cap-drop=ALL' "$SBX_IMAGE"
+    else
+        printf 'skipped: %s — pass --no-sandbox to run it unisolated instead' "$SBX_WHY"
+    fi
+    return 0
+}
+
 dry_run_skip_reason() {
     local st="$1"
     if [[ -n ${OPT[stages_disabled]} && ",${OPT[stages_disabled]}," == *",$st,"* ]]; then
@@ -575,9 +608,9 @@ dry_run_skip_reason() {
     case "$st" in
         triage)  [[ ${OPT[no_unwrap]} -eq 1 ]] && printf 'unwrapping disabled (--no-unwrap)' ;;
         ltrace)  if [[ ${OPT[skip_ltrace]} -eq 1 ]]; then printf 'skipped by --skip-ltrace'
-                 elif [[ ${OPT[sandbox]} -eq 1 ]]; then printf 'refused: --sandbox has no container until M6'; fi ;;
+                 else dry_run_isolation; fi ;;
         strace)  if [[ ${OPT[skip_strace]} -eq 1 ]]; then printf 'skipped by --skip-strace'
-                 elif [[ ${OPT[sandbox]} -eq 1 ]]; then printf 'refused: --sandbox has no container until M6'; fi ;;
+                 else dry_run_isolation; fi ;;
         ghidra)  if [[ ${OPT[skip_ghidra]} -eq 1 ]]; then printf 'skipped by --skip-ghidra; radare2 substitutes'
                  elif [[ $TIER == C && ${OPT[force_full_decompile]} -eq 0 ]]; then
                      printf 'Tier C default: skipped for radare2-only (--force-full-decompile overrides)'; fi ;;

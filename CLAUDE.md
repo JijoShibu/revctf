@@ -110,6 +110,22 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
   it ran `analyzeHeadless` with no `-postScript` — testing Ghidra, never revctf's stage.
   `v0.3-m5` was tagged against that. It now asserts `sw0rdf1sh` appears in the decompiled
   pseudo-C. Four checks in M5 turned out to pass by never executing; this was the costliest.
+- **A bound applied outside a container does not reach inside it.** `systemd-run --scope
+  -p MemoryMax` wraps the *docker client*; the container is forked by `dockerd` into another
+  cgroup entirely. A sandboxed stage's ceiling must therefore be passed as
+  `docker run --memory`, and its teardown must be `docker rm -f <name>` — `ST_LAST_PGID` is
+  the client's process group and `timeout` firing kills the client while the container keeps
+  running the target. Both failures are invisible: the scan succeeds, the trace arrives, the
+  report is right, and only the guarantee is missing.
+- **An isolation claim must be printed with the flags that back it.** `STAGE_CMD` reaches
+  the report only for a stage that FAILED, so a successful sandboxed run would assert "no
+  network, all capabilities dropped" with no evidence under it — and the checks would have
+  nothing to grep but revctf's own adjectives. `dyn_banner` prints the real `sbx_wrap`
+  output.
+- **A negative security test needs a positive control.** "The target cannot reach the
+  network" passes trivially on a host with no outbound connectivity. The m6 egress check
+  runs the identical probe with `--network=bridge` first, must see it SUCCEED, and SKIPs
+  with a reason if it does not. It can never pass by default.
 - **A memory ceiling that a stage cannot possibly meet must degrade the stage, not kill
   it.** Tier C cannot afford FLOSS's ~900MB emulation, so it runs `--only static` and the
   report says RAM was the reason. A ceiling that guarantees a failure is worse than none.
@@ -329,8 +345,8 @@ anywhere. Set `PF_OPT_ROOT_REAL=/opt` to point it at a real install.
 the standard; do not advance past one until its verification actually runs. Each milestone
 adds its own section to the harness so earlier gates keep being re-checked.
 
-**Milestone status:** M0, M1, M2, the QA pass, M3, M4 and **M5** are complete. Tags through
-`v0.3.2-m5`. Two "complete" marks were corrected on 2026-08-21 after mutation testing: M5's
+**Milestone status:** M0, M1, M2, the QA pass, M3, M4, **M5** and **M6** are complete. Tags through
+`v1.0.0`. Two "complete" marks were corrected on 2026-08-21 after mutation testing: M5's
 enforcement claim was false for three of seven bounded stages, and M3's "all 13 stages run
 end to end" was false for `ltrace` and `strace`, which captured nothing. Superseded tags
 are left in place as a record of what was believed. Single-file scanning works end to end: 14 stages, flag
@@ -344,7 +360,10 @@ every shell file, and `install.sh` has been executed end-to-end on real Kali —
 four defects, including one that silently broke the Ghidra stage. See
 `implementation-notes.md` "install.sh — what the first real run exposed".
 
-Next is **M6** (Docker sandbox) — **unblocked**: Docker 28.5.2 runs on the VM and the full
+M6 shipped in v1.0: the sandbox is ON by default (D13), `--no-sandbox` opts out, and
+without Docker the two executing stages skip rather than running on the host. Next is **M7**
+(batch mode), which is post-1.0. Historical note, kept because the traps are still real —
+M6 was **unblocked**: Docker 28.5.2 runs on the VM and the full
 `--network=none --read-only --cap-drop=ALL` contract is verified, including no network
 egress. See `HANDOFF.md` §6 for two access traps that make a working daemon look dead
 (a stale `DOCKER_HOST` pointing at a podman socket, and per-process group membership).
@@ -373,8 +392,8 @@ Carried in `implementation-notes.md`, repeated here because they affect design c
   POSIX makes such jobs ignore it and bash will not install a trap for an
   ignored-on-entry signal. Not fixable in bash; `SIGTERM` is the documented alternative.
   Do not "fix" this — it has already been investigated.
-- **Resolved in M3 (deviation D9):** `--sandbox` covers `strace` as well as `ltrace`, and
-  refuses the host until M6 builds the container.
+- **Resolved in M6 (deviations D9, D13):** the sandbox covers `strace` as well as `ltrace`,
+  it is ON by default, and without Docker those stages skip rather than running on the host.
 - **RESOLVED at M5 (deviation D11): Phase 2 no longer inherits Ghidra's ceiling.** Sized
   from measurement instead — 1536/1024/512MB. The decisive figure was not the 1.46GB blob
   but **899MB on a 264KB PE**: FLOSS's cost is vivisect's emulation workspace, not file

@@ -5,6 +5,56 @@ section references (v3 §8, v5 §4.1, v6 §11) point at the design documents.
 
 ---
 
+## [1.0.0] — 2026-08-25 — the sandbox is on by default
+
+revctf executes the challenge binary in two of its fourteen stages. Until now it did that
+directly on the user's machine unless they passed a flag whose existence they had no reason
+to suspect — and that flag *refused* the stages rather than isolating them, because the
+container had never been built. The safe option did not work and the unsafe one was the
+default. M6 inverts that (deviation D13).
+
+**v1.0 is single-file scanning with a working sandbox.** Batch mode (M7), the interactive
+prompt layer (M8) and the persistent debug log (M9) are post-1.0 and are marked as such in
+`--help` and in the README table, which the `docs` harness section keeps honest.
+
+### Added
+
+- **The Docker sandbox (`lib/sandbox.sh`), ON by default.** `ltrace` and `strace` run inside
+  `--network=none --read-only --cap-drop=ALL --security-opt no-new-privileges --user nobody
+  --pids-limit 128`, with the tier's Phase-2 memory ceiling applied by `docker --memory`.
+  The contract lives in run flags, not in the image, so it is visible in the process table
+  and in the capture — and is what the harness greps.
+- **`--no-sandbox`** — execute the target directly on this machine. The report states that
+  plainly. `--sandbox` is still accepted so the default can be stated explicitly.
+- **No Docker → those two stages are SKIPPED, never run unisolated.** The skip names Docker
+  as the cause and `--no-sandbox` as the deliberate override, and the exit status is
+  unaffected. Silently falling back to the host was explicitly rejected: it would make the
+  same command a security boundary on one machine and not on another while the user believes
+  they are isolated in both.
+- **A stack-string decoder (`scripts/le_decode.py`) and a ROT47 pass in the encoding sweep.**
+  Flags assembled at runtime from `movabs` immediates are invisible to `strings`, and FLOSS's
+  stack/tight/decoded modes are PE-only, so on ELF nothing looked for them. Both picoCTF 2022
+  targets in the acceptance runs hid their flag exactly this way and revctf reported zero
+  high-confidence candidates on both; it now recovers both exactly, at high confidence.
+- **`m6` harness section (17 checks) and the `sandbox_bypass` mutation.** The egress check
+  carries a `--network=bridge` positive control and SKIPs — never passes — on a host that
+  cannot demonstrate egress in the first place.
+- **`install.sh` builds the sandbox image and fetches `pyinstxtractor`** during its network
+  window, and names the `docker` group when membership is what is actually wrong.
+
+### Fixed
+
+- **A non-executable target no longer skips both dynamic stages.** Every browser and `curl`
+  writes mode 644, so the single most common way revctf is used — download a challenge, scan
+  it — dropped two of fourteen stages on the first run. A runnable copy is made under
+  `RUN_WORKDIR`; the user's original file is never modified.
+- **`ltrace` on a statically linked ELF is a skip, not a failure.** It traces library calls
+  and a static binary makes none, so `ltrace` exited 1 and a scan that unpacked the target,
+  decompiled it and recovered the flag still exited 2 as though something had gone wrong.
+- **`_FLAG_GENERIC` no longer matches libc's alphabet table.** Its body floor was one
+  character, so `abcdefghijklmnopqrstuvwxyz{|}` was reported as a flag candidate.
+
+
 ## [0.3.2-m5] — 2026-08-21 — the tier ceilings are now actually enforced
 
 `v0.3.1-m5` claimed "the RAM-tier memory ceilings are enforced". That was false for three
