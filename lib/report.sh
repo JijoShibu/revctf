@@ -290,12 +290,35 @@ _rp_next() {
         printf '   re-run with --flag-format '\''NAME\\{.*\\}'\'' to teach revctf the shape.\n'
     fi
 
+    # A STAGE THAT COULD NEVER APPLY IS NOT A GAP, AND LISTING IT AS ONE IS NOISE.
+    #
+    # This used to name every skipped stage. On a native ELF that means `managed` and
+    # `pydecomp` -- a Java decompiler and a Python bytecode decompiler -- are both reported
+    # as places "the flag might be hiding". Measured on a real picoCTF target: four such
+    # lines, which pushed the one genuinely useful pointer (read ghidra and radare2
+    # together, which is exactly where both flags were) down to item 6.
+    #
+    # A format-based skip is the pipeline working correctly. A skip the user can act on --
+    # a missing tool, a flag they passed, a stage that failed -- is worth a line.
+    local reason
     for s in "${STAGE_ORDER[@]}"; do
+        reason="${STAGE_NOTE[$s]:-}"
         case "${STAGE_STATUS[$s]:-}" in
-            skipped|failed)
+            skipped)
+                # Inapplicable to this file type: not a gap, not actionable, not listed.
+                # Every format-based skip reason carries "(this one is <format>)" -- it is
+                # the shared marker for "the pipeline correctly routed around your file",
+                # emitted by dyn_guard and by the managed/pydecomp/native guards alike.
+                case "$reason" in
+                    *"(this one is "*|*"not applicable"*) continue ;;
+                esac
                 printf '%d. Stage "%s" did not run (%s). If the flag is hiding there,\n' \
-                    $(( ++n )) "$s" "${STAGE_STATUS[$s]}"
+                    $(( ++n )) "$s" "$reason"
                 printf '   that is the gap in this report.\n' ;;
+            failed)
+                printf '%d. Stage "%s" FAILED — see DIAGNOSTICS above. That is a real gap:\n' \
+                    $(( ++n )) "$s"
+                printf '   the analysis it would have contributed is simply missing.\n' ;;
         esac
     done
 

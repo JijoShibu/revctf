@@ -1,0 +1,418 @@
+Program        : bbbbloat
+Language       : x86:LE:64:default
+Compiler spec  : gcc
+Image base     : 00100000
+Functions found: 50
+Mode           : full decompile
+
+=== Function inventory ===
+  _DT_INIT                                 00101000  (27 bytes)
+  FUN_00101020                             00101020  (13 bytes)
+  FUN_001010c0                             001010c0  (11 bytes)
+  free                                     001010d0  (11 bytes)
+  putchar                                  001010e0  (11 bytes)
+  puts                                     001010f0  (11 bytes)
+  strlen                                   00101100  (11 bytes)
+  __stack_chk_fail                         00101110  (11 bytes)
+  printf                                   00101120  (11 bytes)
+  fputs                                    00101130  (11 bytes)
+  __isoc99_scanf                           00101140  (11 bytes)
+  strdup                                   00101150  (11 bytes)
+  entry                                    00101160  (47 bytes)
+  FUN_00101190                             00101190  (34 bytes)
+  FUN_001011c0                             001011c0  (51 bytes)
+  _FINI_0                                  00101200  (54 bytes)
+  _INIT_0                                  00101240  (9 bytes)
+  FUN_00101249                             00101249  (190 bytes)
+  FUN_00101307                             00101307  (675 bytes)
+  FUN_001015b0                             001015b0  (101 bytes)
+  FUN_00101620                             00101620  (5 bytes)
+  _DT_FINI                                 00101628  (13 bytes)
+  free                                     00105000  (1 bytes)
+  putchar                                  00105008  (1 bytes)
+  _ITM_deregisterTMCloneTable              00105010  (1 bytes)
+  puts                                     00105018  (1 bytes)
+  strlen                                   00105020  (1 bytes)
+  __stack_chk_fail                         00105028  (1 bytes)
+  printf                                   00105030  (1 bytes)
+  fputs                                    00105038  (1 bytes)
+  __libc_start_main                        00105040  (1 bytes)
+  __gmon_start__                           00105048  (1 bytes)
+  __isoc99_scanf                           00105050  (1 bytes)
+  _ITM_registerTMCloneTable                00105058  (1 bytes)
+  strdup                                   00105060  (1 bytes)
+  __cxa_finalize                           00105068  (1 bytes)
+
+=== Decompiled pseudo-C ===
+/* ---- FUN_00101020 @ 00101020 ---- */
+
+void FUN_00101020(void)
+
+{
+  (*(code *)PTR_00103f88)();
+  return;
+}
+
+
+
+/* ---- FUN_001010c0 @ 001010c0 ---- */
+
+void FUN_001010c0(void)
+
+{
+  (*(code *)PTR___cxa_finalize_00103ff8)();
+  return;
+}
+
+
+
+/* ---- free @ 001010d0 ---- */
+
+/* WARNING: Unknown calling convention -- yet parameter storage is locked */
+
+void free(void *__ptr)
+
+{
+  (*(code *)PTR_free_00103f90)();
+  return;
+}
+
+
+
+/* ---- putchar @ 001010e0 ---- */
+
+/* WARNING: Unknown calling convention -- yet parameter storage is locked */
+
+int putchar(int __c)
+
+{
+  int iVar1;
+  
+  iVar1 = (*(code *)PTR_putchar_00103f98)();
+  return iVar1;
+}
+
+
+
+/* ---- puts @ 001010f0 ---- */
+
+/* WARNING: Unknown calling convention -- yet parameter storage is locked */
+
+int puts(char *__s)
+
+{
+  int iVar1;
+  
+  iVar1 = (*(code *)PTR_puts_00103fa0)();
+  return iVar1;
+}
+
+
+
+/* ---- strlen @ 00101100 ---- */
+
+/* WARNING: Unknown calling convention -- yet parameter storage is locked */
+
+size_t strlen(char *__s)
+
+{
+  size_t sVar1;
+  
+  sVar1 = (*(code *)PTR_strlen_00103fa8)();
+  return sVar1;
+}
+
+
+
+/* ---- printf @ 00101120 ---- */
+
+/* WARNING: Unknown calling convention -- yet parameter storage is locked */
+
+int printf(char *__format,...)
+
+{
+  int iVar1;
+  
+  iVar1 = (*(code *)PTR_printf_00103fb8)();
+  return iVar1;
+}
+
+
+
+/* ---- fputs @ 00101130 ---- */
+
+/* WARNING: Unknown calling convention -- yet parameter storage is locked */
+
+int fputs(char *__s,FILE *__stream)
+
+{
+  int iVar1;
+  
+  iVar1 = (*(code *)PTR_fputs_00103fc0)();
+  return iVar1;
+}
+
+
+
+/* ---- strdup @ 00101150 ---- */
+
+/* WARNING: Unknown calling convention -- yet parameter storage is locked */
+
+char * strdup(char *__s)
+
+{
+  char *pcVar1;
+  
+  pcVar1 = (char *)(*(code *)PTR_strdup_00103fd0)();
+  return pcVar1;
+}
+
+
+
+/* ---- entry @ 00101160 ---- */
+
+void processEntry entry(undefined8 param_1,undefined8 param_2)
+
+{
+  undefined auStack_8 [8];
+  
+  (*(code *)PTR___libc_start_main_00103fe0)
+            (FUN_00101307,param_2,&stack0x00000008,FUN_001015b0,FUN_00101620,param_1,auStack_8);
+  do {
+                    /* WARNING: Do nothing block with infinite loop */
+  } while( true );
+}
+
+
+
+/* ---- FUN_00101190 @ 00101190 ---- */
+
+/* WARNING: Removing unreachable block (ram,0x001011a3) */
+/* WARNING: Removing unreachable block (ram,0x001011af) */
+
+void FUN_00101190(void)
+
+{
+  return;
+}
+
+
+
+/* ---- FUN_001011c0 @ 001011c0 ---- */
+
+/* WARNING: Removing unreachable block (ram,0x001011e4) */
+/* WARNING: Removing unreachable block (ram,0x001011f0) */
+
+void FUN_001011c0(void)
+
+{
+  return;
+}
+
+
+
+/* ---- FUN_00101249 @ 00101249 ---- */
+
+char * FUN_00101249(undefined8 param_1,char *param_2)
+
+{
+  char cVar1;
+  char *__s;
+  size_t sVar2;
+  ulong local_20;
+  
+  __s = strdup(param_2);
+  sVar2 = strlen(__s);
+  for (local_20 = 0; local_20 < sVar2; local_20 = local_20 + 1) {
+    if ((' ' < __s[local_20]) && (__s[local_20] != '\x7f')) {
+      cVar1 = (char)(__s[local_20] + 0x2f);
+      if (__s[local_20] + 0x2f < 0x7f) {
+        __s[local_20] = cVar1;
+      }
+      else {
+        __s[local_20] = cVar1 + -0x5e;
+      }
+    }
+  }
+  return __s;
+}
+
+
+
+/* ---- FUN_00101307 @ 00101307 ---- */
+
+undefined8 FUN_00101307(void)
+
+{
+  long in_FS_OFFSET;
+  int local_48;
+  undefined4 local_44;
+  char *local_40;
+  undefined8 local_38;
+  undefined8 local_30;
+  undefined8 local_28;
+  undefined8 local_20;
+  long local_10;
+  
+  local_10 = *(long *)(in_FS_OFFSET + 0x28);
+  local_38 = 0x4c75257240343a41;
+  local_30 = 0x3062396630664634;
+  local_28 = 0x65623066635f3d33;
+  local_20 = 0x4e326560623535;
+  local_44 = 0xd2c49;
+  printf("What\'s my favorite number? ");
+  local_44 = 0xd2c49;
+  __isoc99_scanf(&DAT_00102020,&local_48);
+  local_44 = 0xd2c49;
+  if (local_48 == 0x86187) {
+    local_44 = 0xd2c49;
+    local_40 = (char *)FUN_00101249(0,&local_38);
+    fputs(local_40,stdout);
+    putchar(10);
+    free(local_40);
+  }
+  else {
+    puts("Sorry, that\'s not it!");
+  }
+  if (local_10 != *(long *)(in_FS_OFFSET + 0x28)) {
+                    /* WARNING: Subroutine does not return */
+    __stack_chk_fail();
+  }
+  return 0;
+}
+
+
+
+/* ---- FUN_001015b0 @ 001015b0 ---- */
+
+void FUN_001015b0(undefined4 param_1,undefined8 param_2,undefined8 param_3)
+
+{
+  long lVar1;
+  
+  _DT_INIT();
+  lVar1 = 0;
+  do {
+    (*(code *)(&__DT_INIT_ARRAY)[lVar1])(param_1,param_2,param_3);
+    lVar1 = lVar1 + 1;
+  } while (lVar1 != 1);
+  return;
+}
+
+
+
+/* ---- FUN_00101620 @ 00101620 ---- */
+
+void FUN_00101620(void)
+
+{
+  return;
+}
+
+
+
+WARN  Decompiling 00105000, pcode error at 00105000: Unable to disassemble EXTERNAL block location: 00105000 (DecompileCallback)  
+/* ---- free @ 00105000 ---- */
+
+/* WARNING: Control flow encountered bad instruction data */
+/* WARNING: Unknown calling convention -- yet parameter storage is locked */
+
+void free(void *__ptr)
+
+{
+                    /* WARNING: Bad instruction - Truncating control flow here */
+  halt_baddata();
+}
+
+
+
+WARN  Decompiling 00105008, pcode error at 00105008: Unable to disassemble EXTERNAL block location: 00105008 (DecompileCallback)  
+/* ---- putchar @ 00105008 ---- */
+
+/* WARNING: Control flow encountered bad instruction data */
+/* WARNING: Unknown calling convention -- yet parameter storage is locked */
+
+int putchar(int __c)
+
+{
+                    /* WARNING: Bad instruction - Truncating control flow here */
+  halt_baddata();
+}
+
+
+
+WARN  Decompiling 00105018, pcode error at 00105018: Unable to disassemble EXTERNAL block location: 00105018 (DecompileCallback)  
+/* ---- puts @ 00105018 ---- */
+
+/* WARNING: Control flow encountered bad instruction data */
+/* WARNING: Unknown calling convention -- yet parameter storage is locked */
+
+int puts(char *__s)
+
+{
+                    /* WARNING: Bad instruction - Truncating control flow here */
+  halt_baddata();
+}
+
+
+
+WARN  Decompiling 00105020, pcode error at 00105020: Unable to disassemble EXTERNAL block location: 00105020 (DecompileCallback)  
+/* ---- strlen @ 00105020 ---- */
+
+/* WARNING: Control flow encountered bad instruction data */
+/* WARNING: Unknown calling convention -- yet parameter storage is locked */
+
+size_t strlen(char *__s)
+
+{
+                    /* WARNING: Bad instruction - Truncating control flow here */
+  halt_baddata();
+}
+
+
+
+WARN  Decompiling 00105030, pcode error at 00105030: Unable to disassemble EXTERNAL block location: 00105030 (DecompileCallback)  
+/* ---- printf @ 00105030 ---- */
+
+/* WARNING: Control flow encountered bad instruction data */
+/* WARNING: Unknown calling convention -- yet parameter storage is locked */
+
+int printf(char *__format,...)
+
+{
+                    /* WARNING: Bad instruction - Truncating control flow here */
+  halt_baddata();
+}
+
+
+
+WARN  Decompiling 00105038, pcode error at 00105038: Unable to disassemble EXTERNAL block location: 00105038 (DecompileCallback)  
+/* ---- fputs @ 00105038 ---- */
+
+/* WARNING: Control flow encountered bad instruction data */
+/* WARNING: Unknown calling convention -- yet parameter storage is locked */
+
+int fputs(char *__s,FILE *__stream)
+
+{
+                    /* WARNING: Bad instruction - Truncating control flow here */
+  halt_baddata();
+}
+
+
+
+WARN  Decompiling 00105060, pcode error at 00105060: Unable to disassemble EXTERNAL block location: 00105060 (DecompileCallback)  
+/* ---- strdup @ 00105060 ---- */
+
+/* WARNING: Control flow encountered bad instruction data */
+/* WARNING: Unknown calling convention -- yet parameter storage is locked */
+
+char * strdup(char *__s)
+
+{
+                    /* WARNING: Bad instruction - Truncating control flow here */
+  halt_baddata();
+}
+
+
+

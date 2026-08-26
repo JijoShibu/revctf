@@ -1,0 +1,11 @@
+Target       : /home/jijo/revctf-realworld/unpackme-upx
+Size         : 370KB (379108 bytes)
+file(1)      : ELF 64-bit LSB executable, x86-64, version 1 (GNU/Linux), statically linked, no section header
+Classified as: elf
+Packer       : upx detected
+Unwrap       : OK — analysing the unpacked image
+Unpacked to  : /tmp/revctf-work.nxqiwr/unpacked.unpackme-upx (978KB)
+Reclassified : elf
+
+Routing
+  native ELF — full static pipeline, ltrace and strace enabled

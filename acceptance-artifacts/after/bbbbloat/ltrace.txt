@@ -1,0 +1,18 @@
+=== LTRACE — THIS STAGE EXECUTES THE TARGET ===
+Isolation : NONE — the challenge binary ran directly on this machine.
+            Pass --sandbox to run it in a network-isolated container
+            instead, or --skip-ltrace / --skip-strace to not run it.
+Bounds    : killed after 10s; orphaned processes swept afterwards
+Arguments : none — the target is run with no argv and stdin closed
+Note      : your file was not executable, so a runnable COPY was made and
+            traced. Your original file was not modified.
+
+=== Library call trace ===
+19084 printf("What's my favorite number? ")      = 27
+19084 __isoc99_scanf(0x55e49fe54020, 0x7fff37df89e0, 0xd2c49, 0xd2c49) = 0xffffffff
+19084 puts("Sorry, that's not it!")              = 22
+19084 +++ exited (status 0) +++
+
+=== The target's own output (not part of the trace) ===
+What's my favorite number? Sorry, that's not it!
+

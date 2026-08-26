@@ -43,7 +43,13 @@ _FLAG_BRACED='(flag|FLAG|ctf|CTF|HTB|THM|picoCTF|pico|DUCTF|uiuctf|corctf|SEE|cs
 # challenges genuinely have no wrapper, dropped to medium so they cannot bury a real flag.
 _FLAG_HASHLIKE='\b([0-9a-fA-F]{32}|[0-9a-fA-F]{40}|[0-9a-fA-F]{64})\b'
 # Generic fallback: anything{anything}. Low confidence by construction.
-_FLAG_GENERIC='[A-Za-z0-9_]{2,}\{[^}]{1,200}\}'
+#
+# The body is {4,200}, not {1,200}, and that is not arbitrary. glibc carries the character
+# table `abcdefghijklmnopqrstuvwxyz{|}` -- the ASCII sequence simply continues past 'z' into
+# '{' -- so a 1-character body made this pattern report a false candidate on EVERY glibc
+# binary. Seen on both real targets in the first acceptance run. No flag has a 1-character
+# body, so the floor costs nothing and removes the whole family of near-miss table matches.
+_FLAG_GENERIC='[A-Za-z0-9_]{2,}\{[^}]{4,200}\}'
 
 _fs_add() {   # <confidence> <stage> <encoding> <value>
     local conf="$1" stage="$2" enc="$3" val="$4"
@@ -143,6 +149,38 @@ _fs_sweep_encodings() {
     # ROT13 — cheap enough to apply to the whole capture rather than picking candidates.
     tr 'A-Za-z' 'N-ZA-Mn-za-m' < "$src" 2>/dev/null | head -c 4194304 > "$dec"
     [[ -s $dec ]] && _fs_scan_stream "$stage" rot13 < "$dec"
+
+    # ROT47 — ROT13's printable-ASCII cousin, and one `tr` for the same reason.
+    # Rotates the 94 printable characters by 47, so punctuation and digits move too. That
+    # matters here: a flag wrapper is `picoCTF{...}`, and ROT13 leaves the braces and digits
+    # untouched while ROT47 is what actually reverses the transform used by both real
+    # challenges this was measured against.
+    tr '!-~' 'P-~!-O' < "$src" 2>/dev/null | head -c 4194304 > "$dec"
+    [[ -s $dec ]] && _fs_scan_stream "$stage" rot47 < "$dec"
+
+    # Stack strings, from immediates the disassembly and pseudo-C already print.
+    #
+    # This is the gap the first real-world acceptance run exposed. A stack string is built
+    # at runtime from `mov qword [rbp-0x20], 0x...` stores, so `strings` cannot see it, and
+    # FLOSS -- the tool that exists to recover them -- is PE-only for that mode, so on ELF
+    # it never even looks. Both picoCTF 2022 targets hid their flag exactly this way and
+    # revctf reported 0 high-confidence candidates on both, while Ghidra's pseudo-C had the
+    # bytes in plain sight a few lines away.
+    #
+    # No new tool and no new dependency: scripts/le_decode.py reads a capture this sweep is
+    # already holding. The decoded run is scanned twice, because measurement showed the
+    # bytes on disk are the CIPHERTEXT -- both binaries pass the buffer through a rotate
+    # before printing, which the pseudo-C names outright as `rotate_encrypt`.
+    if [[ -r ${REVCTF_SCRIPTS:-}/le_decode.py ]]; then
+        python3 "$REVCTF_SCRIPTS/le_decode.py" < "$src" 2>/dev/null \
+            | head -c 1048576 > "$dec"
+        if [[ -s $dec ]]; then
+            _fs_scan_stream "$stage" stack-string < "$dec"
+            tr '!-~' 'P-~!-O' < "$dec" 2>/dev/null > "$dec.r47"
+            [[ -s $dec.r47 ]] && _fs_scan_stream "$stage" "stack-string+ROT47" < "$dec.r47"
+            rm -f "$dec.r47"
+        fi
+    fi
 
     rm -f "$dec"
     return 0
