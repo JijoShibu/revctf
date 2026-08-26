@@ -5,7 +5,7 @@ section references (v3 §8, v5 §4.1, v6 §11) point at the design documents.
 
 ---
 
-## [1.0.0] — 2026-08-25 — the sandbox is on by default
+## [1.0.0] — 2026-08-26 — the sandbox is on by default
 
 revctf executes the challenge binary in two of its fourteen stages. Until now it did that
 directly on the user's machine unless they passed a flag whose existence they had no reason

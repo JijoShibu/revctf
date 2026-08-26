@@ -10,7 +10,7 @@
 # allowed to abort the run. Error handling is done per-stage via ERR traps in lib/.
 set -uo pipefail
 
-REVCTF_VERSION="0.1.0-dev"
+REVCTF_VERSION="1.0.0"
 
 # --- Resolve our own location (works through a symlink on PATH, per install.sh) --------
 __revctf_self="${BASH_SOURCE[0]}"
