@@ -20,7 +20,7 @@ beginner-friendly plain-text report with flag candidates surfaced at the top.
 ## Install
 
 ```bash
-git clone <repo> revctf && cd revctf
+git clone https://github.com/JijoShibu/revctf.git && cd revctf
 sudo ./install.sh
 ```
 

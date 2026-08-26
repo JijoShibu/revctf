@@ -120,13 +120,16 @@ Everything after the MVP: adaptivity, isolation, batch, agency, resilience.
   <br>M: M5 · lib/tier.sh · revctf never modifies the host
 - [x] **Mutation-test the verification harness (`tools/verify-harness.sh`)**
   <br>2026-08-21 · five mutations; found four product defects and five vacuous flag checks
-- [ ] **M6 · docker/Dockerfile built by install.sh during the network window**
-  <br>M: M6 · --sandbox currently refuses
-- [ ] **M6 · Sandboxed ltrace AND strace; verify no network egress** — **PRIORITISED ABOVE
-  M7 (2026-08-21).** The default path executes an untrusted binary on the host and the safe
-  path (`--sandbox`) refuses rather than isolating, so the unsafe option is the only working
-  one. That is the wrong default for a beginner-facing tool.
-  <br>M: M6 · deviation D9 · host verified 2026-08-20: `--network=none` gives no egress
+- [x] **M6 · docker/Dockerfile built by install.sh during the network window**
+  <br>2026-08-26 · `step_sandbox` in install.sh; non-fatal, and it names the `docker` group
+  when membership is what is actually wrong. Verified from a fresh clone.
+- [x] **M6 · Sandboxed ltrace AND strace; verify no network egress**
+  <br>2026-08-26 · `lib/sandbox.sh`; ON by default (D13), covers both executing stages (D9).
+  Egress is proven by a probe run through `sbx_wrap`'s own argv, with a `--network=bridge`
+  positive control that must succeed first — it SKIPs rather than passes on a host that
+  cannot demonstrate egress. The `sandbox_bypass` mutation deletes `--network=none` and all
+  three checks flip. Written the obvious way (retyping the flags in the check) it stayed
+  green under that mutation: it tested Docker, not revctf.
 - [ ] **M7 · Batch mode — three-phase concurrency, per-job isolation, flock results**
   <br>M: M7 · directory target exits 1 today
 - [ ] **M7 · Per-file failure isolation + merged run summary**
@@ -182,22 +185,42 @@ What has to be true before calling it v1.0.
   <br>M: M6 · managed stage unverified on a real .jar
 - [x] **Cloud-environment setup script within the 5-minute budget**
   <br>.claude/cloud-setup.sh
-- [ ] **Create the private GitHub repo and push (first push must be yours)**
-  <br>sandbox token cannot create repos
+- [x] **Create the GitHub repo and push**
+  <br>github.com/JijoShibu/revctf · main and tags through v1.0.0 pushed
 - [ ] **Connect the Claude GitHub App for automated pushes at v1.0**
   <br>M: v1.0 · hybrid plan
 - [x] **README, CHANGELOG, CLAUDE.md and notes current at each milestone**
   <br>M: M0–M4 · re-verify per milestone
-- [ ] **README documents every flag, tier table, agency model, diagnostics**
-  <br>M: M9 · partially done
-- [ ] **Tag v0.1-mvp at the M4 gate**
-  <br>M: M4 · fallback-good-state
-- [ ] **Tag v1.0 at the M9 gate**
-  <br>M: M9
-- [ ] **Acceptance run against a real, unseen CTF challenge before v1.0**
-  <br>M: pre-v1.0 · the corpus is synthetic
-- [ ] **Verify on the actual Kali VM, not just the build sandbox**
-  <br>M: pre-v1.0 · target environment
+- [x] **README documents every flag, tier table, agency model, diagnostics**
+  <br>The `docs` harness section asserts `--help` and README agree: every flag is either
+  exercised by the harness or marked `[NOT YET: Mn]`/`[PARTIAL: Mn]` in **both**. There is
+  no third state in which a flag can quietly do nothing.
+- [x] **Tag v0.1-mvp at the M4 gate**
+  <br>v0.1-mvp
+- [x] **Tag v1.0 — at the M6 gate, not M9**
+  <br>2026-08-26 · v1.0.0. M7/M8/M9 are post-1.0 and marked as such in `--help`, README and
+  the tag message. The sandbox is safety and batch mode is convenience, so M6 was the
+  right line to draw for a 1.0.
+- [x] **Acceptance run against a real, unseen CTF challenge before v1.0**
+  <br>picoCTF 2022 `unpackme-upx` and `bbbbloat`, scored against criteria written down
+  BEFORE the run. Both initially scored 0 high-confidence candidates — the flags were stack
+  strings, which `strings` cannot see and FLOSS only looks for on PE. That gap is what
+  `scripts/le_decode.py` closes; both flags now land at HIGH, re-verified under the sandbox.
+- [x] **Verify on the actual Kali VM, not just the build sandbox**
+  <br>M5 onward was built on the VM — the first time `systemd-run --scope -p MemoryMax`
+  ever executed in this project. M6's Docker contract was verified there too.
+- [ ] **`./tools/tui-selftest.sh` on a real terminal** — OUTSTANDING AT v1.0.0, and named
+  as outstanding in the tag message.
+  <br>The script hard-exits 1 unless stdin AND stdout are TTYs, and five of its six checks
+  are human judgements about what the screen looked like: did a resize tear the table, did
+  the cursor come back after Ctrl+C, did long notes truncate or wrap. `script(1)` can fake
+  the pty but cannot answer those, and piping `y` would fabricate a pass indistinguishable
+  from a real one. A fabricated pass is worse than an open gate.
+- [ ] **`./tools/verify-tier-c.sh` on a real 2048MB boot** — OUTSTANDING AT v1.0.0, and
+  named as outstanding in the tag message.
+  <br>Confirmed refusing on 2026-08-26: "This host has 3917MB — that is Tier A, not Tier C."
+  It refuses above 2560MB by design, so it cannot be satisfied by `REVCTF_RAM_MB` injection.
+  The reboot is the whole point of the check.
 
 ## Phase 8 — Known Risks & Open Questions  — 2/9
 
