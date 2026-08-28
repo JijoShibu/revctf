@@ -28,6 +28,13 @@ sudo ./install.sh
 container during a network window; at scan time a missing tool is a hard error rather than
 a silently thinner report. Run it while online.
 
+It does **not** install Docker — Kali does not ship it, and the sandbox is on by default.
+Without Docker the two stages that execute the target skip and say so, and install.sh exits
+non-zero to report the incomplete install. `sudo apt-get install docker.io` and re-run.
+
+This is the whole deployment path: clone, install, done. `REHEARSAL.md` is the procedure
+for proving it on a clean VM.
+
 ## Usage
 
 ```bash

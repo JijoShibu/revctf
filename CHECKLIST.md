@@ -216,6 +216,15 @@ What has to be true before calling it v1.0.
   the cursor come back after Ctrl+C, did long notes truncate or wrap. `script(1)` can fake
   the pty but cannot answer those, and piping `y` would fabricate a pass indistinguishable
   from a real one. A fabricated pass is worse than an open gate.
+- [ ] **Clean-VM install rehearsal** — OUTSTANDING AT v1.0.0. Procedure: `REHEARSAL.md`.
+  <br>`install.sh` has run end-to-end exactly once, on a machine that already had the whole
+  toolchain — so that run could not detect a missing dependency, because nothing was
+  missing. It already hid one: `curl`, `ca-certificates` and `python3-venv` are needed by
+  install.sh's own steps (the Ghidra fetch and the FLOSS venv) and it never installed them.
+  Found by reading, fixed 2026-08-28, still unproven. Revert the VM to a pre-revctf
+  snapshot, clone from GitHub, `sudo ./install.sh`, build the corpus, run the suite, scan
+  `unpackme-upx`. This is the only test that proves the documented deployment path works.
+
 - [ ] **`./tools/verify-tier-c.sh` on a real 2048MB boot** — OUTSTANDING AT v1.0.0, and
   named as outstanding in the tag message.
   <br>Confirmed refusing on 2026-08-26: "This host has 3917MB — that is Tier A, not Tier C."

@@ -56,6 +56,18 @@ PYINSTX_URL="${PYINSTX_URL:-https://raw.githubusercontent.com/extremecoders-re/p
 GHIDRA_DIR="${GHIDRA_DIR:-/opt}"
 GHIDRA_FALLBACK="${GHIDRA_FALLBACK:-11.2.1_PUBLIC_20241105}"
 
+# BOOTSTRAP — what install.sh's OWN steps need before they can run.
+#
+# Not analysis tools: `curl` fetches Ghidra, `python3-venv` is what `python3 -m venv` needs
+# on Debian/Kali (without it the FLOSS step dies with "ensurepip is not available"), and
+# `ca-certificates` is what makes the HTTPS fetches verify. install.sh checked for curl and
+# failed the step; it never installed any of the three.
+#
+# This gap survived a full end-to-end run because that run was on a machine that already
+# had all of them — which is the reason the clean-VM rehearsal exists. Installed first, so
+# a failure here is reported before the steps that depend on it.
+APT_BOOTSTRAP=(curl ca-certificates python3-venv)
+
 # CORE — the seven from v3 §1 (Ghidra excluded; discovered separately, not an apt package).
 # revctf refuses to run without these; a miss is a hard failure with an apt hint (M1 DoD).
 APT_CORE=(file binutils binwalk bsdextrautils ltrace radare2)
@@ -201,6 +213,14 @@ step_sandbox() {
 step_apt() {
     say "APT packages"
     run_root apt-get update -qq || { warn "apt-get update failed; continuing with whatever is cached"; }
+
+    if run_root apt-get install -y -qq "${APT_BOOTSTRAP[@]}"; then
+        ok "bootstrap: ${APT_BOOTSTRAP[*]}"
+    else
+        # Not fatal on its own: each dependent step still reports its own failure, and one
+        # of the three may already be present. But it explains the others.
+        FAILED+=("bootstrap apt packages (the FLOSS venv and the Ghidra download need these)")
+    fi
 
     if run_root apt-get install -y -qq "${APT_CORE[@]}"; then
         ok "core: ${APT_CORE[*]}"
