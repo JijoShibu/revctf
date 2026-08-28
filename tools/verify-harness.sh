@@ -35,7 +35,7 @@ WORK="${TMPDIR:-/tmp}/revctf-verify-harness.$$"
 # The 220MB stress checks contribute nothing to any mutation here and cost ~12 minutes
 # per harness invocation, and this script invokes the harness once per mutation plus
 # twice more. Default to skipping them; VH_FAST=0 opts back in.
-# Coerced deliberately: VH_FAST is user input, and CLAUDE.md §2 forbids letting an
+# Coerced deliberately: VH_FAST is user input, and docs/CLAUDE.md §2 forbids letting an
 # externally-supplied value reach an arithmetic test — under `set -u` a non-numeric word
 # in `[[ $x -eq 1 ]]` is read as a variable name and exits the shell outright.
 case "${VH_FAST:-1}" in 0) VH_FAST_ON=0 ;; *) VH_FAST_ON=1 ;; esac

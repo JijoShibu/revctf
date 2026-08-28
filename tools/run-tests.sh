@@ -1421,7 +1421,7 @@ test_m4() {
 # These checks pin the tier BRANCH LOGIC by injecting REVCTF_RAM_MB, which can run on any
 # machine. They say nothing about whether a tier's limits actually keep a scan inside
 # memory on hardware that really has that much RAM — that needs a host with 2GB and one
-# with 8GB, and it is the substance of M5's Definition of Done. See HANDOFF.md §6.
+# with 8GB, and it is the substance of M5's Definition of Done. See docs/HANDOFF.md §6.
 test_m5() {
     section "M5 groundwork — tier selection, --dry-run"
 
@@ -1908,7 +1908,7 @@ test_m5enforce() {
             # This is a SKIP with a stated reason, not a pass: an absent tool means this
             # stage's enforcement is simply unverified on this host, and saying so is the
             # difference between honest coverage and the vacuous kind. (managed lands here
-            # until M6 packages a Java decompiler — CHECKLIST Phase 8.)
+            # until M6 packages a Java decompiler — docs/CHECKLIST.md Phase 8.)
             skip "enforcement of $bst" "the stage did not run a tool here: ${bline:0:90}"
         else
             no "$bst reports a ceiling but is not bound by it" \
@@ -1953,7 +1953,7 @@ test_m5enforce() {
     rm -rf "$cleano"
 
     # A non-numeric value must warn and be ignored, never reach an arithmetic test
-    # (CLAUDE.md §2 / QA-1) — the same rule REVCTF_RAM_MB already follows.
+    # (docs/CLAUDE.md §2 / QA-1) — the same rule REVCTF_RAM_MB already follows.
     assert_match "a non-numeric REVCTF_CEIL_MB warns and is ignored" \
         'REVCTF_CEIL_MB is not a whole number' \
         env REVCTF_CEIL_MB=banana "$RC" scan "$t" --dry-run
@@ -2156,7 +2156,7 @@ test_docs() {
     fi
 
     # The FLOSS correction must be IN the installer, not only in the notes. QA review #2
-    # §7 rule 4: a finding recorded in implementation-notes.md must be applied everywhere
+    # §7 rule 4: a finding recorded in docs/implementation-notes.md must be applied everywhere
     # it applies, in the same commit — this is the exact instance that rule was written
     # for, since the notes carried the venv fix while install.sh kept the failing pip line.
     # Match a real invocation, not the message explaining why the method is avoided:
@@ -2164,7 +2164,7 @@ test_docs() {
     if grep -vE '^[[:space:]]*#|say |printf |echo ' "$ROOT/install.sh" \
        | grep -qE 'pip install .*--break-system-packages'; then
         no "install.sh FLOSS method" \
-           "still uses pip --break-system-packages, which CLAUDE.md §3 records as failing"
+           "still uses pip --break-system-packages, which docs/CLAUDE.md §3 records as failing"
     else
         ok "install.sh does not use the pip method known to fail"
     fi
@@ -2186,32 +2186,32 @@ test_docs() {
     fi
 
     # --- the design documents must travel with the repo -------------------------------
-    # CLAUDE.md §1 names revctfmasterplan_v6.md §11 as the highest authority for resolving
+    # docs/CLAUDE.md §1 names revctfmasterplan_v6.md §11 as the highest authority for resolving
     # conflicts. They were kept beside the repo, so a fresh clone was instructed to obey a
     # document it did not have. This check makes that unrepeatable.
     local -a design=(revctfmasterplan_v6.md revctfmasterplan_v5.md revctfmasterplan_v4.md
                      revctfmasterplanv3.md revctf_executionmasterplan.md README.md)
     local d missing_design=()
     for d in "${design[@]}"; do
-        [[ -s "$ROOT/design/$d" ]] || missing_design+=("$d")
+        [[ -s "$ROOT/docs/design/$d" ]] || missing_design+=("$d")
     done
     if [[ ${#missing_design[@]} -eq 0 ]]; then
-        ok "all ${#design[@]} design documents are in design/"
+        ok "all ${#design[@]} design documents are in docs/design/"
     else
-        no "design documents missing" "not in design/: ${missing_design[*]}"
+        no "design documents missing" "not in docs/design/: ${missing_design[*]}"
     fi
     local dv missing_dev=()
     for dv in D10 D11 D12; do
-        grep -q "| $dv |" "$ROOT/design/revctfmasterplan_v6.md" || missing_dev+=("$dv")
+        grep -q "| $dv |" "$ROOT/docs/design/revctfmasterplan_v6.md" || missing_dev+=("$dv")
     done
     if [[ ${#missing_dev[@]} -eq 0 ]]; then
-        ok "the Deviation Register in design/ includes D10, D11 and D12"
+        ok "the Deviation Register in docs/design/ includes D10, D11 and D12"
     else
-        no "stale design spec" "design/revctfmasterplan_v6.md is missing: ${missing_dev[*]}"
+        no "stale design spec" "docs/design/revctfmasterplan_v6.md is missing: ${missing_dev[*]}"
     fi
     # D11 struck v6 §5's Phase-2 derivation. The struck text must not read as current, or
     # a future session inherits the assumption the measurement disproved.
-    if grep -q 'STRUCK — see deviation D11' "$ROOT/design/revctfmasterplan_v6.md"; then
+    if grep -q 'STRUCK — see deviation D11' "$ROOT/docs/design/revctfmasterplan_v6.md"; then
         ok "v6 §5's disproved Phase-2 derivation is marked struck"
     else
         no "design drift" "v6 §5 still presents the Phase-2 derivation as current"

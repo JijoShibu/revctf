@@ -44,7 +44,7 @@ PF_OPT_ROOT="${PF_OPT_ROOT:-/opt}"
 # Format:  <logical>|<command>|<full install command>|<why it is needed>
 #
 # The third field is a complete command, not a package name: FLOSS is a pip package that
-# needs a venv on modern Debian/Ubuntu (see implementation-notes.md), so a bare
+# needs a venv on modern Debian/Ubuntu (see docs/implementation-notes.md), so a bare
 # "apt install <pkg>" template would print advice that does not work.
 #
 # CORE — the seven from v3 §1. revctf cannot run without these; a miss is a hard failure
@@ -74,7 +74,7 @@ PF_ALWAYS_TOOLS=(
 # CONDITIONAL — only required once Stage 0 routes a target to them. Checked lazily by
 # pf_require_tool() at the point of use, NOT at startup.
 #
-# Judgement call, recorded in implementation-notes.md: deviation D7 makes a missing
+# Judgement call, recorded in docs/implementation-notes.md: deviation D7 makes a missing
 # optional tool a hard error, and that is applied literally to PF_ALWAYS_TOOLS. Applying
 # it to these as well would abort a scan of a plain ELF crackme because a .NET decompiler
 # is absent, which is not what D7's "predictable runtime" intent was for. So these fail
@@ -172,7 +172,7 @@ pf_find_ghidra() {
     # said so. An environment variable the user sets deliberately must beat an incidental
     # PATH entry the installer created.
     #
-    # This is not hypothetical. Ghidra 12.x breaks the post-script (CLAUDE.md §3), and
+    # This is not hypothetical. Ghidra 12.x breaks the post-script (docs/CLAUDE.md §3), and
     # pointing GHIDRA_HOME at a known-good 11.2.x install is exactly how someone works
     # around that — which the old order made impossible.
     if [[ -n ${GHIDRA_HOME:-} ]]; then
@@ -261,7 +261,7 @@ pf_detect_ghidra_version() {
     #
     # That is not cosmetic. Measured on this host: Ghidra 12.1.3 ships PyGhidra and no
     # Jython at all, so the Jython post-script would be handed to an install that cannot
-    # run it — and per CLAUDE.md §3 that failure surfaces only as an EMPTY GHIDRA STAGE
+    # run it — and per docs/CLAUDE.md §3 that failure surfaces only as an EMPTY GHIDRA STAGE
     # THAT EXITS 0. A silent wrong answer, produced by our own installer's symlink.
     real="$(readlink -f -- "$PF_GHIDRA_HEADLESS" 2>/dev/null)"
     [[ -n $real && -e $real ]] || real="$PF_GHIDRA_HEADLESS"

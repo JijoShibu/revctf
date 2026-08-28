@@ -14,7 +14,7 @@
 #
 # It never modifies the repo and writes only under a temporary directory.
 
-set -uo pipefail   # never `set -e` — see CLAUDE.md §2
+set -uo pipefail   # never `set -e` — see docs/CLAUDE.md §2
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 RC="$ROOT/revctf"

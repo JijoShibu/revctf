@@ -122,7 +122,7 @@ dyn_guard() {
     # could show it, because build-test-corpus.sh chmods everything it creates.
     #
     # The fix is a copy, never a chmod of the user's file: "the user's original file is
-    # never modified" (CLAUDE.md §2) is not negotiable for a convenience. The copy lives in
+    # never modified" (docs/CLAUDE.md §2) is not negotiable for a convenience. The copy lives in
     # RUN_WORKDIR at 0700 and dies with the run.
     #
     # UNDER THE SANDBOX THE COPY IS UNCONDITIONAL, and for a different reason: the container
@@ -248,7 +248,7 @@ declare -g DYN_TRACE_BYTES=0
 # THIS FUNCTION USED TO LAUNCH THE TRACER ITSELF, AND THAT WAS A REAL DEFECT.
 #
 # It ran `setsid timeout -k 5 "$tmo" "$@" ... &` directly, which made it the only place in
-# the codebase where an external tool started outside st_run_bounded — the rule CLAUDE.md §2
+# the codebase where an external tool started outside st_run_bounded — the rule docs/CLAUDE.md §2
 # states without exception. The reason it was written that way is legitimate: these stages
 # need their own session so dyn_sweep_orphans has a process group to sweep, and
 # st_run_bounded did not offer that.

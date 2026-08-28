@@ -105,7 +105,7 @@ stage_ghidra() {
     # Observed on Ghidra 12.1.3: the PyGhidra script died with
     #   "Ghidra was not started with PyGhidra. Python is not available"
     # and the stage was recorded as `empty / 0B / exit 0` — a clean-looking negative on a
-    # binary whose password Ghidra 11.2.1 recovers. CLAUDE.md §3 already warned that this
+    # binary whose password Ghidra 11.2.1 recovers. docs/CLAUDE.md §3 already warned that this
     # class of failure "shows up only as an empty Ghidra stage, exit 0"; nothing was
     # actually checking for it. An empty capture plus a script error in stderr is a
     # FAILURE, and saying so is the difference between "no flag here" and "this tool never

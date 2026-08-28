@@ -5,6 +5,63 @@ section references (v3 §8, v5 §4.1, v6 §11) point at the design documents.
 
 ---
 
+## [Unreleased] — preparing for a public release under MIT
+
+No behaviour change. Everything here is licensing, layout and removing things a public
+reader should not inherit.
+
+### Added
+
+- **`LICENSE` — MIT, Copyright (c) 2026 Jijo Shibu.** revctf previously declared no
+  licence at all, which is why `install.sh` fetches GPLv3 `pyinstxtractor` rather than
+  vendoring it; with a licence declared that decision can be revisited.
+- **Creator attribution**, in exactly five places and no more: `LICENSE`, a four-line
+  `--version` block, a one-line `--help` footer, one line in the report header, and a
+  README author line. Plus a **Credits** section naming the ten tools revctf orchestrates
+  — a tool that stamps its own creator while staying silent about the ones doing the work
+  reads badly.
+- **`README.md` is now the whole user-facing document.** A stranger never needs to open a
+  second file: what it does, install, five worked examples, what it deliberately does not
+  do, and a "When a scan finds nothing" section. Maintainer material moved out from under
+  it.
+
+### Changed
+
+- **Maintainer documents moved to `docs/`** — `HANDOFF.md`, `CHECKLIST.md`, both QA
+  reviews, `implementation-notes.md`, `REHEARSAL.md`, the acceptance run, and `design/` →
+  `docs/design/`. `README.md` and `CHANGELOG.md` stay at the root.
+- **`CLAUDE.md` stayed at the root as a stub that imports `docs/CLAUDE.md`.** Claude Code
+  loads `CLAUDE.md` from the project root and nowhere else, so moving it outright would
+  have silently dropped every convention in it — including "never add `set -e`" — with
+  nothing about the repo looking different.
+- **`--flag-format` examples no longer teach PCRE.** `--help`, README and the config
+  sample all showed `'HTB\{.*?\}'`; the scanner is `grep -E` only, by a rule the project
+  calls non-negotiable, and lazy quantifiers do not exist there. Now `'HTB\{[^}]+\}'`.
+- **README no longer promises directory scanning.** Its opening line read "Point it at a
+  challenge binary — or a directory of them"; a directory target exits 1 in this build and
+  batch mode is M7.
+- `tools/bootstrap-kali.sh` **no longer sets `user.name` and `user.email`** in the clone it
+  makes. It runs on whoever clones revctf, and writing an authorship pair into their repo
+  silently made their commits appear to come from someone else.
+- `install.sh` gained an **`APT_BOOTSTRAP` group** (`curl`, `ca-certificates`,
+  `python3-venv`) — dependencies of install.sh's own steps that it checked for but never
+  installed. Found by reading it as if from a bare Kali; unproven until the clean-VM
+  rehearsal runs.
+
+### Removed
+
+- **`acceptance-artifacts/`** — 144 files, 5.2MB of raw tool output containing ~90
+  absolute `/home/<user>` paths, a Ghidra profile path and strace PIDs. Every conclusion
+  drawn from it is in `docs/acceptance-run-2026-08-21.md`; the captures are reproducible
+  by re-running the scans.
+- **`host-measurements-jijo-20260820.txt`** — carried a hostname and machine spec no user
+  has any use for. Its numbers are folded into `docs/implementation-notes.md`, and
+  `tools/measure-host.sh` regenerates it on demand.
+- A dangling reference to `PUSH-RUNBOOK.md`, a file that was never committed. The
+  bundle-based delivery workflow it described was superseded when `gh` was installed.
+
+---
+
 ## [1.0.0] — 2026-08-26 — the sandbox is on by default
 
 revctf executes the challenge binary in two of its fourteen stages. Until now it did that
@@ -190,7 +247,7 @@ Work done in the cloud session before handing development to a Linux host at M5.
   --break-system-packages` line install.sh still carries is known to fail.
 - **`m5` harness section** — 52 checks covering both sides of every tier boundary, the
   injection labelling, Tier C routing, overrides, and that `--dry-run` creates nothing.
-- **`CLAUDE.md` §3b** — the WSL/Kali facts: `systemd=true` in `/etc/wsl.conf` (without it
+- **`docs/CLAUDE.md` §3b** — the WSL/Kali facts: `systemd=true` in `/etc/wsl.conf` (without it
   M5's primary memory path cannot work), `.wslconfig` as the Tier C rig, the ext4-not-/mnt
   rule, and `setsid` rather than `nohup` for background harness runs.
 
@@ -213,7 +270,7 @@ finished v1.0 tool, and has since been maintained only at its status banner.
   marked unfinished *in both documents*. There is no third state where it quietly does
   nothing. Also asserts that no placeholder function is called from the entry script.
 
-Full analysis, including the alignment review and the standing rules, in `QA-REVIEW-2.md`.
+Full analysis, including the alignment review and the standing rules, in `docs/QA-REVIEW-2.md`.
 
 ### Known, unfixed
 
@@ -354,7 +411,7 @@ This is the known-good rollback point before M3 begins changing the stage framew
 
 ### Fixed — QA review (16 defects, all reproduced against a live build)
 
-Full detail with reproductions in `QA-REVIEW.md`.
+Full detail with reproductions in `docs/QA-REVIEW.md`.
 
 **Critical**
 

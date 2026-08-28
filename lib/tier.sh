@@ -43,7 +43,7 @@ TIER_WATCHDOG_PCT="${TIER_WATCHDOG_PCT:-90}"
 # a 220MB target, above Tier A's 1024M and roughly 3x Tier C's.
 #
 # These numbers are DERIVED FROM MEASUREMENT, not from v6 §5. Measured on the target Kali
-# VM (getrusage, exact peaks — full table in implementation-notes.md "M5 — host
+# VM (getrusage, exact peaks — full table in docs/implementation-notes.md "M5 — host
 # measurements"). If you move one, re-measure and update that section in the same commit.
 #
 #   FLOSS, 264KB PE, --only static      100MB

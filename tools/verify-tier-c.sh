@@ -94,7 +94,7 @@ fi
 if [[ ! $RAM_MB =~ ^[0-9]+$ || $RAM_MB -eq 0 ]]; then
     RAM_MB=$(awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null)
 fi
-# Coerced before any arithmetic test: CLAUDE.md §2 forbids letting an unvalidated value
+# Coerced before any arithmetic test: docs/CLAUDE.md §2 forbids letting an unvalidated value
 # reach `[[ -eq ]]`, which under `set -u` exits the shell outright rather than failing.
 [[ $RAM_MB =~ ^[0-9]+$ ]] || RAM_MB=0
 
@@ -241,5 +241,5 @@ if [[ $FAIL -gt 0 ]]; then
     exit 1
 fi
 printf '\nM5 exit criterion closed: Tier C selected and enforced on genuinely %sMB of RAM.\n' "$RAM_MB"
-printf 'Paste the transcript back so it can be recorded in implementation-notes.md.\n'
+printf 'Paste the transcript back so it can be recorded in docs/implementation-notes.md.\n'
 exit 0

@@ -2,6 +2,8 @@
 #
 # revctf — automated reverse-engineering CTF analysis pipeline
 #
+# Created by Jijo Shibu.  MIT licence — see LICENSE.
+#
 # Build reference: revctfmasterplan_v6.md (consolidates v3/v4/v5 + execution masterplan).
 # Milestone: M0 — foundation & scaffolding.
 #
@@ -11,6 +13,17 @@
 set -uo pipefail
 
 REVCTF_VERSION="1.0.0"
+REVCTF_AUTHOR="Jijo Shibu"
+REVCTF_URL="https://github.com/JijoShibu/revctf"
+
+# Printed by --version. A bare number tells a stranger nothing about where the tool came
+# from or what they may do with it; this is the one place that is worth four lines.
+print_version() {
+    printf 'revctf %s\n' "$REVCTF_VERSION"
+    printf 'Created by %s\n' "$REVCTF_AUTHOR"
+    printf '%s\n' "$REVCTF_URL"
+    printf 'MIT licence — see LICENSE\n'
+}
 
 # --- Resolve our own location (works through a symlink on PATH, per install.sh) --------
 __revctf_self="${BASH_SOURCE[0]}"
@@ -103,8 +116,9 @@ OUTPUT & REPORTING
 
 FLAG DETECTION
     --no-flag-scan        Disable flag-pattern detection entirely
-    --flag-format REGEX   Add a custom High-confidence pattern
-                          (e.g. --flag-format 'HTB\{.*?\}')
+    --flag-format REGEX   Add a custom High-confidence pattern. POSIX extended
+                          regex (grep -E) — lazy quantifiers are NOT supported.
+                          (e.g. --flag-format 'HTB\{[^}]+\}')
 
 ANALYSIS DEPTH / STAGE CONTROL
     --full-hexdump        Dump the whole file instead of the 512-byte preview
@@ -176,12 +190,15 @@ EXIT STATUS
 EXAMPLES
     revctf scan ./crackme
     revctf scan ./sample --no-sandbox        # opt out of the container
-    revctf scan ./bin --flag-format 'picoCTF\{.*?\}'
+    revctf scan ./bin --flag-format 'picoCTF\{[^}]+\}'
     revctf scan ./packed.exe --no-unwrap --verbose
     revctf scan ./big.elf --dry-run
 
 Persistent state lives in ~/.revctf/ (config, error.log).
 EOF
+    # Outside the heredoc, which is single-quoted and so expands nothing. Hardcoding the
+    # version here would make the footer lie on the next bump.
+    printf '\nrevctf %s — created by %s — MIT licence.\n' "$REVCTF_VERSION" "$REVCTF_AUTHOR"
 }
 
 # ======================================================================================
@@ -213,7 +230,7 @@ parse_args() {
     # Global-only forms, valid without a subcommand.
     case "$1" in
         -h|--help)  usage; exit 0 ;;
-        --version)  printf 'revctf %s\n' "$REVCTF_VERSION"; exit 0 ;;
+        --version)  print_version; exit 0 ;;
         -*)         die "unknown option '$1' (a subcommand must come first; try 'revctf --help')" ;;
     esac
 
@@ -268,7 +285,7 @@ parse_args() {
             --debug)   set_opt debug 1; shift ;;
 
             -h|--help) usage; exit 0 ;;
-            --version) printf 'revctf %s\n' "$REVCTF_VERSION"; exit 0 ;;
+            --version) print_version; exit 0 ;;
 
             --) shift; break ;;
             -*) die "unknown option '$1' (try 'revctf --help')" ;;

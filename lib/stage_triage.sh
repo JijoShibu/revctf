@@ -17,7 +17,7 @@
 #   - A failed unwrap is a stage failure, not a file failure: the report says the target
 #     is packed and its static results are unreliable, and analysis continues on the
 #     original bytes. (This path is not hypothetical — upx 4.2.2 cannot unpack a PIE ELF,
-#     and PIE is the default on modern Kali. See implementation-notes.md.)
+#     and PIE is the default on modern Kali. See docs/implementation-notes.md.)
 #   - Recursion into containers is capped at TRIAGE_MAX_DEPTH.
 
 TRIAGE_MAX_DEPTH="${TRIAGE_MAX_DEPTH:-2}"

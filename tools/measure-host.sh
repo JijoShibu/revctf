@@ -17,7 +17,7 @@
 # Writes a plain-text report (default: host-measurements-<host>-<date>.txt) and prints it.
 # Runs real scans, so it takes a few minutes and needs the test corpus built.
 
-set -uo pipefail   # never `set -e` — see CLAUDE.md §2
+set -uo pipefail   # never `set -e` — see docs/CLAUDE.md §2
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 RC="$ROOT/revctf"
@@ -205,7 +205,7 @@ main() {
      project.
   3. Compare RAM/CPU against the tier boundaries (3.8GB / 2.5GB). v4 §10 flags them as
      unmeasured estimates; this is the run that either confirms or moves them.
-  4. Paste this file into implementation-notes.md under the M5 section.
+  4. Paste this file into docs/implementation-notes.md under the M5 section.
 TXT
     } | tee "$OUT"
 

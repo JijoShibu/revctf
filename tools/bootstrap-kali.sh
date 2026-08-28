@@ -17,7 +17,7 @@
 #
 # Safe to re-run: every step checks before acting.
 
-set -uo pipefail   # never `set -e` — see CLAUDE.md §2
+set -uo pipefail   # never `set -e` — see docs/CLAUDE.md §2
 
 REPO_URL="${REPO_URL:-https://github.com/JijoShibu/revctf.git}"
 REPO_DIR="${REPO_DIR:-$HOME/revctf}"
@@ -178,7 +178,7 @@ step_apt() {
 
 step_floss() {
     say "FLOSS (in a venv — this is not optional)"
-    # CLAUDE.md 3: flare-floss CANNOT be pip-installed system-wide on modern
+    # docs/CLAUDE.md 3: flare-floss CANNOT be pip-installed system-wide on modern
     # Debian/Ubuntu. Its halo dependency dies with AttributeError: install_layout.
     # pip install --break-system-packages flare-floss — which install.sh still carries as
     # a commented line — fails. A venv is the working route.
@@ -247,11 +247,13 @@ step_repo() {
     else
         fail "clone"; return 1
     fi
+    # Repo-local settings only. Authorship is DELIBERATELY not set here: this script runs
+    # on whoever's machine clones revctf, and writing a name and email into their clone
+    # would silently make their commits appear to come from someone else. Their own global
+    # git config is the right answer and is already correct for them.
     git -C "$REPO_DIR" config core.autocrlf false
     git -C "$REPO_DIR" config commit.gpgsign false
-    git -C "$REPO_DIR" config user.name  "Jijo"
-    git -C "$REPO_DIR" config user.email "jijoshibuwork@gmail.com"
-    ok "git configured (LF, unsigned commits, authorship)"
+    ok "git configured (LF, unsigned commits; authorship left to your global config)"
 }
 
 step_verify() {

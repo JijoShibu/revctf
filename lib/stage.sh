@@ -8,7 +8,7 @@
 # NOT in v6 §12's repo layout. Added during M2 because the execution masterplan calls the
 # per-stage function pattern "load-bearing" and says to get it right once, since every
 # later stage reuses it. Putting that pattern in a shared file rather than copying it into
-# 13 stage files is the whole point. Recorded in implementation-notes.md.
+# 13 stage files is the whole point. Recorded in docs/implementation-notes.md.
 #
 # ======================================================================================
 # The stage contract

@@ -1,10 +1,16 @@
 # revctf
 
+**Created by Jijo Shibu** · MIT licence ([LICENSE](LICENSE)) · <https://github.com/JijoShibu/revctf>
+
 Automated reverse-engineering CTF analysis pipeline for Kali Linux.
 
-Point it at a challenge binary — or a directory of them — and it runs a staged toolchain
-(triage/unwrap, static analysis, dynamic tracing, decompilation) and writes a
-beginner-friendly plain-text report with flag candidates surfaced at the top.
+Point it at a challenge binary and it runs a staged toolchain (triage/unwrap, static
+analysis, dynamic tracing, decompilation), then writes a beginner-friendly plain-text
+report with flag candidates surfaced at the top. The two stages that **execute** the
+challenge do so inside a network-isolated, read-only Docker container by default; without
+Docker they skip rather than running the binary on your machine.
+
+Directory targets are M7 and are not in this build — a directory exits 1 with a message.
 
 > **Status: v1.0 — M6 complete.** Single-file scanning works end to end: 14 stages
 > including Ghidra headless, flag detection with the base64/base32/hex/ROT13/ROT47 sweep
@@ -13,7 +19,7 @@ beginner-friendly plain-text report with flag candidates surfaced at the top.
 > behind them, and the two stages that execute the challenge binary run inside a
 > network-isolated Docker container **by default**.
 > Batch mode (M7), the prompt layer (M8) and the debug log (M9) are post-1.0.
-> New here? Read `HANDOFF.md`.
+> Everything you need to use revctf is on this page. Maintainer documents are in `docs/`.
 
 ---
 
@@ -38,12 +44,34 @@ for proving it on a clean VM.
 ## Usage
 
 ```bash
-revctf scan ./crackme                                   # single file
-revctf scan ./bin --flag-format 'picoCTF\{.*?\}'        # custom flag pattern
-revctf scan ./sample --no-sandbox                       # opt out of the container
-revctf scan ./big.elf --dry-run                         # resolved plan, runs nothing
-revctf --help                                           # every flag
+# 1. The normal case. Report at ./revctf-reports/<name>-<timestamp>/report.txt
+revctf scan ./crackme
+
+# 2. The picoCTF 2022 acceptance run — this is the one that recovered both flags.
+#    unpackme-upx is a statically-linked UPX-packed ELF with no section headers, and its
+#    flag is a stack string: invisible to `strings` before and after unpacking. revctf
+#    unpacks it, decompiles the payload with Ghidra, and the flag scanner's ROT47 sweep
+#    over the pseudo-C recovers picoCTF{up><_m3_f7w_77ad107e} at HIGH confidence.
+revctf scan ~/unpackme-upx --output ~/reports/unpackme
+
+# 3. A non-picoCTF event. --flag-format takes POSIX extended regex (grep -E) — no lazy
+#    quantifiers, no PCRE. Your pattern is run over megabytes of capture, and a
+#    backtracking engine there is a self-inflicted DoS.
+revctf scan ./challenge --flag-format 'HTB\{[^}]+\}'
+
+# 4. A fast first look: skip the decompile (radare2 substitutes) and lead with a summary.
+revctf scan ./challenge --skip-ghidra --summary-only
+
+# 5. Redirect the report, keep the progress display. stdout is the report and the live
+#    stage table goes to stderr, so this produces a clean file.
+revctf scan ./challenge > findings.txt
+
+revctf scan ./big.elf --dry-run    # resolved plan, executes nothing
+revctf --help                      # every flag
 ```
+
+Your original file is never modified. Packed and archived targets are unwrapped to copies
+in a temporary working directory.
 
 ## What it runs
 
@@ -170,12 +198,41 @@ clean file while you still see movement. Display adapts: an in-place stage table
 you are on a terminal, one line per stage with `--no-tui`, and a periodic heartbeat when
 stdout is redirected.
 
+## When a scan finds nothing
+
+A zero-flag report is a normal result, not a failure. In order:
+
+1. **Read `WHAT TO TRY NEXT` at the bottom of `report.txt`.** It is generated from what
+   actually happened in your run, not from a generic list.
+
+2. **Check what did not run.** The `WHAT RAN` table gives every stage a status and a reason
+   for any skip. A flag hiding behind a skipped stage is the most common cause — usually
+   `ltrace`/`strace` skipped for a missing Docker, or Ghidra skipped on Tier C.
+
+3. **Read `ghidra.txt` and `radare2.txt` together**, in the output directory beside the
+   report. Pseudo-C tells you what the program decides; the disassembly tells you exactly
+   how. Both picoCTF acceptance flags lived here and nowhere else.
+
+4. **Check whether FLOSS was format-limited.** On ELF, FLOSS can only do static strings —
+   stack, tight and decoded extraction are PE-only. `floss.txt` says so in plain words. An
+   absent flag there means the tool could not look, not that nothing is hidden.
+
+5. **Consider a flag built at runtime.** Stack strings are assembled from immediates and
+   never appear in `strings`. The scanner sweeps base64, base32, hex, ROT13, ROT47 and
+   little-endian byte order over every capture, but a custom transform needs you.
+
+6. **If the event uses an unusual flag format**, re-run with `--flag-format`. Without it
+   only the known prefixes match at high confidence; anything `word{...}`-shaped lands low.
+
+Every stage's raw output is kept in the output directory as `<stage>.txt` and
+`<stage>.stderr`. The report summarises those files; it does not replace them.
+
 ## Configuration
 
 Optional `~/.revctf/config`, `key=value` per line. CLI flags always win.
 
 ```ini
-flag_format  = HTB\{.*?\}
+flag_format  = HTB\{[^}]+\}
 output_dir   = ~/ctf/reports
 jobs_light   = 2
 tui          = no
@@ -221,7 +278,8 @@ build-only dependencies the test corpus needs.
 
 ## Requirements
 
-Kali Linux (or Debian-derived), Bash 4+, and the toolchain `install.sh` sets up: `file`,
+Kali Linux (or Debian-derived), Bash 4+, **4GB RAM** for full behaviour and ~4GB free disk
+(Ghidra alone unpacks to ~400MB). Plus the toolchain `install.sh` sets up: `file`,
 `strings`, `binwalk`, `hexdump`, `ltrace`, `strace`, `radare2`, `checksec`, `objdump`,
 `readelf`, `upx`, FLOSS, Java/.NET/Python decompilers, and Ghidra (**11.2.1, pinned** —
 12.x breaks the headless post-script; `GHIDRA_LATEST=1` opts in with a warning), found via
@@ -252,10 +310,39 @@ the harness structurally cannot: whether a resize corrupts the redraw, whether C
 leaves the cursor hidden, whether the report reads as intended. Run it once on a real
 terminal before trusting the display layer.
 
-`HANDOFF.md` is the cold-start entry point. `CLAUDE.md` holds the conventions that must not
-be violated — read it before changing `lib/`.
+### Maintainer documents
 
-## Design documents
+Everything below `docs/` is for people changing revctf, not people using it.
 
-`revctfmasterplan_v6.md` is the consolidated build spec — read that one.
-`revctf_executionmasterplan.md` holds milestone order and gates. v3/v4/v5 are historical.
+| File | What it is |
+|---|---|
+| `docs/HANDOFF.md` | Cold-start entry point. Start here |
+| `docs/CLAUDE.md` | The conventions that must not be violated. Read before changing `lib/` |
+| `docs/implementation-notes.md` | What was learned while building, per milestone |
+| `docs/CHECKLIST.md` | Release checklist, including what is still outstanding |
+| `docs/REHEARSAL.md` | Clean-VM install rehearsal procedure |
+| `docs/QA-REVIEW.md`, `docs/QA-REVIEW-2.md` | The two QA passes and the rules they produced |
+| `docs/design/` | The five design documents. `revctfmasterplan_v6.md` is the consolidated spec — read that one; v3/v4/v5 are historical and `docs/design/README.md` flags where they are now wrong |
+
+## Credits
+
+Created by **Jijo Shibu**. MIT licence — see [LICENSE](LICENSE).
+
+revctf is an orchestrator: nearly all of the analysis is done by other people's tools, and
+it would not exist without them.
+
+| Tool | Authors |
+|---|---|
+| [Ghidra](https://ghidra-sre.org/) | NSA Research Directorate |
+| [radare2](https://rada.re/) | pancake and the radare2 contributors |
+| [FLOSS](https://github.com/mandiant/flare-floss) | Mandiant FLARE team |
+| [binwalk](https://github.com/ReFirmLabs/binwalk) | Craig Heffner and ReFirm Labs |
+| [ltrace](https://ltrace.org/) | Juan Cespedes and contributors |
+| [strace](https://strace.io/) | Paul Kranenburg, Dmitry Levin and contributors |
+| [UPX](https://upx.github.io/) | Markus Oberhumer, László Molnár and John Reiser |
+| [checksec](https://github.com/slimm609/checksec) | Brian Davis and contributors |
+| GNU Binutils (`strings`, `objdump`, `readelf`) | the GNU Project |
+| [pyinstxtractor](https://github.com/extremecoders-re/pyinstxtractor) | extremecoders-re (GPLv3; fetched by `install.sh`, not vendored) |
+
+Each is used as a separate process under its own licence. The picoCTF challenges used for
+acceptance testing are the work of the picoCTF team at Carnegie Mellon University.

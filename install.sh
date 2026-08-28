@@ -15,7 +15,7 @@
 # root. tools/bootstrap-kali.sh is the richer, opinionated stopgap this superseded — it
 # still exists because it also pulls build-only dependencies (gcc, mingw, JDK) for the
 # test corpus, which install.sh deliberately does not.
-set -uo pipefail   # never `set -e` — see CLAUDE.md §2
+set -uo pipefail   # never `set -e` — see docs/CLAUDE.md §2
 
 REVCTF_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX="${PREFIX:-/usr/local/bin}"
@@ -43,7 +43,7 @@ INSTALL_HOME="${INSTALL_HOME:-$HOME}"
 REVCTF_HOME="${REVCTF_HOME:-$INSTALL_HOME/.revctf}"
 
 # flare-floss cannot be pip-installed system-wide on modern Debian/Ubuntu — its `halo`
-# dependency dies with `AttributeError: install_layout` (CLAUDE.md §3). A venv is the
+# dependency dies with `AttributeError: install_layout` (docs/CLAUDE.md §3). A venv is the
 # working route; uncompyle6 rides along in the same venv as the Python-decompile fallback.
 FLOSS_VENV="${FLOSS_VENV:-/opt/floss-venv}"
 # Must match lib/sandbox.sh's default, or install.sh builds an image revctf never looks for.
@@ -327,7 +327,7 @@ step_ghidra() {
     # An installer that silently upgrades the one dependency whose behaviour the whole
     # project is calibrated against is the version-decay trap this codebase has already been
     # bitten by twice (upx's PIE bug, radare2 finding `main` in stripped binaries — see
-    # CLAUDE.md §3). So: pin by default, and make "newest" an explicit, informed choice.
+    # docs/CLAUDE.md §3). So: pin by default, and make "newest" an explicit, informed choice.
     local url=""
     if [[ ${GHIDRA_LATEST:-0} -eq 1 ]]; then
         warn "GHIDRA_LATEST=1: installing the newest release. revctf is verified against ${GHIDRA_FALLBACK%%_*}; newer majors may change the post-script runtime."
