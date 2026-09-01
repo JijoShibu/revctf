@@ -132,12 +132,27 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
 - **A shellcheck directive is only valid in front of a complete command**, never a single
   `case` branch — it produces SC1124/SC1072 and breaks parsing. Lift the statement into a
   small function and annotate that instead (see `set_config_path`).
-- Commits are authored as `Jijo Shibu <jijoshibu@gmail.com>` and made with
-  `-c commit.gpgsign=false` so GitHub does not show "Unverified". **The email changed on
-  2026-09-01** from `jijoshibuwork@` to `jijoshibu@`, the address on the GitHub account, so
-  commits attribute to the profile. It applies from that date forward only. Earlier history
-  — `Jijo` before 2026-08-28, then `Jijo Shibu <jijoshibuwork@>` — was deliberately **not**
-  rewritten: doing so would invalidate every pushed tag for a cosmetic gain.
+- **Every commit in this repo is `Jijo Shibu <jijoshibu@gmail.com>`, author and
+  committer, with no exceptions** — made with `-c commit.gpgsign=false` so GitHub does not
+  show "Unverified". Keep it that way.
+
+  The whole history was rewritten on 2026-09-01 to make that true. Three spellings of the
+  same person had accumulated (`Jijo <jijoshibuwork@>` for 36 commits, then
+  `Jijo Shibu <jijoshibuwork@>`, then the current address), and GitHub was additionally
+  showing an assistant as a second author on every commit, because Claude Code appends an
+  attribution trailer. `git filter-repo` unified the identities and stripped those trailers
+  across all 40 commits; original author and commit dates were preserved.
+
+  **This reverses an earlier rule in this file**, which said the history must never be
+  rewritten because it would invalidate every pushed tag for a cosmetic gain. That reasoning
+  was sound and was overruled deliberately by the repo owner: attribution on a public repo
+  is not cosmetic. The cost was paid — every tag now points at a rewritten commit, and any
+  clone taken before 2026-09-01 has divergent history and must be re-cloned rather than
+  pulled. A backup bundle of the pre-rewrite history was taken first.
+
+  Going forward there is nothing to strip: `.claude/settings.json` sets
+  `includeCoAuthoredBy: false`, so new commits carry no assistant attribution at all. Do not
+  remove that setting, and do not re-introduce a second author.
   `tools/bootstrap-kali.sh` sets neither name nor email on purpose. It runs on whoever
   clones revctf, and writing an identity into their clone would make their commits appear
   to come from someone else. Do not "helpfully" add one back.
