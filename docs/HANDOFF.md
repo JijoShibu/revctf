@@ -123,7 +123,8 @@ which is exactly why QA review #2 insisted the installer be run rather than read
   *resolution*; `m5enforce` checks the ceilings actually bound a real scan. `REVCTF_TEST_FAST=1` skips the 220 MB
   target checks (~3 min instead of ~15).
 - Tags `v0.1-mvp`, `v0.2-m2-qa`, `v0.3-m5`, `v0.3.1-m5`, `v0.3.2-m5`. Branch `main`, pushed
-  to <https://github.com/JijoShibu/revctf> (private). Superseded tags are never moved — each
+  to <https://github.com/JijoShibu/revctf> (public since the v1.0.0 release). Superseded tags
+  are never moved — each
   records what was believed at the time.
 
 Progress: 72% of build tasks; 45 of 84 tracked items done; 5 of 10 milestones.
@@ -338,10 +339,10 @@ Full detail in `implementation-notes.md` under "M5 — host measurements".
 
 | Location | State |
 |---|---|
-| GitHub `JijoShibu/revctf` (private) | **Authoritative.** Branch `main`, tags `v0.2-m2-qa` and `v0.1-mvp` |
+| GitHub `JijoShibu/revctf` (public) | **Authoritative — clone from here.** Branch `main`, tags through `v1.0.0` |
 | Cloud sandbox `/home/claude/work/revctf` | Working copy through M4. Ephemeral |
-| Device `D:\RevCTF\revctf-repo` | The pushed clone. `D:\RevCTF\revctf` was the stale pre-push copy |
-| Device `D:\RevCTF\` | Also holds the v3–v6 masterplans and the execution masterplan |
+| Device `D:\RevCTF\` | **Stale — do not clone from it.** Both `revctf-repo` and `revctf` predate v1.0.0. Clone from GitHub |
+| Device `D:\RevCTF\` (masterplans) | Held the v3–v6 masterplans; they now live in `docs/design/` in the repo |
 
 
 **I cannot push from the sandbox.** Re-verified 2026-08-18 rather than assumed:
@@ -391,7 +392,8 @@ Claude Code in PowerShell installed, VirtualBox present, **no WSL yet**).
 
 Decided 2026-08-18 after comparing environments:
 
-1. ~~Push to GitHub.~~ **Done** — 14 commits, private repo, verified.
+1. ~~Push to GitHub.~~ **Done** — 14 commits, verified. The repo was private then; it is
+   public as of the v1.0.0 release.
 2. ~~Build M4 in this cloud session.~~ **Done** — `v0.1-mvp`. One task remains on the
    user's side: run `tools/tui-selftest.sh` on a real terminal, since no automated check
    can see a corrupted redraw or a hidden cursor.

@@ -34,12 +34,14 @@ sudo ./install.sh
 container during a network window; at scan time a missing tool is a hard error rather than
 a silently thinner report. Run it while online.
 
-It does **not** install Docker — Kali does not ship it, and the sandbox is on by default.
-Without Docker the two stages that execute the target skip and say so, and install.sh exits
-non-zero to report the incomplete install. `sudo apt-get install docker.io` and re-run.
+It does **not** install Docker — Kali does not ship it, and pulling in a ~500MB daemon
+uninvited is not the installer's call. Without Docker the two stages that execute the target
+skip and say so; install.sh warns, tells you the command, and still exits 0, because an
+install that placed every other tool correctly has not failed. Run
+`sudo apt-get install docker.io` and re-run install.sh to enable them.
 
-This is the whole deployment path: clone, install, done. `REHEARSAL.md` is the procedure
-for proving it on a clean VM.
+This is the whole deployment path: clone, install, done. `docs/REHEARSAL.md` is the
+procedure for proving it from zero.
 
 ## Usage
 
@@ -283,8 +285,9 @@ Kali Linux (or Debian-derived), Bash 4+, **4GB RAM** for full behaviour and ~4GB
 `strings`, `binwalk`, `hexdump`, `ltrace`, `strace`, `radare2`, `checksec`, `objdump`,
 `readelf`, `upx`, FLOSS, Java/.NET/Python decompilers, and Ghidra (**11.2.1, pinned** —
 12.x breaks the headless post-script; `GHIDRA_LATEST=1` opts in with a warning), found via
-`PATH`, `GHIDRA_HOME`, or `/opt/ghidra*`. **Docker is required for the default sandbox**;
-without it the two executing stages skip. `systemd-run` is preferred for memory bounding,
+`PATH`, `GHIDRA_HOME`, or `/opt/ghidra*`. **Docker is required for the two executing stages**
+(`ltrace`, `strace`), which are sandboxed by default; without it they skip rather than
+running the target on your machine. `systemd-run` is preferred for memory bounding,
 with a documented `ulimit -v` fallback.
 
 The verification harness needs the test corpus, which is gitignored — a fresh clone must
@@ -320,7 +323,7 @@ Everything below `docs/` is for people changing revctf, not people using it.
 | `docs/CLAUDE.md` | The conventions that must not be violated. Read before changing `lib/` |
 | `docs/implementation-notes.md` | What was learned while building, per milestone |
 | `docs/CHECKLIST.md` | Release checklist, including what is still outstanding |
-| `docs/REHEARSAL.md` | Clean-VM install rehearsal procedure |
+| `docs/REHEARSAL.md` | Clean-install rehearsal procedure |
 | `docs/QA-REVIEW.md`, `docs/QA-REVIEW-2.md` | The two QA passes and the rules they produced |
 | `docs/design/` | The five design documents. `revctfmasterplan_v6.md` is the consolidated spec — read that one; v3/v4/v5 are historical and `docs/design/README.md` flags where they are now wrong |
 

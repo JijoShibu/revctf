@@ -58,15 +58,27 @@ GHIDRA_FALLBACK="${GHIDRA_FALLBACK:-11.2.1_PUBLIC_20241105}"
 
 # BOOTSTRAP — what install.sh's OWN steps need before they can run.
 #
-# Not analysis tools: `curl` fetches Ghidra, `python3-venv` is what `python3 -m venv` needs
-# on Debian/Kali (without it the FLOSS step dies with "ensurepip is not available"), and
-# `ca-certificates` is what makes the HTTPS fetches verify. install.sh checked for curl and
-# failed the step; it never installed any of the three.
+# Not analysis tools: `curl` fetches Ghidra, `unzip` extracts it, `python3-venv` is what
+# `python3 -m venv` needs on Debian/Kali (without it the FLOSS step dies with "ensurepip is
+# not available"), `ca-certificates` is what makes the HTTPS fetches verify, and
+# `g++ python3-dev` are what pip needs to BUILD flare-floss's `binary2strings` extension
+# from source. install.sh checked for curl and failed the step; it never installed any of them.
 #
 # This gap survived a full end-to-end run because that run was on a machine that already
-# had all of them — which is the reason the clean-VM rehearsal exists. Installed first, so
-# a failure here is reported before the steps that depend on it.
-APT_BOOTSTRAP=(curl ca-certificates python3-venv)
+# had all of them — which is the reason the clean-install rehearsal exists. Installed first,
+# so a failure here is reported before the steps that depend on it.
+#
+# The list grew twice, both times from a from-zero run, and both times the missing package
+# killed a headline stage while every other step reported success:
+#   2026-08-28  curl, ca-certificates, python3-venv
+#   2026-09-01  unzip        — Ghidra downloaded (400MB) and then could not be extracted,
+#                              so the ONE stage that recovers a stack-string flag was absent.
+#               g++,         — flare-floss builds `binary2strings` from source whenever PyPI
+#               python3-dev    has no wheel for the host's Python (Kali rolling is already on
+#                              3.14). Without Python.h the wheel build fails and FLOSS is dead.
+# Every entry here is a dependency of install.sh ITSELF. Anything a *stage* needs at scan
+# time belongs in APT_CORE or APT_EXTRA, not in this list.
+APT_BOOTSTRAP=(curl ca-certificates unzip python3-venv python3-dev g++)
 
 # CORE — the seven from v3 §1 (Ghidra excluded; discovered separately, not an apt package).
 # revctf refuses to run without these; a miss is a hard failure with an apt hint (M1 DoD).
@@ -173,12 +185,25 @@ step_pyinstxtractor() {
 # debian:stable-slim and apt-gets two tracers, and a scan is not the moment to discover
 # that. If it does not get built, revctf does not silently run the target on the host —
 # the two executing stages skip and say why (deviation D13). So a failure here degrades
-# revctf, it does not break it, and it belongs in FAILED rather than being fatal.
+# revctf, it does not break it.
+#
+# ABSENT DOCKER IS NOT AN INSTALL FAILURE (decided 2026-09-01, v1.0.1).
+#
+# It used to be: both "not installed" and "daemon unreachable" appended to FAILED, so the
+# summary said `1 step(s) failed` and install.sh exited 1. The from-zero container run made
+# the cost visible — with every other defect fixed, a fresh Kali box that had correctly
+# installed all fourteen stages' tooling still reported failure and exited non-zero, purely
+# because Kali does not ship Docker. That contradicted this very comment, and an installer
+# that exits 1 on a good install teaches people to ignore its exit code.
+#
+# So the two ENVIRONMENT cases warn with the fix and do not fail. A `docker build` failure
+# with a working daemon is different — that is revctf's own Dockerfile not building, which
+# is a real defect — and it still lands in FAILED.
 step_sandbox() {
     say "Sandbox image ($SBX_IMAGE) — isolation for the stages that execute the target"
     if ! command -v docker >/dev/null 2>&1; then
         warn "docker is not installed; ltrace and strace will skip unless you pass --no-sandbox"
-        FAILED+=("docker (sandbox image not built)")
+        printf '        sudo apt-get install docker.io   # then re-run install.sh to enable them\n'
         return 0
     fi
     # NOT BEING IN THE `docker` GROUP LOOKS EXACTLY LIKE A DEAD DAEMON, and the fix is one
@@ -194,7 +219,7 @@ step_sandbox() {
         else
             warn "the docker daemon is not reachable (is it running? sudo systemctl start docker)"
         fi
-        FAILED+=("docker daemon unreachable (sandbox image not built)")
+        printf '        ltrace and strace will skip until this is fixed; --no-sandbox opts out\n'
         return 0
     fi
     if docker image inspect "$SBX_IMAGE" >/dev/null 2>&1; then

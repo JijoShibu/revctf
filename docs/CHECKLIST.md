@@ -216,7 +216,7 @@ What has to be true before calling it v1.0.
   the cursor come back after Ctrl+C, did long notes truncate or wrap. `script(1)` can fake
   the pty but cannot answer those, and piping `y` would fabricate a pass indistinguishable
   from a real one. A fabricated pass is worse than an open gate.
-- [ ] **Clean-VM install rehearsal** — OUTSTANDING AT v1.0.0. Procedure: `REHEARSAL.md`.
+- [ ] **Clean install rehearsal** — OUTSTANDING AT v1.0.0. Procedure: `docs/REHEARSAL.md`.
   <br>`install.sh` has run end-to-end exactly once, on a machine that already had the whole
   toolchain — so that run could not detect a missing dependency, because nothing was
   missing. It already hid one: `curl`, `ca-certificates` and `python3-venv` are needed by
