@@ -132,10 +132,15 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
 - **A shellcheck directive is only valid in front of a complete command**, never a single
   `case` branch — it produces SC1124/SC1072 and breaks parsing. Lift the statement into a
   small function and annotate that instead (see `set_config_path`).
-- Commits are authored as `Jijo Shibu <jijoshibuwork@gmail.com>` and made with
-  `-c commit.gpgsign=false` so GitHub does not show "Unverified". History before
-  2026-08-28 says `Jijo`; it was not rewritten, because doing so would invalidate every
-  pushed tag for a cosmetic gain.
+- Commits are authored as `Jijo Shibu <jijoshibu@gmail.com>` and made with
+  `-c commit.gpgsign=false` so GitHub does not show "Unverified". **The email changed on
+  2026-09-01** from `jijoshibuwork@` to `jijoshibu@`, the address on the GitHub account, so
+  commits attribute to the profile. It applies from that date forward only. Earlier history
+  — `Jijo` before 2026-08-28, then `Jijo Shibu <jijoshibuwork@>` — was deliberately **not**
+  rewritten: doing so would invalidate every pushed tag for a cosmetic gain.
+  `tools/bootstrap-kali.sh` sets neither name nor email on purpose. It runs on whoever
+  clones revctf, and writing an identity into their clone would make their commits appear
+  to come from someone else. Do not "helpfully" add one back.
 - **This file lives at `docs/CLAUDE.md`, but Claude Code only loads `CLAUDE.md` from the
   repo root.** The root file is a four-line stub whose whole job is the `@docs/CLAUDE.md`
   import. Do not delete it — without it every convention here silently stops being loaded,

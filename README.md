@@ -285,9 +285,9 @@ Kali Linux (or Debian-derived), Bash 4+, **4GB RAM** for full behaviour and ~4GB
 `strings`, `binwalk`, `hexdump`, `ltrace`, `strace`, `radare2`, `checksec`, `objdump`,
 `readelf`, `upx`, FLOSS, Java/.NET/Python decompilers, and Ghidra (**11.2.1, pinned** —
 12.x breaks the headless post-script; `GHIDRA_LATEST=1` opts in with a warning), found via
-`PATH`, `GHIDRA_HOME`, or `/opt/ghidra*`. **Docker is required for the two executing stages**
-(`ltrace`, `strace`), which are sandboxed by default; without it they skip rather than
-running the target on your machine. `systemd-run` is preferred for memory bounding,
+`PATH`, `GHIDRA_HOME`, or `/opt/ghidra*`. **Docker is recommended, not required** — the two
+executing stages (`ltrace`, `strace`) are sandboxed by default and need it; without it they
+skip rather than running the target on your machine, and everything else runs normally. `systemd-run` is preferred for memory bounding,
 with a documented `ulimit -v` fallback.
 
 The verification harness needs the test corpus, which is gitignored — a fresh clone must

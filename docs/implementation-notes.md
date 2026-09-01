@@ -573,10 +573,13 @@ fast-forwarded in place instead.
 
 ### Device-side facts
 
-- Connected folder is `D:\RevCTF` (Windows). It holds the v3–v6 masterplans, the
-  execution masterplan, and a copy of the repo at `D:\RevCTF\revctf`.
-- That copy is at `37b9b69` — 11 commits, history identical to the sandbox's
-  first 11. It is behind, not divergent, so a fast-forward is safe.
+- **Historical, and stale as of 2026-09-01 — do not clone from any of this.** Connected
+  folder was `D:\RevCTF` (Windows), holding the v3–v6 masterplans, the execution
+  masterplan, and a copy of the repo at `D:\RevCTF\revctf`. The masterplans now live in
+  `docs/design/` in the repo, and the authoritative source is
+  <https://github.com/JijoShibu/revctf>, which is public.
+- That copy was at `37b9b69` — 11 commits, history identical to the sandbox's
+  first 11. It is now dozens of commits behind and predates `v1.0.0` entirely.
 - **The device mount cannot unlink.** `git status` there emitted
   `unable to unlink '…/.git/index.lock': Operation not permitted`. Any stale lock
   must be cleared from Windows itself, and anything "deleted" on the device is

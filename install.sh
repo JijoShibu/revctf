@@ -143,12 +143,24 @@ run_as_install_user() {
 # lib/stage_triage.sh looks for `pyinstxtractor` and gives up when it is absent, which is
 # always, because it is packaged nowhere — not apt, not pip.
 #
-# WHY IT IS FETCHED HERE RATHER THAN COMMITTED INTO THE REPO. It is GPLv3 and revctf
-# currently declares no licence of its own. Committing GPLv3 source into an unlicensed
-# repository decides revctf's licensing as a side effect of a convenience, which is not
-# this script's call to make. revctf runs it as a separate process, so nothing here is
-# linking against it. If revctf later adopts a compatible licence, vendoring the file into
-# scripts/ is a strictly better answer (it would work offline) and this step goes away.
+# WHY IT IS FETCHED HERE RATHER THAN COMMITTED INTO THE REPO. It is GPLv3; revctf is MIT.
+#
+# This comment used to say vendoring would become "strictly better" once revctf adopted a
+# licence. That was written before there was one, and it is now backwards: MIT is precisely
+# the licence that makes vendoring worse, not better. GPLv3 permits verbatim
+# redistribution, so committing the file is *allowed* — but a repo whose LICENSE says MIT
+# while a GPLv3 file sits in `scripts/` misleads everyone who redistributes it, and fixing
+# that honestly costs a THIRD-PARTY notice, the full GPLv3 text and an exception clause in
+# LICENSE. Reviewed and decided again on 2026-09-01: keep fetching.
+#
+# revctf runs it as a separate process, so nothing here links against it — there is no
+# copyleft reach into revctf's own code either way.
+#
+# The reliability objection to fetching was tested rather than argued: two from-zero
+# container installs both fetched it cleanly, and the `grep 'PyInstaller Extractor'` guard
+# below means a captive portal, a 404 page or a rate-limit body — all of which arrive as a
+# perfectly successful 200 — fail loudly into the summary instead of installing HTML with a
+# `.py` extension. The failure mode this step is accused of does not exist.
 step_pyinstxtractor() {
     say "pyinstxtractor (unwraps PyInstaller executables; packaged nowhere, so fetched)"
     local dest="$REVCTF_ROOT/scripts/pyinstxtractor.py"

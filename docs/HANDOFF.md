@@ -193,9 +193,12 @@ Violating any of these silently breaks a guarantee the design rests on.
     reason, never a blanket suppression.
 11. Captures are `0600`; a directory revctf **creates** is `0700`. Never `chmod`
     a pre-existing user directory.
-12. Commits are authored `Jijo <jijoshibuwork@gmail.com>` with
-    `-c commit.gpgsign=false`. Commit messages go through `git commit -F` — a
-    message line starting with `--` breaks the shell.
+12. Commits are authored `Jijo Shibu <jijoshibu@gmail.com>` with
+    `-c commit.gpgsign=false`. The email changed on 2026-09-01 from
+    `jijoshibuwork@` to the GitHub account address so commits attribute to the
+    profile; it applies forward only, and no history was rewritten. Commit
+    messages go through `git commit -F` — a message line starting with `--`
+    breaks the shell.
 
 ---
 

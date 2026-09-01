@@ -62,6 +62,78 @@ reader should not inherit.
 
 ---
 
+## [1.0.1] — 2026-09-01 — the from-zero install, actually run
+
+`install.sh` had only ever run on machines that already had the toolchain, so it could not
+detect a dependency it was missing. A throwaway `kalilinux/kali-rolling` container gave a
+genuinely empty box for the first time — the zero-state probe found `python3`, `curl` and
+`git` all absent — and the install **failed** there: three steps, exit 1. Two of those were
+packages `install.sh`'s own steps depend on and never installed. Both were invisible on a
+provisioned host, and each killed a headline stage while every other step reported success.
+
+### Fixed
+
+- **`unzip` is now installed.** Ghidra downloaded 400MB and then died on
+  `unzip: command not found`, so a fresh install had no Ghidra at all — and Ghidra is the
+  only stage that recovers a stack-string flag, which is exactly what the acceptance target
+  hides. The failure *was* diagnosed (`ghidra extract` appears in the summary); the missing
+  dependency was the defect.
+- **`g++` and `python3-dev` are now installed.** `flare-floss` builds `binary2strings` from
+  source whenever PyPI has no wheel for the host's Python, and Kali rolling is already on
+  3.14, so the build is not avoidable. It died on
+  `fatal error: Python.h: No such file or directory` and FLOSS was dead on a fresh install.
+- `APT_BOOTSTRAP` now carries a **dated log of every time it has grown** and what the
+  missing package cost, because this is the third instance of the same defect class — the
+  first being the `curl` / `ca-certificates` / `python3-venv` gap fixed on 2026-08-28. That
+  fix is confirmed working on a from-zero box: all three install `ii`, with no
+  *ensurepip is not available*.
+
+Both fixes were verified the way this project requires — by re-running the **identical**
+from-zero container against the corrected script, not by reasoning about it. `floss 3.1.1`
+and `ghidra 11.2.1` both land; failures went 3 → 1.
+
+### Changed
+
+- **A missing Docker is no longer an install failure.** With the two defects above fixed,
+  Docker was the *only* remaining failure — so a fresh Kali box that had correctly installed
+  all fourteen stages' tooling still reported failure and exited 1, purely because Kali does
+  not ship Docker. That contradicted `step_sandbox`'s own comment that a miss here
+  "degrades revctf, it does not break it", and an installer that exits 1 on a good install
+  teaches people to ignore its exit code. The two *environment* cases (not installed, daemon
+  unreachable) now warn with the fix command and return clean. A `docker build` failure with
+  a working daemon is revctf's own Dockerfile breaking, and still fails. Verified: the
+  Docker-absent container now exits 0.
+- README's two Docker claims updated to match — Docker is required for the two executing
+  stages, not for the install to succeed.
+- **`docs/HANDOFF.md` corrected.** It called the repo private in three places and named
+  `D:\RevCTF\revctf-repo` as "the pushed clone". An anonymous clone with credentials
+  disabled proves the repo is public, and the Windows copies are stale — they are now
+  labelled as such rather than offered as a source.
+- **One rehearsal document, not two.** A root `REHEARSAL.md` and an older `docs/REHEARSAL.md`
+  gave conflicting procedures, so a session could run the wrong one. Consolidated into
+  `docs/REHEARSAL.md`, with the container-based from-zero method as Phase A, the
+  predicted-failures table kept, and the package→binary probe corrected — the old loop
+  tested `binutils` and `p7zip`, neither of which is a command name, and would have reported
+  a false MISS on a perfectly good install.
+
+### Investigated, not a defect
+
+- **`pyinstxtractor.py`** installs cleanly from zero. It was absent on the development VM
+  only because that step had never run there, so there is nothing to vendor and the fetch
+  guard against a captive-portal HTML body worked as designed.
+- **A stale `DOCKER_HOST`** pointing at a dead podman socket is already detected and
+  reported by both `lib/sandbox.sh` and `install.sh`, which name the variable and say to
+  unset it. The `podman-docker` package ships `/etc/profile.d/podman-docker.sh` and
+  reinstates it on every login, so this is a property of the box, not of revctf.
+
+### Still outstanding
+
+Unchanged from v1.0.0 and named here so nothing in this entry reads as more than it is:
+the socket-mounted install path (the only run that proves `revctf-sandbox:1` builds from
+zero), `tools/tui-selftest.sh`, and `tools/verify-tier-c.sh`.
+
+---
+
 ## [1.0.0] — 2026-08-26 — the sandbox is on by default
 
 revctf executes the challenge binary in two of its fourteen stages. Until now it did that

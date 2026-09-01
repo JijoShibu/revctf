@@ -243,7 +243,7 @@ Written down in advance so a predicted failure does not cost a second cycle.
 
 | What you will see | Cause | Is it a defect? |
 |---|---|---|
-| `warning: docker is not installed` → `1 step(s) failed` → exit 1 | Kali does not ship Docker and install.sh does not install it | **Open product question** — see below |
+| `warning: docker is not installed` + `sudo apt-get install docker.io` hint, install still **exits 0** | Kali does not ship Docker; since 2026-09-01 that is a warning, not a failed step | No. Decided behaviour — see below |
 | ltrace and strace `[skip]` naming Docker | Deviation D13 working correctly — revctf never falls back to running the target on the host | No. Designed behaviour |
 | `optional package unavailable: jd-cli` (or procyon / mono-utils) | D7 tier two: format-conditional decompilers fail lazily | No. Warned, not counted as failed |
 | Ghidra step slow | ~400MB download | Only if it fails — capture the error |
@@ -253,21 +253,22 @@ Written down in advance so a predicted failure does not cost a second cycle.
 | `python3 -m venv` fails, *ensurepip is not available* | The gap fixed 2026-08-28 | **Yes — the fix did not work.** Report it |
 | `DOCKER_HOST` points at a dead podman socket | The `podman-docker` package ships `/etc/profile.d/podman-docker.sh` and reinstates it every login | No. `lib/sandbox.sh` and `install.sh` already detect it and say "unset it" |
 
-### The open question this forces
+### The open question this forced — decided 2026-09-01
 
-`install.sh` does not install Docker, but the sandbox is on by default and README calls
-Docker required. So a clean `clone + install.sh` ends in exit 1 with two stages disabled.
-Three ways to resolve it, and it is a product decision, not a bug fix:
+`install.sh` does not install Docker, and the sandbox is on by default, so an absent Docker
+used to be counted as a failed step and the whole install exited 1. The A-2 run made the
+cost concrete: with every other defect fixed, a fresh Kali box that had correctly installed
+all fourteen stages' tooling *still* reported failure, purely because Kali does not ship
+Docker.
 
-1. **Install `docker.io` in `install.sh`** — the deployment path then produces a fully
-   working revctf. Costs ~500MB and starts a daemon on the user's machine.
-2. **Leave it, and stop counting it as a failure** — exit 0, print how to get Docker, and
-   run with the two executing stages skipped. Matches `step_sandbox`'s own comment that a
-   miss here "degrades revctf, it does not break it".
-3. **Leave it exactly as is** — exit 1 is a loud, accurate report that the install is
-   incomplete.
+**Resolved: warn-and-continue.** The two environment cases — Docker not installed, daemon
+unreachable — now warn with the fix command and return clean, so the install exits 0. A
+`docker build` failure with a working daemon is revctf's own Dockerfile breaking and still
+fails. Docker is recommended, not required: without it the two executing stages skip and
+say why (D13), and revctf never falls back to running the target on the host.
 
-Decide against A-2's real output, not against predicted output.
+This is why the row above expects **exit 0** on a Docker-less box. If you see exit 1 there,
+that is a regression, not the documented behaviour.
 
 ---
 
