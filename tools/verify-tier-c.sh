@@ -94,7 +94,7 @@ fi
 if [[ ! $RAM_MB =~ ^[0-9]+$ || $RAM_MB -eq 0 ]]; then
     RAM_MB=$(awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null)
 fi
-# Coerced before any arithmetic test: docs/CLAUDE.md §2 forbids letting an unvalidated value
+# Coerced before any arithmetic test: docs/CONTRIBUTING.md §2 forbids letting an unvalidated value
 # reach `[[ -eq ]]`, which under `set -u` exits the shell outright rather than failing.
 [[ $RAM_MB =~ ^[0-9]+$ ]] || RAM_MB=0
 

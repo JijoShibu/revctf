@@ -27,7 +27,7 @@ Requirements, architecture and the decisions everything else is built on.
 - [x] **Deviation register maintained (D1–D9) with rationale per departure**
   <br>M: ongoing · v6 §11
 - [x] **Standing engineering conventions recorded for cold sessions**
-  <br>CLAUDE.md §2
+  <br>CONTRIBUTING.md §2
 - [x] **Three-phase batch model defined (was two) to fit the added heavy stages**
   <br>v6 §7.2 / D4
 
@@ -183,13 +183,9 @@ What has to be true before calling it v1.0.
   <br>M: M6 · unwrap fails cleanly today
 - [ ] **Package a Java decompiler — none installable in the build sandbox**
   <br>M: M6 · managed stage unverified on a real .jar
-- [x] **Cloud-environment setup script within the 5-minute budget**
-  <br>.claude/cloud-setup.sh
 - [x] **Create the GitHub repo and push**
   <br>github.com/JijoShibu/revctf · main and tags through v1.0.0 pushed
-- [ ] **Connect the Claude GitHub App for automated pushes at v1.0**
-  <br>M: v1.0 · hybrid plan
-- [x] **README, CHANGELOG, CLAUDE.md and notes current at each milestone**
+- [x] **README, CHANGELOG, CONTRIBUTING.md and notes current at each milestone**
   <br>M: M0–M4 · re-verify per milestone
 - [x] **README documents every flag, tier table, agency model, diagnostics**
   <br>The `docs` harness section asserts `--help` and README agree: every flag is either

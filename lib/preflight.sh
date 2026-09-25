@@ -172,7 +172,7 @@ pf_find_ghidra() {
     # said so. An environment variable the user sets deliberately must beat an incidental
     # PATH entry the installer created.
     #
-    # This is not hypothetical. Ghidra 12.x breaks the post-script (docs/CLAUDE.md §3), and
+    # This is not hypothetical. Ghidra 12.x breaks the post-script (docs/CONTRIBUTING.md §3), and
     # pointing GHIDRA_HOME at a known-good 11.2.x install is exactly how someone works
     # around that — which the old order made impossible.
     if [[ -n ${GHIDRA_HOME:-} ]]; then
@@ -261,7 +261,7 @@ pf_detect_ghidra_version() {
     #
     # That is not cosmetic. Measured on this host: Ghidra 12.1.3 ships PyGhidra and no
     # Jython at all, so the Jython post-script would be handed to an install that cannot
-    # run it — and per docs/CLAUDE.md §3 that failure surfaces only as an EMPTY GHIDRA STAGE
+    # run it — and per docs/CONTRIBUTING.md §3 that failure surfaces only as an EMPTY GHIDRA STAGE
     # THAT EXITS 0. A silent wrong answer, produced by our own installer's symlink.
     real="$(readlink -f -- "$PF_GHIDRA_HEADLESS" 2>/dev/null)"
     [[ -n $real && -e $real ]] || real="$PF_GHIDRA_HEADLESS"

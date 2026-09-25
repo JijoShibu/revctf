@@ -25,7 +25,7 @@ Every line of the dependency block is commented out. Meanwhile `README.md` said
 user with a missing tool to **"re-run it (while online)"** — a closed loop pointing at a
 script that installs nothing. It is the first command anyone runs on a fresh Kali.
 
-It also carries a line already known to be wrong. `CLAUDE.md` §3 records that
+It also carries a line already known to be wrong. `CONTRIBUTING.md` §3 records that
 `flare-floss` cannot be pip-installed system-wide on modern Debian/Ubuntu — its `halo`
 dependency dies with `AttributeError: install_layout`. The commented line is
 `pip install --break-system-packages "${PIP_EXTRA[@]}"`. So even uncommenting it would

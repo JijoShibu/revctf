@@ -73,7 +73,7 @@ bash *arithmetic* context. Under `set -u` a non-numeric word there is treated as
 name and the shell **exits immediately**. `tui = yes` killed the run at startup;
 `full_hexdump = on` killed it *inside a stage*, where `stage_run`'s error boundary cannot
 help — `set -u` exits rather than returning non-zero. That is precisely the failure mode
-v5 §4.1 and CLAUDE.md forbid. It also stranded a work directory each time (see QA-2).
+v5 §4.1 and CONTRIBUTING.md forbid. It also stranded a work directory each time (see QA-2).
 
 The README invites users to hand-write this file, so `tui = false` is a realistic input,
 not a contrived one.

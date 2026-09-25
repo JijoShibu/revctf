@@ -4,7 +4,7 @@ Consolidated session context for `revctf`. Its job is to let a **fresh session
 with no chat history** reach full working competence by reading this file plus
 the four it points at — so no future session needs to carry a long transcript.
 
-If you are a new session: read this file top to bottom, then `CLAUDE.md`. That
+If you are a new session: read this file top to bottom, then `CONTRIBUTING.md`. That
 is enough to start work. Read the others on demand.
 
 Last consolidated: **2026-08-21**, after mutation-testing the verification harness
@@ -30,8 +30,8 @@ post-scripts, a corpus generator and a verification harness.
 
 | Question | File |
 |---|---|
-| What may I never do to this codebase? | **`CLAUDE.md` §2** — the non-negotiables |
-| Which spec wins when two disagree? | **`CLAUDE.md` §1** — precedence table |
+| What may I never do to this codebase? | **`CONTRIBUTING.md` §2** — the non-negotiables |
+| Which spec wins when two disagree? | **`CONTRIBUTING.md` §1** — precedence table |
 | What is built, what is not? | **`CHECKLIST.md`** — 84 items, 9 phases |
 | What changed, milestone by milestone? | `CHANGELOG.md` |
 | Why was it built this way? | `implementation-notes.md` — decisions + rationale |
@@ -158,7 +158,7 @@ default is build work, not an unknown. **M6 before M7.**
 
 ---
 
-## 4. The non-negotiable rules (condensed from `CLAUDE.md` §2)
+## 4. The non-negotiable rules (condensed from `CONTRIBUTING.md` §2)
 
 Violating any of these silently breaks a guarantee the design rests on.
 
@@ -205,7 +205,7 @@ Violating any of these silently breaks a guarantee the design rests on.
 ## 5. Verified environment facts — do not re-derive
 
 Each of these cost real time to discover and each one changed the design.
-Full detail in `CLAUDE.md` §3 and `implementation-notes.md`.
+Full detail in `CONTRIBUTING.md` §3 and `implementation-notes.md`.
 
 - **Ghidra 11.2.1 runs `.py` post-scripts under Jython 2.7.3, not PyGhidra.**
   v3 §1's "11.x+ → PyGhidra" boundary is **wrong**; the real boundary is **11.3**.
@@ -232,7 +232,7 @@ Full detail in `CLAUDE.md` §3 and `implementation-notes.md`.
 - **`python3 -m dis` cannot read a `.pyc`** — it treats the argument as source.
   Unmarshal the code object first; see `scripts/pyc_disasm.py`.
 - **Ghidra is downloadable even where `github.com/.../releases/latest` returns
-  403**, via `release-assets.githubusercontent.com`. See `.claude/cloud-setup.sh`.
+  403**, via `release-assets.githubusercontent.com`. See `install.sh` for the supported installation path.
 - **`SIGINT` cannot be trapped when revctf is backgrounded from a non-interactive
   shell.** POSIX requires such jobs to ignore it and bash will not install a trap
   for a signal ignored on entry (`SigIgn: …6` in `/proc/<pid>/status`). Not
@@ -252,7 +252,7 @@ systemd  booted; systemd-run --user --scope WORKS     cgroup v2 yes
 Docker   28.5.2, daemon RUNNING, overlay2, cgroup v2     (M6 UNBLOCKED)
 Distro   Kali GNU/Linux Rolling, kernel 7.0.12+kali-amd64
 Toolchain  complete after install.sh: floss 3.1.1, shellcheck 0.11.0, GNU time,
-           Ghidra pinned to 11.2.x (12.1.3 breaks the post-script — see CLAUDE.md §3)
+           Ghidra pinned to 11.2.x (12.1.3 breaks the post-script — see CONTRIBUTING.md §3)
 ```
 
 Note how narrowly the reference host makes Tier A: a VM configured with 4096MB reports
@@ -343,7 +343,7 @@ Full detail in `implementation-notes.md` under "M5 — host measurements".
 | Location | State |
 |---|---|
 | GitHub `JijoShibu/revctf` (public) | **Authoritative — clone from here.** Branch `main`, tags through `v1.0.0` |
-| Cloud sandbox `/home/claude/work/revctf` | Working copy through M4. Ephemeral |
+| Cloud sandbox `<workspace>/revctf` | Working copy through M4. Ephemeral |
 | Device `D:\RevCTF\` | **Stale — do not clone from it.** Both `revctf-repo` and `revctf` predate v1.0.0. Clone from GitHub |
 | Device `D:\RevCTF\` (masterplans) | Held the v3–v6 masterplans; they now live in `docs/design/` in the repo |
 
@@ -369,14 +369,14 @@ anything I "delete" on the device is really `mv`-ed into `_to_delete/`.
 
 ## 9. Windows / WSL traps — read before the migration
 
-The user's machine is Windows (`D:\RevCTF` connected, GitHub Desktop and
-Claude Code in PowerShell installed, VirtualBox present, **no WSL yet**).
+The user's machine is Windows (`D:\RevCTF` connected, GitHub Desktop,
+PowerShell, and VirtualBox installed, **no WSL yet**).
 
 - **Do not develop this in PowerShell.** revctf traces ELF binaries. Native
   Windows gives no `ltrace`, no `strace`, no `radare2` against ELF, no `setsid`,
   no process-group semantics, no `ulimit -f`/`SIGXFSZ`, no POSIX permission bits.
-  The correct configuration is **WSL2 running Kali with Claude Code launched
-  inside the WSL shell**. VirtualBox + a Kali VM is an equally valid alternative
+  The correct configuration is **WSL2 running Kali with the development toolchain
+  inside the Linux shell**. VirtualBox + a Kali VM is an equally valid alternative
   and is already installed.
 - **CRLF kills every script.** A `.sh` with CRLF fails as `bad interpreter: No
   such file or directory`. Fixed at the source: the repo now carries
@@ -400,7 +400,7 @@ Decided 2026-08-18 after comparing environments:
 2. ~~Build M4 in this cloud session.~~ **Done** — `v0.1-mvp`. One task remains on the
    user's side: run `tools/tui-selftest.sh` on a real terminal, since no automated check
    can see a corrupted redraw or a hidden cursor.
-3. **Cut over at M5** to Claude Code inside WSL Kali (or the VirtualBox Kali VM).
+3. **Cut over at M5** to development inside WSL Kali (or the VirtualBox Kali VM).
    From M5 the work *is* the host — tiers, `systemd-run`, swap, Docker, TTY
    prompts. Continuing in the cloud past M4 means writing code against an
    environment that cannot contradict it.
@@ -415,9 +415,9 @@ TTY) or blocked behind one that is. Building M5's enforcement here would mean sh
 `systemd-run` primary path with no behavioural check — which is precisely the defect class
 QA review #2 closed, in a new costume.
 
-Handoff cost is deliberately low: `CLAUDE.md`, `implementation-notes.md`,
-`CHECKLIST.md` and this file were written for cold starts. A fresh Claude Code
-session reads them and is current. Migration is not a restart.
+Handoff cost is deliberately low: `CONTRIBUTING.md`, `implementation-notes.md`,
+`CHECKLIST.md` and this file were written for cold starts. A new contributor
+reads them and is current. Migration is not a restart.
 
 ---
 

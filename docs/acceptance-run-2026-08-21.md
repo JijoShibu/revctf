@@ -35,14 +35,14 @@ nothing revctf's own corpus does not already test.
 This is revctf's headline path, against a harder input than the corpus fixture: statically
 linked, and with no section headers.
 
-**Prediction: YES.** upx 4.2.4 is installed and docs/CLAUDE.md §3 records that the 4.2.2 PIE
+**Prediction: YES.** upx 4.2.4 is installed and docs/CONTRIBUTING.md §3 records that the 4.2.2 PIE
 unpack defect is fixed. Nothing about a static, section-header-less ELF should defeat it.
 
 ### C2 — Is the flag found?
 **Prediction: NO, for both.** Stated plainly and in advance so there is no room to claim a
 partial win afterwards. The reasoning: the flag scanner reads stage captures, and no capture
 will contain the flag. `strings` cannot see a stack string. FLOSS is the tool that exists to
-recover stack strings, and docs/CLAUDE.md §3 records that its stack/tight/decoded modes are
+recover stack strings, and docs/CONTRIBUTING.md §3 records that its stack/tight/decoded modes are
 **PE-only** — on ELF it runs `--only static`. So the one tool in the pipeline capable of this
 class of challenge is structurally unable to run on this class of file.
 
@@ -75,7 +75,7 @@ mentions is not a success.
 **Prediction: YES for `bbbbloat`** (it is small, and this is the documented solution path).
 **UNCERTAIN for `unpackme-upx`** — ~700KB of statically-linked code with no section headers
 is an unusually hostile input for headless analysis, and the 1800s Ghidra bound is still the
-unmeasured guess recorded in docs/CLAUDE.md §6.
+unmeasured guess recorded in docs/CONTRIBUTING.md §6.
 
 ### C5 — Wall-clock time. Would someone actually wait?
 **Prediction: `bbbbloat` 30–60s. `unpackme-upx` 2–5 minutes**, dominated by Ghidra over a
@@ -258,5 +258,5 @@ decision on whether to build it are recorded separately — it is parked behind 
    contains `{`, so it is reported as a low-confidence candidate on every glibc binary.
 
 4. **Ghidra is the whole cost.** 89 of 102s on `unpackme`, 8 of 10s on `bbbbloat`.
-   The 1800s bound recorded as an unmeasured guess in docs/CLAUDE.md §6 is not close to binding
+   The 1800s bound recorded as an unmeasured guess in docs/CONTRIBUTING.md §6 is not close to binding
    on either.
