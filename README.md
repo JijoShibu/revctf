@@ -193,6 +193,31 @@ Reports are plain text, written to `./revctf-reports/<name>-<timestamp>/report.t
 A stage that finds nothing says so; one that fails says so. A failure is isolated and the
 run continues.
 
+Choose a **new or empty directory** for `--output`. revctf refuses to reuse a directory
+containing files, so earlier reports and the original challenge cannot be overwritten by
+its captures. A `.revctf-lock` directory prevents two scans from sharing the same output.
+If a scan is forcibly killed and leaves a lock behind, choose another output directory.
+Keep shell redirections outside that directory, and never redirect output onto the input
+file: the shell opens redirected files before revctf can check them.
+
+**Every flag candidate is unverified.** High confidence means the text looks like a
+familiar flag; a convincing decoy can receive the same rating. Confirm an answer against
+the challenge's known answer or acceptance check before calling it solved.
+
+The current search is limited: each capture/decoding pass retains up to 50 known-format
+matches and 50 custom-format matches, 20 hash-like matches and 30 generic matches.
+Each capture's encoding sweep tries the first 400 distinct Base64 tokens and 200 each
+for Base32 and hex (in sorted order). ROT13/ROT47 examine the first 4 MiB; reconstructed
+stack-string output is limited to 1 MiB. Disassembly and decompilation also have limits.
+A flag beyond these limits can be missed. Expanding coverage with clear per-run limit
+notices is still planned; an empty result does not prove the file contains no flag.
+
+Custom `--ghidra-script` files are loaded from their own directory. They must use the
+same output contract as the bundled scripts: print `=== REVCTF-GHIDRA-BEGIN ===` before
+results, `=== REVCTF-GHIDRA-END ===` after successful completion, and `REVCTF-ERROR:`
+when an error prevents completion. Missing markers or reported script errors fail the
+stage even if Ghidra itself returns a successful exit code.
+
 `--summary-only` keeps items 1, 2, 4 and 5 and drops the per-stage detail.
 
 **Progress goes to stderr, the report to stdout**, so `revctf scan x > report.txt` gives a

@@ -14,12 +14,12 @@
 # `--flag-format` takes a regex FROM THE USER, and the scan runs it across every stage
 # capture — which for a large target is multiple megabytes of `strings` output. A
 # backtracking engine turns a pattern like `(a+)+$` into a self-inflicted denial of
-# service. GNU grep -E is DFA-based and has no catastrophic-backtracking failure mode, so
-# choosing the right engine removes the whole class of problem rather than trying to
-# validate patterns for safety, which is not reliably possible.
+# service. GNU grep -E avoids that common failure mode for ordinary expressions, but
+# backreferences can still be costly. A bounded scanning worker remains necessary
+# before arbitrary user patterns can be described as resource-safe.
 #
 # The entry script already validates that `--flag-format` is a syntactically valid ERE. It
-# deliberately does NOT try to judge whether a pattern is "safe" — that is the engine's job.
+# deliberately does NOT try to judge whether a pattern is "safe".
 #
 # tools/run-tests.sh asserts that no PCRE flag appears anywhere in lib/.
 # ======================================================================================
@@ -106,6 +106,21 @@ _fs_scan_stream() {
 # Base64-in-.rodata is among the most common CTF hiding tricks and is completely invisible
 # to a plain regex pass. Candidates are filtered on length and charset first so the sweep
 # decodes plausible tokens rather than every line of a multi-megabyte capture.
+_fs_decode_tokens() {
+    local codec="$1" pattern="$2" limit="$3" src="$4" dec="$5" tok
+    local one="$RUN_WORKDIR/fs.token.$$"
+    : > "$dec"
+    while IFS= read -r tok; do
+        # Keep padding and reject partial decoder output on invalid input. Deleting NUL
+        # bytes can join unrelated fragments into a flag that never existed.
+        if printf '%s' "$tok" | "$codec" -d > "$one" 2>/dev/null; then
+            tr '\000' '\n' < "$one" >> "$dec"
+            printf '\n' >> "$dec"
+        fi
+    done < <(grep -aoE -- "$pattern" "$src" 2>/dev/null | sort -u | head -n "$limit")
+    rm -f "$one"
+}
+
 _fs_sweep_encodings() {
     local stage="$1" src="$2"
     [[ -s $src ]] || return 0
@@ -113,19 +128,11 @@ _fs_sweep_encodings() {
     local dec="$RUN_WORKDIR/fs.dec.$$"
 
     # base64 — length a multiple of 4, base64 alphabet, long enough to hold a flag.
-    : > "$dec"
-    while IFS= read -r tok; do
-        printf '%s' "$tok" | base64 -d 2>/dev/null | tr -d '\0' >> "$dec" 2>/dev/null
-        printf '\n' >> "$dec"
-    done < <(grep -aoE '\b[A-Za-z0-9+/]{16,}={0,2}\b' "$src" 2>/dev/null | sort -u | head -400)
+    _fs_decode_tokens base64 '[A-Za-z0-9+/=]{16,}' 400 "$src" "$dec"
     [[ -s $dec ]] && _fs_scan_stream "$stage" base64 < "$dec"
 
     # base32
-    : > "$dec"
-    while IFS= read -r tok; do
-        printf '%s' "$tok" | base32 -d 2>/dev/null | tr -d '\0' >> "$dec" 2>/dev/null
-        printf '\n' >> "$dec"
-    done < <(grep -aoE '\b[A-Z2-7]{16,}={0,6}\b' "$src" 2>/dev/null | sort -u | head -200)
+    _fs_decode_tokens base32 '[A-Z2-7=]{16,}' 200 "$src" "$dec"
     [[ -s $dec ]] && _fs_scan_stream "$stage" base32 < "$dec"
 
     # hex — even length, hex alphabet, long enough to be a string rather than an address.
@@ -251,6 +258,9 @@ flagscan_report() {
         printf 'Flag detection was disabled (--no-flag-scan).\n'
         return 0
     fi
+    printf 'All candidates are UNVERIFIED. Confidence describes the text pattern,\n'
+    printf 'not proof that the challenge accepts the answer. Decoys can rank high.\n'
+    printf 'Search limits apply; this is not an exhaustive search (see README).\n\n'
     if [[ ${#FLAG_HITS[@]} -eq 0 ]]; then
         printf 'No flag candidates were found.\n\n'
         printf 'That is not the same as "there is no flag". Check any stage marked\n'

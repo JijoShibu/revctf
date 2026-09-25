@@ -101,24 +101,7 @@ stage_ghidra() {
         return 0
     fi
 
-    # analyzeHeadless EXITS 0 EVEN WHEN THE POST-SCRIPT FAILED TO LOAD OR THREW.
-    # Observed on Ghidra 12.1.3: the PyGhidra script died with
-    #   "Ghidra was not started with PyGhidra. Python is not available"
-    # and the stage was recorded as `empty / 0B / exit 0` — a clean-looking negative on a
-    # binary whose password Ghidra 11.2.1 recovers. docs/CONTRIBUTING.md §3 already warned that this
-    # class of failure "shows up only as an empty Ghidra stage, exit 0"; nothing was
-    # actually checking for it. An empty capture plus a script error in stderr is a
-    # FAILURE, and saying so is the difference between "no flag here" and "this tool never
-    # ran".
-    if [[ ! -s $out ]] && _ghidra_saw_script_error "$err"; then
-        # Quote whatever Ghidra actually said. The alternation has to match the same set as
-        # _ghidra_saw_script_error, or the stage reports a failure with a blank reason —
-        # which is barely better than the empty stage it replaced.
-        stage_set_status "$name" failed \
-            "the Ghidra post-script did not run — $(grep -aoiEm1 '(GhidraScriptLoadException|SCRIPT ERROR|SyntaxError|Unable to load script|not started with PyGhidra)[^\n]{0,120}' "$err" 2>/dev/null | head -c 160)"
-        return 0
-    fi
-
+    # _ghidra_attempt validates post-script completion as well as the launcher exit.
     stage_write "$name"
     return 0
 }
@@ -161,12 +144,32 @@ _ghidra_attempt() {
     local -a cmd=(
         "$PF_GHIDRA_HEADLESS" "$proj" revctf
         -import "$RUN_TARGET"
-        -scriptPath "$REVCTF_SCRIPTS"
+        -scriptPath "$(cd -- "$(dirname -- "$script")" && pwd)"
         -postScript "$(basename "$script")" "$light"
         -deleteProject
     )
 
     st_run_bounded "$ST_T_GHIDRA" "$out.g" "$err.g" -- "${cmd[@]}" || rc=$?
+
+    # A successful launcher exit does not prove the post-script completed. Check this
+    # attempt's files, not accumulated diagnostics from a failed first attempt.
+    # Decompiled strings may themselves contain words such as SyntaxError; search the
+    # launcher's diagnostics outside the result block for those broad error patterns.
+    sed '/^=== REVCTF-GHIDRA-BEGIN ===$/,/^=== REVCTF-GHIDRA-END ===$/d' "$out.g" > "$out.log"
+    if [[ $rc -eq 0 ]]; then
+        if _ghidra_saw_script_error "$err.g" || _ghidra_saw_script_error "$out.log" ||
+                grep -qa '^REVCTF-ERROR:' "$out.g"; then
+            printf 'REVCTF-ERROR: Ghidra post-script failed; partial output kept.\n' >> "$err.g"
+            rc=1
+        elif ! awk '
+            /^=== REVCTF-GHIDRA-BEGIN ===$/ { if (state != 0) bad=1; state=1 }
+            /^=== REVCTF-GHIDRA-END ===$/ { if (state != 1) bad=1; state=2 }
+            END { exit (bad || state != 2) }
+        ' "$out.g"; then
+            printf 'REVCTF-ERROR: Ghidra post-script completion markers missing; analysis incomplete.\n' >> "$err.g"
+            rc=1
+        fi
+    fi
 
     # analyzeHeadless is extremely chatty on stdout. Only the post-script's own output is
     # worth putting in the report; the rest goes to stderr capture for diagnostics.
@@ -178,7 +181,7 @@ _ghidra_attempt() {
     cat "$err.g" >> "$err" 2>/dev/null
     # Ghidra writes INFO lines to stdout too; keep them out of the report but available.
     cat "$out.g" >> "$err" 2>/dev/null
-    rm -f "$out.g" "$err.g"
+    rm -f "$out.g" "$err.g" "$out.log"
 
     stage_record_exec "$name" "${cmd[*]}" "$rc"
     unset MAXMEM _JAVA_OPTIONS
