@@ -1,5 +1,55 @@
 # Implementation Notes
 
+## September 2026 audit: first reliability fixes
+
+This patch addresses output collisions (F01), host-side `ldd` execution (F02), selected
+false-success paths (F05), Base32/Base64 decoding defects (F10), the systemd scope mismatch
+(F13), and custom Ghidra script lookup (part of F15). It clarifies candidate status (F08)
+and documents the existing search limits (F09); it does not remove those limits or add
+automatic answer validation.
+
+- Output directories must be empty and are locked during a run. This intentionally
+  rejects reuse of a directory from a previous scan; it avoids overwriting the original,
+  earlier reports, and pre-existing links without maintaining a fragile list of filenames.
+  The lock coordinates revctf runs, not arbitrary writers with access to the same folder.
+- `readelf -d` reads direct dependencies without the execution risk of `ldd`. It does not
+  resolve their installed paths or recursively list dependency trees.
+- Binutils commands now use `st_run_bounded`, retain partial output, and preserve failure
+  codes across later successful subcommands. Disassembly is limited after command exit,
+  avoiding a `head` pipeline that masks parser failures. Time and capture-size limits still
+  apply; this can use more temporary disk than stopping at the first 4,000 lines.
+- Both radare2 sessions now propagate nonzero exit codes. The documentation acknowledges
+  the two sessions; eliminating repeated analysis remains future work.
+- Ghidra validates the current attempt's completion markers and errors before recording
+  success. An out-of-memory retry is checked independently of the earlier diagnostics.
+  Custom scripts must implement the documented marker contract. This does not make the
+  unresolved Ghidra 12/PyGhidra launcher work, or detect every per-function decompile failure.
+- Decoders retain padding and discard partial output from invalid tokens. NUL bytes become
+  separators rather than joining unrelated text. Token budgets remain unchanged.
+- Memory-scope startup probes use the same options as the stage wrapper and retain which
+  scope succeeded. This is control-flow coverage, not measured Linux memory enforcement.
+
+Run `bash tools/test-reliability.sh` for the portable regressions, or
+`bash tools/run-tests.sh reliability` through the main harness. Set `REVCTF_TEST_ROOT` to
+another checkout to run the same assertions against old library code. Test artifacts are
+retained under the printed temporary directory for inspection. The suite checks exact
+candidate values, recorded stage status/exit codes, unchanged input contents, completion
+markers and command arguments. Analysis tools are simulated; the bounded runner also
+executes benign real failing and sleeping shell commands.
+
+Validation on the available Windows/Git Bash host: shell syntax and ShellCheck 0.11.0
+checks; portable regressions and existing documentation checks. Real symbolic-link checks
+skip where Git Bash only creates a copy. Native Kali tools, Docker teardown/isolation,
+Linux permissions, and actual 2–4 GB memory enforcement still require integration tests.
+This patch adds no runtime dependencies and does not change the tier memory budgets.
+
+Remaining priorities: interrupted-container cleanup (F03), disk/extraction/scanner resource
+budgets (F04/F12), archive member analysis (F06), broader flag coverage with per-run
+truncation notices (F09), and input-driven solving with challenge-specific acceptance
+checks (F07/F08). Installer and other tool-compatibility issues also remain in the audit.
+
+---
+
 Per execution masterplan §4: deviations from design, open questions, and conservative
 choices made when a small unknown surfaced mid-build. This is the memory a solo, unpaced
 project otherwise loses between sessions.

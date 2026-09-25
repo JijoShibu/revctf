@@ -110,7 +110,8 @@ USAGE
   directory) and writes a plain-text report with flag candidates at the top.
 
 OUTPUT & REPORTING
-    --output DIR          Report directory  [default: ./revctf-reports/<name>-<ts>/]
+    --output DIR          New or empty report directory
+                          [default: ./revctf-reports/<name>-<ts>/]
     --summary-only        Lead with flags + one-line-per-stage status
     --dry-run             Print resolved tier/concurrency/ceilings, run no tools
 

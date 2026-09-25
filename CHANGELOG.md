@@ -7,8 +7,21 @@ section references (v3 §8, v5 §4.1, v6 §11) point at the design documents.
 
 ## [Unreleased] — preparing for a public release under MIT
 
-No behaviour change. Everything here is licensing, layout and removing things a public
-reader should not inherit.
+Includes release preparation and the first reliability fixes from the September audit.
+
+### Fixed
+
+- Refuse nonempty or concurrently used output directories, preserving existing files.
+- Read ELF dependencies with bounded `readelf`, without invoking `ldd` on challenges.
+- Preserve radare2 and binutils failures and partial results instead of reporting success.
+- Detect incomplete or failed Ghidra post-scripts even with nonempty output; load custom
+  scripts from their own directories.
+- Retain Base32/Base64 padding, discard invalid decoder output, and avoid joining
+  NUL-separated fragments into invented candidates.
+- Use the systemd scope mode that actually passed the startup probe.
+- Label all flag candidates unverified and document remaining search limits.
+- Add portable reliability regression checks with simulated analysis tools and benign
+  real command failures/timeouts; these do not replace Kali and Docker integration tests.
 
 ### Added
 

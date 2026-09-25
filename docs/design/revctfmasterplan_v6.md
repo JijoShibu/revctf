@@ -316,6 +316,12 @@ is plain text with no escape sequences in every mode.
 
 ## 11. Deviation Register
 
+September 2026 reliability amendments: reports require an empty, run-locked output
+directory; linkage uses bounded `readelf -d` rather than `ldd`; custom Ghidra scripts must
+emit the bundled scripts' completion/error markers. These amendments preserve the input
+and distinguish partial analysis from success. See `../implementation-notes.md` for
+scope, evidence, compatibility changes and remaining audit findings.
+
 Twelve documented departures from v3/v4/v5. D1–D9 were decided during the design session;
 D10 was decided after QA review #2, once the build existed to argue about; **D11 and D12 were
 forced by measurement during M5** — it is the only one that overturns a derivation this document

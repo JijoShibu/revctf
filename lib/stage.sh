@@ -42,6 +42,7 @@ declare -g  RUN_ORIGINAL="" RUN_TARGET="" RUN_FORMAT="other"
 declare -g  RUN_WORKDIR=""  RUN_OUTDIR=""
 # shellcheck disable=SC2034
 declare -g  ST_OUTDIR_PREEXISTING=0 ST_SAVED_UMASK=""
+declare -g ST_OUTDIR_LOCK=""
 # PID of the tool currently running under stage_capture(), or empty. The abort handler
 # needs this: see the comment in stage_capture().
 declare -g  ST_CHILD_PID=""
@@ -92,9 +93,6 @@ stage_begin_file() {
     RUN_FORMAT="other"
     RUN_OUTDIR="$2"
 
-    RUN_WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/revctf-work.XXXXXX")" || return 1
-    chmod 700 "$RUN_WORKDIR" 2>/dev/null
-
     # v4 §5 wants the output directory at 700 — but only for a directory revctf creates.
     # Silently tightening a directory the user already had is a destructive surprise: point
     # --output at a shared or published location and revctf would lock everyone else out of
@@ -115,6 +113,26 @@ stage_begin_file() {
         return 1
     fi
 
+    # Never reuse captures or follow pre-existing output symlinks/hard links. Requiring
+    # an empty directory also protects an input located inside the output directory.
+    # The atomic lock prevents two revctf runs from both passing the empty check.
+    RUN_OUTDIR="$(cd -- "$RUN_OUTDIR" && pwd -P)" || return 1
+    if ! ( umask 077; mkdir -- "$RUN_OUTDIR/.revctf-lock" ) 2>/dev/null; then
+        printf 'revctf: output directory is in use or has a stale .revctf-lock: %s\nChoose a new --output directory.\n' "$RUN_OUTDIR" >&2
+        return 1
+    fi
+    ST_OUTDIR_LOCK="$RUN_OUTDIR/.revctf-lock"
+    local existing
+    if ! existing=$(find "$RUN_OUTDIR" -mindepth 1 -maxdepth 1 ! -name .revctf-lock -print -quit) || [[ -n $existing ]]; then
+        printf 'revctf: output directory must be empty: %s\nChoose a new --output directory; existing files were preserved.\n' "$RUN_OUTDIR" >&2
+        stage_end_file
+        return 1
+    fi
+    RUN_WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/revctf-work.XXXXXX")" || {
+        stage_end_file; return 1;
+    }
+    chmod 700 "$RUN_WORKDIR" 2>/dev/null
+
     # Captures can quote strings, symbols and decompiled logic from the analysed binary, so
     # they are created 0600 rather than inheriting the invoking user's umask (v4 §5). The
     # umask is scoped to this run only.
@@ -129,6 +147,10 @@ stage_begin_file() {
 stage_end_file() {
     [[ -n $RUN_WORKDIR && -d $RUN_WORKDIR ]] && rm -rf "$RUN_WORKDIR"
     RUN_WORKDIR=""
+    if [[ -n $ST_OUTDIR_LOCK ]]; then
+        rmdir -- "$ST_OUTDIR_LOCK" 2>/dev/null
+        ST_OUTDIR_LOCK=""
+    fi
     [[ -n $ST_SAVED_UMASK ]] && { umask "$ST_SAVED_UMASK"; ST_SAVED_UMASK=""; }
     return 0
 }
@@ -222,7 +244,9 @@ st_mem_prefix() {
     [[ $(st_mem_mode) == systemd ]] || return 0
     is_uint "${ST_MEM_CEIL_MB:-0}" || return 0
     [[ ${ST_MEM_CEIL_MB:-0} -gt 0 ]] || return 0
-    _pre=(systemd-run --user --scope --quiet --collect
+    _pre=(systemd-run)
+    [[ ${PF_SYSTEMD_RUN_MODE:-user} == user ]] && _pre+=(--user)
+    _pre+=(--scope --quiet --collect
           -p "MemoryMax=${ST_MEM_CEIL_MB}M"
           -p "MemorySwapMax=0"
           --)

@@ -2294,7 +2294,7 @@ test_docs() {
 # ======================================================================================
 main() {
     local -a want=("$@")
-    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 m2 m3 m4 m5 m5enforce m6 qa docs ghidra)
+    [[ ${#want[@]} -eq 0 ]] && want=(lint reliability corpus m0 m1 m2 m3 m4 m5 m5enforce m6 qa docs ghidra)
 
     printf '\033[1mrevctf verification harness\033[0m\n'
     printf 'repo: %s\n' "$ROOT"
@@ -2304,6 +2304,12 @@ main() {
     for s in "${want[@]}"; do
         case "$s" in
             lint)   test_lint   ;;
+            reliability)
+                if bash "$ROOT/tools/test-reliability.sh"; then
+                    ok "portable reliability regressions"
+                else
+                    no "portable reliability regressions" "see failed assertions above"
+                fi ;;
             corpus) test_corpus ;;
             m0)     test_m0     ;;
             m1)     test_m1     ;;
