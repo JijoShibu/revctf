@@ -17,7 +17,7 @@
 #
 # Safe to re-run: every step checks before acting.
 
-set -uo pipefail   # never `set -e` — see docs/CLAUDE.md §2
+set -uo pipefail   # never `set -e` — see docs/CONTRIBUTING.md §2
 
 REPO_URL="${REPO_URL:-https://github.com/JijoShibu/revctf.git}"
 REPO_DIR="${REPO_DIR:-$HOME/revctf}"
@@ -178,7 +178,7 @@ step_apt() {
 
 step_floss() {
     say "FLOSS (in a venv — this is not optional)"
-    # docs/CLAUDE.md 3: flare-floss CANNOT be pip-installed system-wide on modern
+    # docs/CONTRIBUTING.md 3: flare-floss CANNOT be pip-installed system-wide on modern
     # Debian/Ubuntu. Its halo dependency dies with AttributeError: install_layout.
     # pip install --break-system-packages flare-floss — which install.sh still carries as
     # a commented line — fails. A venv is the working route.
@@ -289,7 +289,6 @@ main() {
         printf '      cd %s\n' "$REPO_DIR"
         printf '      ./tools/tui-selftest.sh     # the six checks no CI can make\n'
         printf '      ./tools/measure-host.sh     # the numbers M5 is designed around\n'
-        printf '      claude                      # start Claude Code HERE, not in PowerShell\n'
         return 0
     fi
     printf '    %d step(s) failed:\n' "${#FAILED[@]}"

@@ -365,7 +365,7 @@ two are genuinely M3/M5 work and are carried below.
   megabytes of capture. Rather than trying to validate patterns for safety — which is not
   reliably possible — the engine choice removes the failure mode: GNU `grep -E` is DFA-based
   and has no catastrophic-backtracking path. Written as a hard constraint at the top of
-  `lib/flagscan.sh`, in CLAUDE.md §2, and enforced by a harness check that fails if any PCRE
+  `lib/flagscan.sh`, in CONTRIBUTING.md §2, and enforced by a harness check that fails if any PCRE
   flag appears in `lib/`.
 
 ### Performance
@@ -518,7 +518,7 @@ only in a chat transcript, and a transcript is not a durable artifact.
 
 ### The build sandbox, measured rather than assumed
 
-Everything through M3 was built and verified in an Anthropic cloud sandbox. It is
+Everything through M3 was built and verified in a cloud build environment. It is
 **not Kali**, and four of its properties are load-bearing for milestone planning:
 
 ```
@@ -603,7 +603,7 @@ fast-forwarded in place instead.
 - **`HANDOFF.md`** added as the single cold-start entry point: document map,
   current state, the condensed non-negotiables, the verified environment facts,
   the measurements, the GitHub/device situation, the Windows/WSL traps, the
-  agreed plan and the open questions. A new session reads it plus `CLAUDE.md` and
+  agreed plan and the open questions. A new session reads it plus `CONTRIBUTING.md` and
   is current.
 - **`CHECKLIST.md`** added — 84 tracked items across 9 phases (design, foundation,
   core engine, MVP gate, resource/safety/scale, QA process, deployment, known
@@ -614,7 +614,7 @@ fast-forwarded in place instead.
 
 ### Environment decision for M4 onward
 
-Compared continuing in the cloud sandbox against Claude Code on the user's
+Compared continuing in the cloud sandbox against local development on the user's
 machine. Neither wins outright; they are good at different milestones.
 
 - **M4 and M7 suit the cloud.** Report assembly is pure Bash text manipulation;
@@ -623,7 +623,7 @@ machine. Neither wins outright; they are good at different milestones.
   They are also the next three milestones after M4, so the interleaving cost of
   staying is high.
 
-Agreed: **build M4 here, cut over at M5** to Claude Code inside WSL Kali (the user
+Agreed: **build M4 here, cut over at M5** to development inside WSL Kali (the user
 has VirtualBox installed as an equally valid alternative; no WSL yet). Push to
 GitHub first, since the container is ephemeral and 13 commits were unbacked.
 
@@ -645,7 +645,7 @@ file — guarantees drift the first time someone edits one path. The harness ass
 are byte-identical, so the shortcut cannot creep back in.
 
 **Progress goes to stderr; the report owns stdout.** This is now a standing convention in
-`CLAUDE.md` §2. It falls out of two existing requirements rather than being a new
+`CONTRIBUTING.md` §2. It falls out of two existing requirements rather than being a new
 preference: v6 §10 wants the report to be plain text in every display mode, and the README
 promises `revctf scan x > report.txt` produces a usable file. If progress shared stdout,
 either the file gets escape sequences or the user watching a redirected run sees nothing.
@@ -698,7 +698,7 @@ first time. `config_coerce` is now separately testable.
 - **A shellcheck directive is not valid in front of a single `case` branch** — it produces
   SC1124 plus a cascade of parse errors (SC1072/SC1073/SC1085) that make the whole file
   unparseable, so *no* checks run on it. Moving `CLI_SET[config_path]=1` into a small
-  `set_config_path` function and annotating that is the fix. Recorded in `CLAUDE.md` §2;
+  `set_config_path` function and annotating that is the fix. Recorded in `CONTRIBUTING.md` §2;
   this will recur wherever a cross-file global is only assigned inside a `case`.
 
 - **A phantom SIGHUP regression, caused by the harness launcher.** After M4 the `qa`
@@ -838,11 +838,11 @@ tells a user with a missing tool to *"re-run it (while online)"*. That is a clos
 and it is the first thing anyone hits on a fresh Kali.
 
 It also carries a line already known to be wrong: `pip install --break-system-packages
-flare-floss` is documented in `CLAUDE.md` §3 as failing on modern Debian/Ubuntu via its
+flare-floss` is documented in `CONTRIBUTING.md` §3 as failing on modern Debian/Ubuntu via its
 `halo` dependency. FLOSS needs a venv.
 
 Fixing it was deferred on purpose: an installer that has never run against the platform it
-targets is not really written. It should be built in the first Claude Code session on
+targets is not really written. It should be built in the first local development session on
 Kali, where each apt group and download can be executed as it is written.
 `tools/bootstrap-kali.sh` covers the gap meanwhile and is labelled a stopgap in its own
 header.
@@ -857,7 +857,7 @@ size rather than RSS.
 
 Moving to WSL without `[boot] systemd=true` in `/etc/wsl.conf` inherits precisely the
 blocker the move exists to escape. `tools/bootstrap-kali.sh` checks for it and offers to
-write it; `tools/measure-host.sh` reports it; `CLAUDE.md` §3b records it.
+write it; `tools/measure-host.sh` reports it; `CONTRIBUTING.md` §3b records it.
 
 The mirror image is a gift: `.wslconfig` with `[wsl2] memory=2GB` is exactly the
 "forced-2GB cgroup/VM" M5's DoD asks for, without a spare machine.
@@ -1021,7 +1021,7 @@ target** — 345MB with it, 101MB without, on the same 16KB binary. And on the 2
 `binwalk` alone took 32 of the 35 seconds, which is why it is a Phase-1 stage with its own
 concurrency rather than something to run inline.
 
-Three tool versions from that capture that `CLAUDE.md` §3 does not carry, recorded here so
+Three tool versions from that capture that `CONTRIBUTING.md` §3 does not carry, recorded here so
 the §3 decay rule has something to compare against: **ltrace 0.7.91**, **strace 7.0**,
 **python3 3.13.14**, **java (OpenJDK) 21.0.11-ea**. Ghidra was 12.1.3 at the time of this
 capture — the build that silently broke the decompile stage and caused `install.sh` to pin
@@ -1181,7 +1181,7 @@ Two things came out of it beyond the pin:
   and both probes failed, falling back to "assume Jython" on an install with no Jython.
   An installer-created symlink broke the detector. Fixed with `readlink -f`.
 - **`stage_ghidra` treated an errored post-script as an *empty* stage.** analyzeHeadless
-  exits 0 even when the script fails to load, and CLAUDE.md §3 had already warned this
+  exits 0 even when the script fails to load, and CONTRIBUTING.md §3 had already warned this
   failure "shows up only as an empty Ghidra stage, exit 0" — but nothing checked for it.
   Empty capture + a script error in stderr is now a FAILURE
   (`_ghidra_saw_script_error`), which is the difference between "no flag here" and "this
@@ -1338,7 +1338,7 @@ Five mutations: an unparseable Ghidra post-script, a gutted `_FLAG_BRACED` tier,
 
 **1. `dyn_run` launched its tracer outside `st_run_bounded`.** It ran
 `setsid timeout -k 5 … &` itself — the only place in the codebase a tool started outside
-the one launcher CLAUDE.md §2 names without exception. The reason was legitimate: the
+the one launcher CONTRIBUTING.md §2 names without exception. The reason was legitimate: the
 executing stages need their own session so `dyn_sweep_orphans` has a process group to
 sweep, and `st_run_bounded` did not offer that. The cost was invisible: `st_mem_prefix`
 never ran, so the Phase-2 ceiling `tier_ceiling_for_stage` returns for `strace` was

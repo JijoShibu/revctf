@@ -17,7 +17,7 @@
 # Writes a plain-text report (default: host-measurements-<host>-<date>.txt) and prints it.
 # Runs real scans, so it takes a few minutes and needs the test corpus built.
 
-set -uo pipefail   # never `set -e` — see docs/CLAUDE.md §2
+set -uo pipefail   # never `set -e` — see docs/CONTRIBUTING.md §2
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 RC="$ROOT/revctf"

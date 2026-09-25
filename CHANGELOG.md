@@ -30,10 +30,9 @@ reader should not inherit.
 - **Maintainer documents moved to `docs/`** — `HANDOFF.md`, `CHECKLIST.md`, both QA
   reviews, `implementation-notes.md`, `REHEARSAL.md`, the acceptance run, and `design/` →
   `docs/design/`. `README.md` and `CHANGELOG.md` stay at the root.
-- **`CLAUDE.md` stayed at the root as a stub that imports `docs/CLAUDE.md`.** Claude Code
-  loads `CLAUDE.md` from the project root and nowhere else, so moving it outright would
-  have silently dropped every convention in it — including "never add `set -e`" — with
-  nothing about the repo looking different.
+- **Contributor guidance is consolidated in `docs/CONTRIBUTING.md`.**
+  Development rules and verified tool notes are retained in a standard guide.
+  Editor-specific setup files and their obsolete test references have been removed.
 - **`--flag-format` examples no longer teach PCRE.** `--help`, README and the config
   sample all showed `'HTB\{.*?\}'`; the scanner is `grep -E` only, by a rule the project
   calls non-negotiable, and lazy quantifiers do not exist there. Now `'HTB\{[^}]+\}'`.
@@ -319,7 +318,7 @@ Work done in the cloud session before handing development to a Linux host at M5.
   --break-system-packages` line install.sh still carries is known to fail.
 - **`m5` harness section** — 52 checks covering both sides of every tier boundary, the
   injection labelling, Tier C routing, overrides, and that `--dry-run` creates nothing.
-- **`docs/CLAUDE.md` §3b** — the WSL/Kali facts: `systemd=true` in `/etc/wsl.conf` (without it
+- **`docs/CONTRIBUTING.md` §3b** — the WSL/Kali facts: `systemd=true` in `/etc/wsl.conf` (without it
   M5's primary memory path cannot work), `.wslconfig` as the Tier C rig, the ext4-not-/mnt
   rule, and `setsid` rather than `nohup` for background harness runs.
 
@@ -348,7 +347,7 @@ Full analysis, including the alignment review and the standing rules, in `docs/Q
 
 - **`install.sh` installs nothing.** Its whole dependency block is commented out, while
   README calls it mandatory and preflight tells users to re-run it when a tool is missing —
-  a closed loop. Deferred deliberately to the first Claude Code session, where it can be
+  a closed loop. Deferred deliberately to the first local development session, where it can be
   written and tested against real Kali in one loop.
 - v6 §5's Phase-2 ceiling derivation remains disproved by the measured FLOSS peak
   (~1.46GB). `lib/tier.sh` implements it as written and states the gap in every plan

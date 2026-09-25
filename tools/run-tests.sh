@@ -168,8 +168,7 @@ test_lint() {
         skip "shellcheck" "not installed"; return
     fi
     local out
-    out=$(cd "$ROOT" && shellcheck -S style revctf install.sh lib/*.sh tools/*.sh \
-              .claude/cloud-setup.sh 2>&1)
+    out=$(cd "$ROOT" && shellcheck -S style revctf install.sh lib/*.sh tools/*.sh 2>&1)
     if [[ -z $out ]]; then
         ok "0 findings across all shell files"
     else
@@ -1953,7 +1952,7 @@ test_m5enforce() {
     rm -rf "$cleano"
 
     # A non-numeric value must warn and be ignored, never reach an arithmetic test
-    # (docs/CLAUDE.md §2 / QA-1) — the same rule REVCTF_RAM_MB already follows.
+    # (docs/CONTRIBUTING.md §2 / QA-1) — the same rule REVCTF_RAM_MB already follows.
     assert_match "a non-numeric REVCTF_CEIL_MB warns and is ignored" \
         'REVCTF_CEIL_MB is not a whole number' \
         env REVCTF_CEIL_MB=banana "$RC" scan "$t" --dry-run
@@ -2164,7 +2163,7 @@ test_docs() {
     if grep -vE '^[[:space:]]*#|say |printf |echo ' "$ROOT/install.sh" \
        | grep -qE 'pip install .*--break-system-packages'; then
         no "install.sh FLOSS method" \
-           "still uses pip --break-system-packages, which docs/CLAUDE.md §3 records as failing"
+           "still uses pip --break-system-packages, which docs/CONTRIBUTING.md §3 records as failing"
     else
         ok "install.sh does not use the pip method known to fail"
     fi
@@ -2186,7 +2185,7 @@ test_docs() {
     fi
 
     # --- the design documents must travel with the repo -------------------------------
-    # docs/CLAUDE.md §1 names revctfmasterplan_v6.md §11 as the highest authority for resolving
+    # docs/CONTRIBUTING.md §1 names revctfmasterplan_v6.md §11 as the highest authority for resolving
     # conflicts. They were kept beside the repo, so a fresh clone was instructed to obey a
     # document it did not have. This check makes that unrepeatable.
     local -a design=(revctfmasterplan_v6.md revctfmasterplan_v5.md revctfmasterplan_v4.md

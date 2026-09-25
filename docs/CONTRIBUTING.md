@@ -1,12 +1,13 @@
-# CLAUDE.md — standing context for revctf
+# Contributing to revctf
 
-Read this before touching anything. It exists because sessions start cold: a cloud session
-has no memory of earlier work, and this file plus `implementation-notes.md` are what
-replace it.
+Read this guide before changing the project. It records development conventions,
+verified tool behavior, and maintenance procedures. Historical environment notes are
+dated context; check the current code and `README.md` before relying on them.
 
-`revctf` is a Bash CLI for Kali Linux. It takes a reverse-engineering CTF challenge file
-(or a directory of them), runs a staged toolchain against it, and produces a
+`revctf` is a Bash CLI for Kali Linux. It takes a reverse-engineering CTF challenge file,
+runs a staged toolchain against it, and produces a
 beginner-friendly plain-text report with flag candidates at the top.
+Directory scanning is planned for M7 and is not available in the current build.
 
 ---
 
@@ -22,8 +23,8 @@ Five design documents exist. They do not all agree. Resolve conflicts in this or
 | 4 | `revctfmasterplanv3.md` | Fills gaps only: memory derivations, base CLI semantics, per-stage invocations, sandbox hardening. |
 
 **`revctfmasterplan_v6.md` consolidates all four — read that one first.** All five live in
-**`design/`** in this repo. They used to sit beside it, which meant a fresh clone lacked the
-very document this table calls the highest authority; `design/README.md` explains the move
+**`docs/design/`** in this repo. They used to sit beside it, which meant a fresh clone lacked the
+very document this table calls the highest authority; `docs/design/README.md` explains the move
 and flags the two places where v3/v4/v5 are now actively wrong.
 
 `implementation-notes.md` (in this repo) records what was learned *while building*, as the
@@ -132,34 +133,8 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
 - **A shellcheck directive is only valid in front of a complete command**, never a single
   `case` branch — it produces SC1124/SC1072 and breaks parsing. Lift the statement into a
   small function and annotate that instead (see `set_config_path`).
-- **Every commit in this repo is `Jijo Shibu <jijoshibu@gmail.com>`, author and
-  committer, with no exceptions** — made with `-c commit.gpgsign=false` so GitHub does not
-  show "Unverified". Keep it that way.
-
-  The whole history was rewritten on 2026-09-01 to make that true. Three spellings of the
-  same person had accumulated (`Jijo <jijoshibuwork@>` for 36 commits, then
-  `Jijo Shibu <jijoshibuwork@>`, then the current address), and GitHub was additionally
-  showing an assistant as a second author on every commit, because Claude Code appends an
-  attribution trailer. `git filter-repo` unified the identities and stripped those trailers
-  across all 40 commits; original author and commit dates were preserved.
-
-  **This reverses an earlier rule in this file**, which said the history must never be
-  rewritten because it would invalidate every pushed tag for a cosmetic gain. That reasoning
-  was sound and was overruled deliberately by the repo owner: attribution on a public repo
-  is not cosmetic. The cost was paid — every tag now points at a rewritten commit, and any
-  clone taken before 2026-09-01 has divergent history and must be re-cloned rather than
-  pulled. A backup bundle of the pre-rewrite history was taken first.
-
-  Going forward there is nothing to strip: `.claude/settings.json` sets
-  `includeCoAuthoredBy: false`, so new commits carry no assistant attribution at all. Do not
-  remove that setting, and do not re-introduce a second author.
-  `tools/bootstrap-kali.sh` sets neither name nor email on purpose. It runs on whoever
-  clones revctf, and writing an identity into their clone would make their commits appear
-  to come from someone else. Do not "helpfully" add one back.
-- **This file lives at `docs/CLAUDE.md`, but Claude Code only loads `CLAUDE.md` from the
-  repo root.** The root file is a four-line stub whose whole job is the `@docs/CLAUDE.md`
-  import. Do not delete it — without it every convention here silently stops being loaded,
-  and nothing about the repo looks different.
+- **Use your own Git identity for contributions.** Setup scripts must not change a
+  contributor's name or email. Preserve published history; submit changes for review.
 
 ---
 
@@ -254,7 +229,7 @@ checked recently. Current reference host: Kali rolling, verified 2026-08-20.
 - **Jython 2.7 refuses a source file with any non-ASCII byte** unless it carries a PEP 263
   encoding declaration. The failure shows up only as an empty Ghidra stage, exit 0.
 - **Ghidra is downloadable even where `github.com/.../releases/latest` returns 403**, via the
-  release-asset host. See `.claude/cloud-setup.sh`.
+  release-asset host. See `../install.sh` for the supported installation path.
 
 ---
 
@@ -298,7 +273,7 @@ The WSL notes below are kept in case the host changes:
 - **Line endings.** `.gitattributes` pins `* text=auto eol=lf`. A CRLF `.sh` fails as
   `bad interpreter: No such file or directory`. Do not remove it, and do not let a global
   `core.autocrlf=true` be assumed safe.
-- **Claude Code runs inside the WSL shell**, never in PowerShell. Native Windows has no
+- **Run the development toolchain inside a Linux shell**, never in PowerShell. Native Windows has no
   `ltrace`, no `strace`, no `radare2` against ELF, no `setsid`, no process groups, no
   `ulimit -f`/`SIGXFSZ` and no POSIX permission bits — which is most of what `lib/` relies on.
 - **`install.sh` is still a stub.** Its whole dependency block is commented out while
@@ -334,7 +309,6 @@ tools/run-tests.sh        milestone-gate verification harness
 tools/tui-selftest.sh     interactive checks needing a real terminal (M4)
 tools/measure-host.sh     capture the numbers M5's constants are derived from
 tools/bootstrap-kali.sh   one-shot Kali/WSL setup — stopgap until install.sh works
-.claude/cloud-setup.sh    toolchain install for a cloud environment
 ```
 
 `lib/stage.sh` is an addition to v6 §12's layout — deliberate, and recorded in

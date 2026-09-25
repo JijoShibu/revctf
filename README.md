@@ -320,7 +320,7 @@ Everything below `docs/` is for people changing revctf, not people using it.
 | File | What it is |
 |---|---|
 | `docs/HANDOFF.md` | Cold-start entry point. Start here |
-| `docs/CLAUDE.md` | The conventions that must not be violated. Read before changing `lib/` |
+| `docs/CONTRIBUTING.md` | The conventions that must not be violated. Read before changing `lib/` |
 | `docs/implementation-notes.md` | What was learned while building, per milestone |
 | `docs/CHECKLIST.md` | Release checklist, including what is still outstanding |
 | `docs/REHEARSAL.md` | Clean-install rehearsal procedure |
