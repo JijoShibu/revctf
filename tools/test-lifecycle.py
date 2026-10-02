@@ -183,6 +183,8 @@ int main(void) {
 }
 ''')
     sp.run(['gcc', '-o', str(out/'allocate'), str(code)], check=True)
+    # The sandbox runs as nobody; a restrictive developer umask must not block the probe.
+    (out/'allocate').chmod(0o755)
     script = r'''
 set -uo pipefail
 source "$ROOT/lib/stage.sh"
@@ -205,7 +207,7 @@ docker inspect --format '{{.State.OOMKilled}}' "$SBX_NAME" > "$EVIDENCE/oom.txt"
     run = sp.run(['bash', '-c', script], env=dict(env, ROOT=str(ROOT), EVIDENCE=str(out)),
                  capture_output=True, text=True, timeout=40)
     (out/'test.log').write_text(run.stdout + run.stderr)
-    assert run.returncode == 0, run.stderr
+    assert run.returncode == 0, run.stderr + (out/'start.err').read_text()
     names = (out/'container-ownership.txt').read_text().splitlines()
     assert all(absent(line.split('\t')[1]) for line in names)
 
