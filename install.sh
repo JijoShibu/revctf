@@ -13,8 +13,7 @@
 #
 # This script installs system packages and writes to /opt and /usr/local/bin. It needs
 # root. tools/bootstrap-kali.sh is the richer, opinionated stopgap this superseded — it
-# still exists because it also pulls build-only dependencies (gcc, mingw, JDK) for the
-# test corpus, which install.sh deliberately does not.
+# still exists because it also pulls corpus-build tools such as mingw.
 set -uo pipefail   # never `set -e` — see docs/CONTRIBUTING.md §2
 
 REVCTF_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -327,6 +326,12 @@ step_ghidra() {
         ok "skipped by request (SKIP_GHIDRA=1)"
         return 0
     fi
+    # Ghidra's Java scripts need a JDK. Optional decompilers must not be relied on
+    # to pull Java in indirectly; a clean Kali image may have none of them.
+    if ! run_root apt-get install -y -qq openjdk-21-jdk-headless; then
+        FAILED+=("Ghidra Java 21 development kit — install openjdk-21-jdk-headless and re-run install.sh")
+        return 1
+    fi
     # ALREADY INSTALLED IS NOT A REASON TO RETURN.
     #
     # This used to `return 0` here, which made the GHIDRA_HOME sync at the end of this
@@ -378,8 +383,9 @@ step_ghidra() {
 
     local zip="/tmp/ghidra-install.$$.zip"
     printf '    downloading %s\n' "$url"
-    if ! curl -fsSL -o "$zip" "$url"; then
+    if ! curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 600 -o "$zip" "$url"; then
         FAILED+=("ghidra download — install manually and set GHIDRA_HOME")
+        rm -f "$zip"
         return 1
     fi
     if ! run_owner "$GHIDRA_DIR" unzip -q -o "$zip" -d "$GHIDRA_DIR"; then
@@ -503,4 +509,6 @@ main() {
     return 1
 }
 
-main "$@"
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    main "$@"
+fi

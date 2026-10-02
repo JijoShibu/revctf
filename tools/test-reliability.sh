@@ -280,6 +280,34 @@ test_scope() {
     else "${pre[@]}" /bin/true; fi
 }
 
+test_install_java() {
+    local mode="$1"
+    source "$ROOT/install.sh"
+    FAILED=()
+    SKIP_GHIDRA=0
+    [[ $mode == skip ]] && SKIP_GHIDRA=1
+    local requested="$WORK/java-$mode"
+    run_root() {
+        printf '%s\n' "$*" > "$requested"
+        [[ $mode != fail ]]
+    }
+    analyzeHeadless() { :; }
+    _ghidra_install_root() { printf '/simulated/ghidra'; }
+    _sync_ghidra_home() { :; }
+    local rc=0
+    step_ghidra > "$WORK/java-$mode.log" 2>&1 || rc=$?
+    case "$mode" in
+        skip) [[ $rc -eq 0 && ! -f $requested ]] ;;
+        fail) [[ $rc -eq 1 && ${#FAILED[@]} -eq 1 ]] &&
+              [[ ${FAILED[0]} == *openjdk-21-jdk-headless* ]] ;;
+        success) [[ $rc -eq 0 && ${#FAILED[@]} -eq 0 ]] &&
+                 grep -Fxq 'apt-get install -y -qq openjdk-21-jdk-headless' "$requested" ;;
+    esac
+}
+
+check 'installer explicitly installs the Ghidra JDK even with an existing launcher' test_install_java success
+check 'failed Ghidra JDK installation remains a failed step' test_install_java fail
+check 'explicit Ghidra installation skip does not install its JDK' test_install_java skip
 check 'input cannot be overwritten by report' test_collision
 check 'hard-linked output cannot overwrite input' test_existing_link hard
 check 'linked output cannot overwrite input' test_existing_link symbolic
