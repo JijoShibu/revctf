@@ -5,10 +5,11 @@
 #
 # WHAT IS AND IS NOT BAKED IN HERE
 #
-# The isolation contract lives in lib/sandbox.sh, as `docker run` flags, NOT in this file:
+# lib/sandbox.sh applies isolation when it creates each container:
 #
 #   --network=none --read-only --cap-drop=ALL --security-opt no-new-privileges
-#   --user nobody --pids-limit --memory --rm
+#   --user nobody --pids-limit --memory --ulimit fsize=...
+# Creation, startup and verified removal are separate steps owned by the scan.
 #
 # That is deliberate. A contract baked into an image is invisible at the call site and
 # survives no rebuild; a contract expressed as run flags is auditable in the process table

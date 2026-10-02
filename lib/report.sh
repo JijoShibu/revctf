@@ -122,7 +122,7 @@ _rp_header() {
     printf ' revctf %s — analysis report\n' "$REVCTF_VERSION"
     # Attribution lives HERE and nowhere else in the report. The report's job is flags
     # first; a beginner must not scroll past a byline to reach the answer.
-    printf ' created by %s — MIT licence\n' "${REVCTF_AUTHOR:-Jijo Shibu}"
+    printf ' created by %s — MIT licence\n' "${REVCTF_AUTHOR:-Jijo Shibu <jijoshibu@gmail.com>}"
     _rp_bar
     printf 'Target    : %s\n' "$RUN_ORIGINAL"
     printf 'Size      : %s\n' "$(st_human_size "$(st_file_size "$RUN_ORIGINAL")")"
