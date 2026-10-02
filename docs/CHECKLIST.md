@@ -4,13 +4,14 @@ The current release procedure is [RELEASING.md](RELEASING.md). Record actual res
 [reliability-validation.md](reliability-validation.md); this checklist is a gate list,
 not a claim that checks have passed.
 
-- [ ] Required tests pass against the final proposed code; failures and skips are explained.
-- [ ] A disposable clean Kali install produces working tools and known-answer scan results.
-- [ ] Offline scanning is checked after installation.
-- [ ] GitHub basic checks pass on the pull request's exact head.
-- [ ] Version, author, README, changelog and preview notes agree.
-- [ ] The reviewed source archive and SHA-256 checksum are prepared and inspected.
-- [ ] Test challenges have stopped; Kali is off with 16384 MB restored.
+- [x] Required behavior checks pass; failures, corrected reruns and skips are explained.
+- [x] A disposable clean Kali install produces working tools and known-answer scan results.
+- [x] Offline scanning is checked after installation.
+- [ ] GitHub basic checks pass on the exact commit selected for publication; recheck after merging.
+- [x] Version, author, README, changelog and preview notes agree for the proposed preview.
+- [ ] Rebuild and inspect the source archive and checksum from the final publication commit.
+  The earlier review archive is identified separately in its manifest.
+- [x] Test challenges have stopped; Kali is off with 16384 MB restored.
 - [ ] The maintainer explicitly authorizes merging and preview publication.
 - [ ] The published archive is independently downloaded and verified.
 - [ ] Stable release has seven days of preview availability, an independent Kali report,
