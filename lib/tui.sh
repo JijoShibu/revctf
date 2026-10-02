@@ -63,6 +63,7 @@ _tui_glyph() {
         ok)      printf '[ok]     ' ;;
         empty)   printf '[none]   ' ;;
         failed)  printf '[FAILED] ' ;;
+        partial) printf '[PARTIAL]' ;;
         skipped) printf '[skip]   ' ;;
         running) printf '[ .. ]   ' ;;
         *)       printf '[    ]   ' ;;
@@ -133,8 +134,8 @@ tui_stage_end() {
             # A failure is always announced immediately, whatever the heartbeat interval:
             # in a CI log a stage that failed 12 minutes ago must be findable at the point
             # it happened, not folded into the next periodic line.
-            if [[ $st == failed ]]; then
-                printf 'revctf: %s FAILED after %ss — %s\n' \
+            if [[ $st == failed || $st == partial ]]; then
+                printf 'revctf: %s INCOMPLETE after %ss — %s\n' \
                     "$name" "$secs" "${STAGE_NOTE[$name]:-no detail}" >&2
             else
                 _tui_beat

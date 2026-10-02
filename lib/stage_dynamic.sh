@@ -40,7 +40,7 @@ dyn_banner() {
         # have nothing to grep but revctf's own adjectives. These are the flags actually
         # passed, from the same sbx_wrap the run used.
         local -a _c=()
-        sbx_wrap _c "$DYN_SBX_SCRATCH" "$DYN_TARGET" "revctf-$$-$tool" \
+        sbx_wrap _c "$DYN_SBX_SCRATCH" "$DYN_TARGET" "${SBX_NAME:-not-started}" \
             "$(tier_ceiling_for_stage "$tool")"
         printf 'Contract  : %s\n' "${_c[*]}"
     else
@@ -66,6 +66,10 @@ dyn_banner() {
 # Returns 0 to proceed, 1 if the stage recorded a skip and the caller should return.
 dyn_guard() {
     local name="$1" tool="$2"
+    if [[ ${SBX_CLEANUP_FAILED:-0} -eq 1 ]]; then
+        stage_set_status "$name" failed "challenge execution blocked: earlier container cleanup was not confirmed"
+        return 1
+    fi
 
     if ! command -v "$tool" >/dev/null 2>&1; then
         stage_skip "$name" "$tool is not installed"
@@ -173,6 +177,10 @@ dyn_guard() {
         DYN_TRACE_HOST="$DYN_TRACE_ARG"
     fi
     rm -f -- "$DYN_TRACE_HOST" 2>/dev/null
+    if [[ $DYN_SANDBOXED -eq 1 ]] && ! sbx_register "$name"; then
+        stage_set_status "$name" failed "could not record container ownership; challenge was not executed"
+        return 1
+    fi
     return 0
 }
 
@@ -267,38 +275,54 @@ dyn_run() {
     [[ ${1:-} == "--" ]] && shift
 
     DYN_SWEPT=0
+    DYN_TRACE_BYTES=0
     local rc=0 pgid="" cname=""
     local -a pre=()
+    if ! st_output_limit_valid; then
+        ST_LIMIT_NOTE="invalid ST_MAX_OUT_KB: expected a positive integer of at most nine digits"
+        printf '%s\n' "$ST_LIMIT_NOTE" > "$err"
+        return 125
+    fi
 
     if [[ ${DYN_SANDBOXED:-0} -eq 1 ]]; then
-        # A deterministic, run-scoped name. It is what sbx_teardown removes, and `docker run`
-        # refuses a duplicate — which is the behaviour we want if two stages ever collide.
-        cname="revctf-$$-$name"
-        sbx_teardown "$cname"
-        sbx_wrap pre "$DYN_SBX_SCRATCH" "$DYN_TARGET" "$cname" "$(tier_ceiling_for_stage "$name")"
+        # The registered name and label identify only this scan.
+        cname=$SBX_NAME
+        sbx_wrap pre "$DYN_SBX_SCRATCH" "$DYN_TARGET" "$cname" "$(tier_ceiling_for_stage "$name")" || return 125
     fi
 
     # shellcheck disable=SC2034  # read by st_run_bounded in lib/stage.sh, a separate file
     ST_OWN_SESSION=1
-    st_run_bounded "$tmo" "$out" "$err" -- ${pre[@]+"${pre[@]}"} "$@" || rc=$?
+    if [[ -n $cname ]]; then
+        # shellcheck disable=SC2034,SC2004  # shared associative ownership registry
+        SBX_OWNED[$cname]=pending
+        st_run_bounded 10 "$RUN_OUTDIR/$name.container-id" "$err" -- "${pre[@]}" "$@" || rc=$?
+        if [[ $rc -eq 0 ]]; then
+            # shellcheck disable=SC2034,SC2004  # associative registry in sandbox.sh
+            SBX_OWNED[$cname]=created
+            st_run_bounded "$tmo" "$out" "$err" -- docker start --attach "$cname" || rc=$?
+        fi
+    else
+        st_run_bounded "$tmo" "$out" "$err" -- "$@" || rc=$?
+    fi
     # shellcheck disable=SC2034  # same: cleared for the next stage, consumed cross-file
     ST_OWN_SESSION=0
     pgid="$ST_LAST_PGID"
 
     if [[ -n $cname ]]; then
-        # UNCONDITIONAL, and that is the point. --rm covers a clean exit. It does not cover
+        # Cleanup is also required after a clean exit. In particular,
         # `timeout` firing: that kills the docker CLIENT, and the container carries on
         # running the hostile target with nothing left watching it. There is no process group
         # to sweep either — ST_LAST_PGID is the client's, and the container is a child of
-        # dockerd in another cgroup entirely. Removing it by name is the only teardown that
+        # dockerd in another cgroup entirely. Removing the owned container is the teardown that
         # actually holds.
-        sbx_teardown "$cname"
+        sbx_teardown "$cname" || rc=125
         DYN_SWEPT=0
     else
         DYN_SWEPT=$(dyn_sweep_orphans "$pgid")
     fi
 
     DYN_TRACE_BYTES="$(stat -c '%s' "$trace" 2>/dev/null || printf 0)"
+    st_check_output_limit "$rc" "$trace"
     is_uint "$DYN_TRACE_BYTES" || DYN_TRACE_BYTES=0
     return "$rc"
 }
@@ -314,10 +338,10 @@ dyn_cmdline() {
     local tool="$1" tmo="$2" args="$3"
     if [[ ${DYN_SANDBOXED:-0} -eq 1 ]]; then
         local -a pre=()
-        sbx_wrap pre "$DYN_SBX_SCRATCH" "$DYN_TARGET" "revctf-$$-$tool" \
+        sbx_wrap pre "$DYN_SBX_SCRATCH" "$DYN_TARGET" "${SBX_NAME:-not-started}" \
             "$(tier_ceiling_for_stage "$tool")"
-        printf 'setsid timeout -k 5 %s %s %s %s </dev/null' \
-            "$tmo" "${pre[*]}" "$tool" "$args"
+        printf '%s %s %s; setsid timeout -k 5 %s docker start --attach %s </dev/null' \
+            "${pre[*]}" "$tool" "$args" "$tmo" "${SBX_NAME:-not-started}"
     else
         printf 'setsid timeout -k 5 %s %s %s </dev/null [NOT ISOLATED: --no-sandbox]' \
             "$tmo" "$tool" "$args"
@@ -360,6 +384,10 @@ dyn_compose() {
 dyn_finish() {
     local name="$1" tool="$2" tmo="$3" rc="$4"
     local out; out="$(stage_out_path "$name")"
+    if [[ ${SBX_CLEANUP_FAILED:-0} -eq 1 ]]; then
+        stage_set_status "$name" partial "The challenge may still be running; see cleanup-warning.txt"
+        return 0
+    fi
 
     if [[ ${DYN_SWEPT:-0} -eq 1 ]]; then
         printf '\n[orphan sweep] the target left processes running after the trace ended;\n' >> "$out"
@@ -393,8 +421,8 @@ dyn_finish() {
                 printf '          For a binary that waits for input or loops, the trace\n' >> "$out"
                 printf '          above is still the useful part.\n' >> "$out"
             else
-                printf '          A target that allocates without bound is itself a finding;\n' >> "$out"
-                printf '          the trace above is what it managed before it was killed.\n' >> "$out"
+                printf '          The trace above is partial; the signal alone does not prove\n' >> "$out"
+                printf '          that the challenge exhausted memory.\n' >> "$out"
             fi
             # `$out` ALWAYS holds dyn_banner's header (and, for strace, the ldd section), so
             # `[[ -s $out ]]` is true even when the tracer emitted not one line. Testing it
@@ -402,9 +430,9 @@ dyn_finish() {
             # as "partial trace kept". The trace is what has to be non-empty, so that is what
             # is measured.
             if [[ ${DYN_TRACE_BYTES:-0} -gt 0 ]]; then
-                stage_set_status "$name" ok "$why"
+                stage_set_status "$name" partial "$why"
             else
-                stage_set_status "$name" empty "$why — no trace was captured"
+                stage_set_status "$name" failed "$why — no trace was captured"
             fi
             ;;
         *)

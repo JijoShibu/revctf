@@ -262,6 +262,10 @@ flagscan_report() {
     printf 'not proof that the challenge accepts the answer. Decoys can rank high.\n'
     printf 'Search limits apply; this is not an exhaustive search (see README).\n\n'
     if [[ ${#FLAG_HITS[@]} -eq 0 ]]; then
+        if declare -F stage_incomplete >/dev/null && stage_incomplete; then
+            printf 'No candidate found in the available results; analysis was incomplete.\n'
+            return 0
+        fi
         printf 'No flag candidates were found.\n\n'
         printf 'That is not the same as "there is no flag". Check any stage marked\n'
         printf 'skipped or failed above, and consider --flag-format if this event uses\n'

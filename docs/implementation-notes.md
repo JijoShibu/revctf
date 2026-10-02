@@ -1560,3 +1560,24 @@ longer existed, so every docker call failed while `systemctl status docker` said
 `usermod` either — which is the part that makes people conclude the install failed). revctf
 does not unset `DOCKER_HOST` itself: that is the user's environment, and overriding it
 silently would hide the same problem again.
+
+
+## 2026-10-02 — resource reliability and accurate partial results
+
+The Kali audit reproduced a container surviving SIGTERM, a 16 KiB output setting allowing
+32 KiB, and Ghidra 11.2.1 replacing the requested heap with 2 GiB. The fixes share cleanup
+across completion and interruption, convert Bash file-limit units according to POSIX mode,
+and verify an explicit Java heap inside the running Ghidra instance. Heap and process
+memory are distinct: supporting memory must fit outside the heap, so the process limit
+adds max(256 MiB, ceil(heap/4)). No installed Ghidra files are edited.
+
+A startup check uses real total RAM independently of the existing tier simulation hook.
+The approved 3891 MiB threshold allows a VM configured with 4096 MB to pass despite Linux
+reservations. `--allow-low-memory` is command-line only. Partial results now remain visibly
+incomplete and retain their evidence; callers receive exit 2 rather than a false success.
+
+New resource and lifecycle suites exercise exact byte limits, RAM boundaries, Docker
+ownership, interruption during creation, concurrent scans, and unreachable Docker cleanup.
+The lifecycle test explicitly restores INT/HUP dispositions before launching Bash: a test
+started through nohup otherwise inherits ignored signals and cannot model a foreground scan.
+The legacy harness's emergency process cleanup is narrowed to its own generated executable.
