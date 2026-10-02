@@ -73,6 +73,7 @@ declare -A OPT=(
     [tui]=1
     [summary_only]=0
     [dry_run]=0
+    [allow_low_memory]=0
     [verbose]=0
     [debug]=0
     [strict]=0                      # stop at the first failed stage (v6 §11 D8)
@@ -129,7 +130,7 @@ ANALYSIS DEPTH / STAGE CONTROL
     --skip-ghidra         Skip Ghidra; radare2 disassembly substitutes
     --no-unwrap           Disable the triage/unwrap pre-stage (packers, archives,
                           managed and Python artifacts)
-    --strict              Stop at the first failed stage instead of continuing.
+    --strict              Stop at the first failed or partial stage.
                           Default is to isolate a failure and carry on.
     --light-decompile     Substitute radare2 disassembly for Ghidra's decompile
     --force-full-decompile
@@ -143,7 +144,8 @@ RESOURCE TUNING
                           with batch mode, as single-file mode runs one at a time
     --jobs-ghidra N       [PARTIAL: M7] Override tier Phase-2/3 concurrency
                           (same reason as --jobs-light)
-    --maxmem-ghidra M     Override the tier's Ghidra MAXMEM ceiling
+    --maxmem-ghidra M     Ghidra analysis heap; supporting memory is added separately
+    --allow-low-memory   Accept a slower/incomplete scan below the 4 GB RAM minimum
 
 SANDBOXING
     --sandbox             Run the executing stages (ltrace, strace) inside a
@@ -247,6 +249,7 @@ parse_args() {
             --output)       need_value "$1" $#; set_opt output_dir "$2"; shift 2 ;;
             --summary-only) set_opt summary_only 1; shift ;;
             --dry-run)      set_opt dry_run 1; shift ;;
+            --allow-low-memory) set_opt allow_low_memory 1; shift ;;
 
             # --- flag detection ---
             --no-flag-scan) set_opt flag_scan 0; shift ;;
@@ -365,7 +368,7 @@ validate_opts() {
         fi
     done
 
-    if [[ -n ${OPT[maxmem_ghidra]} ]] && ! [[ ${OPT[maxmem_ghidra]} =~ ^[0-9]+[MmGg]?$ ]]; then
+    if [[ -n ${OPT[maxmem_ghidra]} ]] && ! [[ ${OPT[maxmem_ghidra]} =~ ^[1-9][0-9]{0,8}[MmGg]?$ ]]; then
         die "--maxmem-ghidra must look like 1024M or 2G (got '${OPT[maxmem_ghidra]}')"
     fi
 
@@ -409,6 +412,10 @@ validate_opts() {
 # Subcommand: scan
 # ======================================================================================
 cmd_scan() {
+    # Run before dependency probes or output creation. Config cannot set the override.
+    # shellcheck source=/dev/null
+    source "$REVCTF_LIB/memory.sh" || die "cannot load memory check"
+    if ! ram_gate && [[ ${OPT[dry_run]} -eq 0 ]]; then return 1; fi
     if [[ ${OPT[verbose]} -eq 1 ]]; then
         _msg "revctf $REVCTF_VERSION"
         _msg "  target      : $TARGET"
@@ -494,7 +501,8 @@ cmd_scan() {
 _abort_run() {
     local sig="${1:-INT}" num=2
     case "$sig" in INT) num=2 ;; TERM) num=15 ;; HUP) num=1 ;; esac
-    trap - INT TERM HUP EXIT
+    trap '' INT TERM HUP
+    trap - EXIT
     printf '\nrevctf: %s received — cleaning up\n' "SIG$sig" >&2
     # Before stage_kill_child, so the poller cannot mistake a deliberate teardown for a
     # breach and kill the tree a second time. Guarded: the abort path is reachable from
@@ -505,8 +513,40 @@ _abort_run() {
     # is only a process-group leader when a job-control shell made it one, so from a script
     # or a CI runner `-$$` names either nothing or, worse, somebody else's group.
     stage_kill_child
+    _save_interrupted "SIG$sig"
     stage_end_file
     exit $(( 128 + num ))
+}
+
+_save_interrupted() {
+    # shellcheck disable=SC2034  # emitted by report.sh even between active stages
+    RUN_INTERRUPTED_NOTE="Scan interrupted ($1); remaining analysis and flag search did not finish."
+    sbx_cleanup_all || :
+    if [[ -n ${ST_ACTIVE_STAGE:-} ]]; then
+        local cap trace
+        cap=$(stage_out_path "$ST_ACTIVE_STAGE")
+        trace=${DYN_TRACE_HOST:-}
+        if [[ -n $trace && -f $trace && ! -L $trace ]]; then
+            cp -- "$trace" "$RUN_OUTDIR/$ST_ACTIVE_STAGE.interrupted-trace.txt"
+            printf '\nInterrupted trace saved in %s.interrupted-trace.txt\n' "$ST_ACTIVE_STAGE" >> "$cap"
+        fi
+        stage_record_exec "$ST_ACTIVE_STAGE" "${STAGE_CMD[$ST_ACTIVE_STAGE]:-interrupted command}" 1
+        stage_set_status "$ST_ACTIVE_STAGE" partial "scan interrupted ($1); remaining analysis and flag search did not finish"
+    fi
+    printf '%s\n' "Scan interrupted ($1). Saved captures are partial; no complete flag search was performed." > "$RUN_OUTDIR/interrupted.txt"
+    OPT[flag_scan]=0
+    report_build
+}
+
+_exit_run() {
+    local rc=$1
+    trap '' INT TERM HUP
+    trap - EXIT
+    watchdog_stop
+    stage_kill_child
+    _save_interrupted "unexpected exit $rc"
+    stage_end_file
+    exit "$rc"
 }
 
 # resolve_output_dir <target> — ./revctf-reports/<basename>-<timestamp>/ unless --output
@@ -545,6 +585,8 @@ dry_run_plan() {
     printf 'Kind          : %s\n' \
         "$([[ -d $TARGET ]] && printf 'directory (batch mode lands in M7)' || printf 'file')"
     printf 'Output would be: %s\n' "$outdir"
+    printf 'RAM startup   : %s MiB measured; approximate 4 GB check: %s\n' "$RAM_TOTAL_MIB" \
+        "$([[ $RAM_GATE_BLOCKED -eq 1 ]] && printf BLOCKED || printf allowed)"
     printf 'Config        : %s\n' \
         "$CONFIG_PATH$([[ -r $CONFIG_PATH ]] || printf ' (absent — built-in defaults)')"
     if [[ $pf_ok -eq 1 ]]; then
@@ -589,7 +631,7 @@ dry_run_plan() {
     printf 'Report style   : %s\n' \
         "$([[ ${OPT[summary_only]} -eq 1 ]] && printf 'summary only' || printf 'full detail')"
     printf 'On failure     : %s\n' \
-        "$([[ ${OPT[strict]} -eq 1 ]] && printf 'stop at the first failed stage (--strict)' || printf 'isolate and continue')"
+        "$([[ ${OPT[strict]} -eq 1 ]] && printf 'stop at the first failed or partial stage (--strict)' || printf 'isolate and continue')"
     printf 'ltrace timeout : %ss\n' "${OPT[timeout]}"
 
     printf '\nStage-level skip decisions that depend on the file itself — whether it is a\n'
@@ -657,7 +699,7 @@ scan_one_file() {
     # `strings` over a large target left orphaned processes behind. This matters more from
     # M3 on, where ltrace and strace *execute the challenge binary* — an orphan there is a
     # piece of untrusted code still running after the user thinks they stopped it.
-    trap 'watchdog_stop; stage_end_file' EXIT
+    trap '_exit_run $?' EXIT
     trap '_abort_run INT'  INT
     trap '_abort_run TERM' TERM
     trap '_abort_run HUP'  HUP
@@ -691,8 +733,8 @@ scan_one_file() {
             return 0
         fi
 
-        if [[ ${OPT[strict]} -eq 1 && ${STAGE_STATUS[$1]:-} == failed ]]; then
-            printf 'revctf: --strict: stopping after stage "%s" failed (%s)\n' \
+        if [[ ${OPT[strict]} -eq 1 && ( ${STAGE_STATUS[$1]:-} == failed || ${STAGE_STATUS[$1]:-} == partial ) ]]; then
+            printf 'revctf: --strict: stopping after stage "%s" was incomplete (%s)\n' \
                 "$1" "${STAGE_NOTE[$1]:-no detail}" >&2
             aborted=1
         fi
@@ -747,7 +789,7 @@ scan_one_file() {
     # keep exit 1; a completed scan with at least one failed stage now exits 2.
     local s failed=0
     for s in "${STAGE_ORDER[@]}"; do
-        [[ ${STAGE_STATUS[$s]:-} == failed ]] && failed=$(( failed + 1 ))
+        [[ ${STAGE_STATUS[$s]:-} == failed || ${STAGE_STATUS[$s]:-} == partial ]] && failed=$(( failed + 1 ))
     done
 
     trap - INT TERM HUP EXIT
@@ -755,7 +797,7 @@ scan_one_file() {
     stage_end_file
 
     if [[ $failed -gt 0 ]]; then
-        printf 'revctf: completed with %d stage(s) failed\n' "$failed" >&2
+        printf 'revctf: completed with %d stage(s) failed or partial\n' "$failed" >&2
         return 2
     fi
     return 0

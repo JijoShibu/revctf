@@ -93,9 +93,21 @@ compete:
 
 ## Adapting to your hardware
 
-RAM is detected at startup and mapped to a tier that sets concurrency and memory ceilings:
+Before dependency checks or analysis, revctf checks Linux's **total RAM**, not free RAM
+or swap. Allocate at least **4 GB (4096 MB)** to Kali. The approximate check accepts
+3891 MiB or more of reported total RAM, allowing for memory reserved by the system;
+it cannot prove the virtual machine's configured allocation.
 
-| Tier | RAM | Phase-1 jobs | radare2 ceiling | Phase-2 ceiling | Ghidra `MAXMEM` | Decompile |
+Below that threshold, or if RAM cannot be measured, scans stop with exit 1 and explain
+how to increase the allocation. `--allow-low-memory` explicitly accepts a potentially
+slower or incomplete scan. This option is command-line only: configuration, `--yes`,
+and reduced-analysis flags cannot bypass the check. The warning appears both at startup
+and in the report. `--help` and `--version` still work; `--dry-run` shows whether a real
+scan would be blocked. revctf does not change system memory or swap settings.
+
+RAM is then mapped to a tier that sets concurrency and memory ceilings:
+
+| Tier | RAM | Phase-1 jobs | radare2 ceiling | Phase-2 ceiling | Ghidra analysis heap | Decompile |
 |---|---|---|---|---|---|---|
 | A | ≥ 3.8GB | 4 | 640MB | 1536MB | 1024M | Full |
 | B | 2.5–3.8GB | 2 | 450MB | 1024MB | 768M | Full |
@@ -109,6 +121,13 @@ from it because a JVM needs 2–4GB of *address space* to start at all and would
 
 A global RSS watchdog is the backstop: if the whole run reaches 90% of detected RAM it
 kills the running tools, stops the scan, and still writes the partial report.
+
+`--maxmem-ghidra` controls the Java analysis heap. Ghidra receives a separate process
+allowance of heap + max(256 MiB, 25% of heap rounded up), so a 1024M heap has a 1280 MiB
+process ceiling. A pre-analysis Java script verifies the actual heap; the report records
+its measurement. Only the child Java environment is changed, not your installation.
+Without usable systemd limits, whole-process enforcement is unavailable and is reported
+as such. A memory failure may trigger one inventory-only retry; that result is **partial**.
 
 Override individually with `--jobs-light`, `--jobs-ghidra`, `--maxmem-ghidra`. Use
 `--dry-run` to see the resolved plan — tier, limits, and exactly which stages would run —
@@ -134,7 +153,7 @@ enforcing them, and the watchdog threshold — before committing to a large batc
 
 - `--skip-ltrace`, `--skip-strace` — skip the stages that **execute** the challenge binary
 - `--skip-ghidra` — skip decompilation; radare2 substitutes
-- `--strict` — stop at the first failed stage. By default a failure is isolated and the
+- `--strict` — stop at the first failed or partial stage. By default a failure is isolated and the
   run continues
 - **The sandbox is on by default.** `ltrace` and `strace` execute the challenge binary, so
   they run inside a `--network=none --read-only --cap-drop=ALL` container, as an
@@ -154,10 +173,26 @@ available and you accept the risk, `--no-sandbox` is the explicit opt-out.
 
 ### Exit status
 
+**Partial** means useful evidence was retained but a requested step did not finish.
+This includes timeouts, output limits and a reduced retry after memory exhaustion.
+Candidates recovered from partial captures remain **UNVERIFIED**. Finding no candidate
+in an incomplete scan does not establish that no flag exists.
+
+On interruption, revctf saves available captures and an incomplete report, then removes
+only containers bearing this scan's unique ownership label. Docker cleanup has a ten-second
+deadline. If removal cannot be verified, `cleanup-warning.txt` identifies the container
+and recovery command, and further challenge execution is blocked. SIGKILL and host crashes
+can prevent cleanup entirely. Original challenge files are never modified.
+
+`ST_MAX_OUT_KB` is a positive whole number of 1024-byte units, enforced per file both
+outside and inside Docker. Reaching the boundary without reliable completion evidence
+marks the result incomplete. This is not an overall disk budget, and limits are never
+automatically increased to hide an incomplete result.
+
 | Code | Meaning |
 |---|---|
 | `0` | Scan completed, every stage succeeded |
-| `2` | Scan completed, but one or more stages failed — or `--strict` stopped it early |
+| `2` | Scan completed with failed or partial stages — or `--strict` stopped it early |
 | `1` | The scan could not run: bad arguments, missing tools, unwritable output |
 | `130` / `143` / `129` | Aborted by SIGINT / SIGTERM / SIGHUP |
 

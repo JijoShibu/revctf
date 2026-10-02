@@ -25,6 +25,10 @@ check() {
             printf 'SKIP %s (filesystem does not provide real symbolic links)\n' "$label"
             SKIP=$((SKIP + 1)); return 0
         fi
+        if [[ $rc -eq 78 ]]; then
+            printf 'SKIP %s (requires Linux file-size limits)\n' "$label"
+            SKIP=$((SKIP + 1)); return 0
+        fi
         printf 'FAIL %s\n' "$label"; FAIL=$((FAIL + 1))
     fi
 }
@@ -86,6 +90,7 @@ test_fresh_output() {
     [[ ! -d $dir/.revctf-lock ]]
 }
 test_runner() {
+    [[ $(uname -s) == Linux ]] || return 78
     local mode="$1" rc=0 expected=9 bound=5
     setup_stage "runner-$mode"
     ST_MEM_MODE=none; ST_MEM_CEIL_MB=0
@@ -181,6 +186,7 @@ test_ghidra() {
     st_run_bounded() {
         printf '%s\n' "$@" > "$RUN_WORKDIR/argv"
         : > "$3"
+        [[ $mode == unverified ]] || printf 'verified=1\n' > "$RUN_OUTDIR/ghidra-memory.0.txt"
         {
             [[ $mode == stdoutload ]] && printf 'SCRIPT ERROR: launcher failure\n'
             [[ $mode == reversed ]] && printf '=== REVCTF-GHIDRA-END ===\n'
@@ -192,8 +198,11 @@ test_ghidra() {
         } > "$2"
         return 0
     }
+    tier_mb_of() { printf '1024'; }
+    MAXMEM=parent-value _JAVA_OPTIONS='-Drevctf.test=preserved'
     stage_ghidra
-    grep -Fxq "$WORK/custom scripts" "$RUN_WORKDIR/argv" || return 1
+    [[ ${MAXMEM:-} == parent-value && ${_JAVA_OPTIONS:-} == '-Drevctf.test=preserved' ]] || return 1
+    grep -Fxq "$REVCTF_SCRIPTS;$WORK/custom scripts" "$RUN_WORKDIR/argv" || return 1
     [[ $mode == success ]] || rc=1
     [[ ${STAGE_RC[ghidra]} -eq $rc && -s ${STAGE_OUT[ghidra]} ]] || return 1
     if [[ $rc -eq 0 ]]; then [[ ${STAGE_STATUS[ghidra]} == ok ]];
@@ -263,6 +272,7 @@ check 'Ghidra reversed completion markers are failed' test_ghidra reversed
 check 'Ghidra loader error with partial output is failed' test_ghidra load
 check 'Ghidra stdout launcher error is failed' test_ghidra stdoutload
 check 'Ghidra completed output and custom script path work' test_ghidra success
+check 'Ghidra cannot report success without verified memory evidence' test_ghidra unverified
 check 'linkage read without ldd when sandbox unavailable' test_linkage 0
 check 'linkage failure is not called a static binary' test_linkage 1
 check 'user memory scope selected when available' test_scope user

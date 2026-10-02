@@ -343,6 +343,29 @@ made for itself rather than one inherited from v3/v4/v5.
 
 ---
 
+### D14 — reliability and minimum-memory correction (2026-10-02)
+
+This approved correction supersedes earlier conflicting memory, cleanup and status rules.
+A scan checks real Linux total RAM before dependency probes. Below 3891 MiB (the approximate
+4 GB allocation threshold), or when measurement fails, it refuses to scan unless the user
+passes `--allow-low-memory` on the command line. The override warns at startup and in the
+report; configuration and simulated tier settings cannot bypass the check.
+
+Ghidra's heap is set explicitly and checked inside Java before analysis. Its process limit
+is heap + max(256 MiB, ceil(heap/4)); a 1024 MiB heap therefore has a 1280 MiB process cap.
+The competing MaxRAMPercentage setting is removed. A reduced retry is partial, not complete.
+
+The shared runner applies the correct Bash-mode file-size units, and Docker receives the
+same raw-file limit. A boundary capture without completion evidence is incomplete. Docker
+containers are registered before creation, identified by a unique ownership label, and
+removed through shared cleanup with a ten-second deadline and an absence check. Unknown
+cleanup outcomes preserve recovery details and block further challenge execution.
+
+Partial captures remain available and are searched for UNVERIFIED candidates. Failed or
+partial requested stages return exit 2; strict mode stops on either. Catchable interruptions
+preserve evidence and retain signal-specific exit codes. SIGKILL and host failure remain
+limitations. Four gigabytes is the tested recommendation, not a guarantee for every input.
+
 ## 12. Repo Layout
 
 ```
