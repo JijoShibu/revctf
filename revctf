@@ -2,7 +2,7 @@
 #
 # revctf — automated reverse-engineering CTF analysis pipeline
 #
-# Created by Jijo Shibu.  MIT licence — see LICENSE.
+# Created by Jijo Shibu <jijoshibu@gmail.com>. MIT licence — see LICENSE.
 #
 # Build reference: revctfmasterplan_v6.md (consolidates v3/v4/v5 + execution masterplan).
 # Milestone: M0 — foundation & scaffolding.
