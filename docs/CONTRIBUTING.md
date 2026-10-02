@@ -19,7 +19,13 @@ Directory scanning is planned for M7 and is not available in the current build.
 
 ## 1. Which document is authoritative
 
-Five design documents exist. They do not all agree. Resolve conflicts in this order:
+For the 2.0 preview, the current README, command help, release notes and tested behavior
+take precedence over the older design documents, especially for RAM requirements,
+exit codes, partial results and container cleanup. Update those public descriptions
+alongside any behavior change.
+
+Five older design documents record the original milestones. For historical questions,
+their intended order was:
 
 | Rank | Document | Authority |
 |---|---|---|
@@ -41,11 +47,11 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
 ## 2. Non-negotiable conventions
 
 - **Never add `set -e`.** Not at the top level of `revctf`, not in any `lib/*.sh`. v5 §4.1
-  mandates stage-level isolate-and-continue: a failing stage is diagnosed and skipped, and
+  mandates stage-level isolate-and-continue: a failing stage is recorded as failed, and
   `--strict` also stops on a failed or partial stage. A blanket `set -e` breaks
   exactly the guarantee the design is built on. Every `lib/` file carries a comment saying
   so — do not "helpfully" remove it.
-- **`shellcheck -S style` must be clean** across `revctf`, `install.sh`, `lib/*.sh` and
+- **ShellCheck 0.11.0 with `-S style` must be clean** across `revctf`, `install.sh`, `lib/*.sh` and
   `tools/*.sh`. The harness asserts zero findings. Cross-file `SC2034` warnings on shared
   globals get a targeted `# shellcheck disable` with a reason, never a blanket suppression.
 - **Stream large captures to disk.** Use `st_run_bounded()` directly or through
