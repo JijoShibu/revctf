@@ -1,6 +1,6 @@
 # revctf
 
-**Created by Jijo Shibu** · MIT licence ([LICENSE](LICENSE)) · <https://github.com/JijoShibu/revctf>
+**Created by Jijo Shibu <jijoshibu@gmail.com>** · MIT licence ([LICENSE](LICENSE)) · <https://github.com/JijoShibu/revctf>
 
 Automated reverse-engineering CTF analysis pipeline for Kali Linux.
 
@@ -12,14 +12,12 @@ Docker they skip rather than running the binary on your machine.
 
 Directory targets are M7 and are not in this build — a directory exits 1 with a message.
 
-> **Status: v1.0 — M6 complete.** Single-file scanning works end to end: 14 stages
-> including Ghidra headless, flag detection with the base64/base32/hex/ROT13/ROT47 sweep
-> plus a stack-string decoder, a readable report, and three display modes. The RAM-tier
-> memory ceilings are *enforced* via `systemd-run --scope`, with a global RSS watchdog
-> behind them, and the two stages that execute the challenge binary run inside a
-> network-isolated Docker container **by default**.
-> Batch mode (M7), the prompt layer (M8) and the debug log (M9) are post-1.0.
-> Everything you need to use revctf is on this page. Maintainer documents are in `docs/`.
+> **Status: v2.0.0-rc.1 — preview preparation, not yet published.** This version improves
+> resource limits, cleanup, and the handling of incomplete results. It requires an
+> approximate 4 GB RAM check before scanning. All recovered candidates remain unverified.
+> Read the [preview notes](docs/releases/2.0.0-rc.1.md) and
+> [validation results](docs/reliability-validation.md) before upgrading.
+> Batch scanning, interactive solving, and persistent debug logging remain planned.
 
 ---
 
@@ -42,6 +40,11 @@ install that placed every other tool correctly has not failed. Run
 
 This is the whole deployment path: clone, install, done. `docs/REHEARSAL.md` is the
 procedure for proving it from zero.
+
+For a published release, use its exact tag instead of following the development branch.
+The proposed `v2.0.0-rc.1` tag is not available until the preview is published. See
+[installation, upgrade and rollback](docs/RELEASING.md#install-upgrade-and-rollback)
+for the commands and the release checks.
 
 ## Usage
 
@@ -191,9 +194,9 @@ automatically increased to hide an incomplete result.
 
 | Code | Meaning |
 |---|---|
-| `0` | Scan completed, every stage succeeded |
+| `0` | No requested stage failed or was partial; inapplicable or unavailable optional stages may be skipped |
 | `2` | Scan completed with failed or partial stages — or `--strict` stopped it early |
-| `1` | The scan could not run: bad arguments, missing tools, unwritable output |
+| `1` | The scan could not run: RAM check, bad arguments, missing tools, unwritable output |
 | `130` / `143` / `129` | Aborted by SIGINT / SIGTERM / SIGHUP |
 
 > **Stopping a backgrounded scan.** When revctf is launched from a script
@@ -203,14 +206,14 @@ automatically increased to hide an incomplete result.
 
 ### Limits
 
-Every stage is bounded in both time and output size, so a pathological target cannot hang
-a run or fill a disk:
+Commands have time and file-size limits. These limits reduce resource use; they are not
+a total disk budget, and a large or complicated challenge can still exceed available resources:
 
 | Bound | Default | Override |
 |---|---|---|
 | ltrace timeout | 10s | `--timeout` |
 | Other stage timeouts | 120–1800s by stage | `ST_T_*` env vars |
-| Per-stage capture size | 2GB | `ST_MAX_OUT_KB` |
+| Per raw output or trace file | 2 GiB | `ST_MAX_OUT_KB` (1024-byte units) |
 | Archive expansion | 2GB, and never more than half the free disk | `TRIAGE_MAX_EXPAND_KB` |
 | Container recursion depth | 2 | `TRIAGE_MAX_DEPTH` |
 
@@ -225,8 +228,8 @@ Reports are plain text, written to `./revctf-reports/<name>-<timestamp>/report.t
 4. **Diagnostics** — any stage that failed, with its command, exit code and stderr tail
 5. **What to try next** — derived from what happened on *your* file, not a generic list
 
-A stage that finds nothing says so; one that fails says so. A failure is isolated and the
-run continues.
+A stage that finds nothing says so; one that stops early is marked failed or partial.
+Other stages continue unless `--strict` was selected.
 
 Choose a **new or empty directory** for `--output`. revctf refuses to reuse a directory
 containing files, so earlier reports and the original challenge cannot be overwritten by
@@ -389,7 +392,7 @@ Everything below `docs/` is for people changing revctf, not people using it.
 
 ## Credits
 
-Created by **Jijo Shibu**. MIT licence — see [LICENSE](LICENSE).
+Created by **Jijo Shibu <jijoshibu@gmail.com>**. MIT licence — see [LICENSE](LICENSE).
 
 revctf is an orchestrator: nearly all of the analysis is done by other people's tools, and
 it would not exist without them.

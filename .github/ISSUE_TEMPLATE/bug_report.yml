@@ -1,0 +1,46 @@
+name: Bug report
+description: Report incorrect results, installation trouble, or a scan that did not finish.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please remove passwords, tokens, private paths, and private challenge content from logs.
+        A small example you are allowed to share is more useful than a complete private report.
+  - type: input
+    id: version
+    attributes:
+      label: RevCTF version
+      description: Run revctf --version. Include the commit if using an unreleased checkout.
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Kali version and RAM
+      description: Include VM memory allocation, Linux-reported total RAM, and whether you used --allow-low-memory.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Command and steps
+      description: Include the file type and relevant options. Share a minimal sample only if permitted.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+      description: For an incorrect candidate, explain how you know the correct answer or acceptance condition.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: Include the exit code, affected stage, and a short, redacted output excerpt.
+      render: text
+    validations:
+      required: true
