@@ -76,7 +76,7 @@ stage_ghidra() {
         fi
         {
             printf '\n=== Ghidra ran out of memory — retrying with light decompilation ===\n'
-            printf 'The full decompile exceeded the JVM heap for this binary. revctf is\n'
+            printf 'Java reported a memory failure during full analysis. revctf is\n'
             printf 'retrying automatically with function listing only; radare2 above has\n'
             printf 'the disassembly.\n\n'
         } >> "$out"

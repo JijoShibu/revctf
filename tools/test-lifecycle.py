@@ -165,6 +165,51 @@ timeout 10 docker start --attach "$SBX_NAME" > "$EVIDENCE/start.out" 2> "$EVIDEN
     names = (out/'container-ownership.txt').read_text().splitlines()
     assert all(absent(line.split('\t')[1]) for line in names)
 
+def container_memory_limit():
+    out = WORK / 'memory-limit'
+    out.mkdir()
+    code = out / 'allocate.c'
+    code.write_text('''#include <stdio.h>
+#include <stdlib.h>
+int main(void) {
+    FILE *f = fopen("/sys/fs/cgroup/memory.max", "r");
+    char limit[64];
+    if (!f || !fgets(limit, sizeof limit, f)) return 3;
+    fclose(f); printf("%s", limit); fflush(stdout);
+    volatile unsigned char *p = malloc(256UL*1024*1024);
+    if (!p) return 4;
+    for (size_t i=0; i<256UL*1024*1024; i+=4096) p[i]=1;
+    return 0;
+}
+''')
+    sp.run(['gcc', '-o', str(out/'allocate'), str(code)], check=True)
+    script = r'''
+set -uo pipefail
+source "$ROOT/lib/stage.sh"
+source "$ROOT/lib/sandbox.sh"
+is_uint() { [[ $1 =~ ^[0-9]+$ ]]; }
+RUN_OUTDIR="$EVIDENCE"
+mkdir "$EVIDENCE/scratch"
+chmod 777 "$EVIDENCE/scratch"
+sbx_register memory || exit 1
+trap 'sbx_cleanup_all' EXIT
+declare -a args=()
+sbx_wrap args "$EVIDENCE/scratch" "$EVIDENCE/allocate" "$SBX_NAME" 64 || exit 1
+timeout 10 "${args[@]}" /target > "$EVIDENCE/container-id" || exit 1
+SBX_OWNED[$SBX_NAME]=created
+rc=0
+timeout 15 docker start --attach "$SBX_NAME" > "$EVIDENCE/measured-limit.txt" 2> "$EVIDENCE/start.err" || rc=$?
+docker inspect --format '{{.State.OOMKilled}}' "$SBX_NAME" > "$EVIDENCE/oom.txt"
+[[ $rc -eq 137 ]] && grep -qx 67108864 "$EVIDENCE/measured-limit.txt" && grep -qx true "$EVIDENCE/oom.txt"
+'''
+    run = sp.run(['bash', '-c', script], env=dict(env, ROOT=str(ROOT), EVIDENCE=str(out)),
+                 capture_output=True, text=True, timeout=40)
+    (out/'test.log').write_text(run.stdout + run.stderr)
+    assert run.returncode == 0, run.stderr
+    names = (out/'container-ownership.txt').read_text().splitlines()
+    assert all(absent(line.split('\t')[1]) for line in names)
+
+
 def check(label, fn):
     global passed, failed
     try:
@@ -183,6 +228,7 @@ try:
     check("unexpected shell exit cleans its live container and preserves evidence", unexpected_exit)
     check("interruption during container creation removes the created container", startup_interrupt)
     check("Docker enforces the exact 16 KiB file limit", container_file_limit)
+    check("Docker's measured 64 MiB limit kills an excessive allocation", container_memory_limit)
 finally:
     for p in processes:
         if p.poll() is None:
