@@ -12,8 +12,8 @@
 # allowed to abort the run. Error handling is done per-stage via ERR traps in lib/.
 set -uo pipefail
 
-REVCTF_VERSION="1.0.0"
-REVCTF_AUTHOR="Jijo Shibu"
+REVCTF_VERSION="2.0.0-rc.1"
+REVCTF_AUTHOR="Jijo Shibu <jijoshibu@gmail.com>"
 REVCTF_URL="https://github.com/JijoShibu/revctf"
 
 # Printed by --version. A bare number tells a stranger nothing about where the tool came

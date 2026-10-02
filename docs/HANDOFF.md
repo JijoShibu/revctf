@@ -1,4 +1,22 @@
-# HANDOFF.md — the one file to read first
+# Maintainer handoff
+
+## Current work: 2.0 preview
+
+Author: Jijo Shibu <jijoshibu@gmail.com>
+
+The current release target is 2.0.0-rc.1. Follow [RELEASING.md](RELEASING.md),
+[CONTRIBUTING.md](CONTRIBUTING.md), and [the validation record](reliability-validation.md).
+The fixes pull request remains unmerged; a prepared archive is not a published release.
+
+This version adds a 4 GB startup recommendation with an explicit low-memory override,
+verified Ghidra heap settings, corrected file limits, owned-container cleanup, and partial
+results. Candidates remain unverified. Batch scanning and general automatic solving are
+not implemented. Basic GitHub checks supplement real Kali testing.
+
+## Archived milestone handoff
+
+The dated notes below are retained for context. Their old status counts, paths, promises
+and pending tasks do not override current documentation or measured release results.
 
 Consolidated session context for `revctf`. Its job is to let a **fresh session
 with no chat history** reach full working competence by reading this file plus
