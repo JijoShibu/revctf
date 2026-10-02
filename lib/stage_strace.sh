@@ -41,8 +41,10 @@ stage_strace() {
 
     if ! dyn_guard "$name" strace; then
         # Keep the metadata section even when execution is unavailable.
+        local guard_status="${STAGE_STATUS[$name]:-skipped}"
+        local guard_note="${STAGE_NOTE[$name]:-not applicable}"
         stage_write "$name" ok
-        stage_set_status "$name" skipped "${STAGE_NOTE[$name]:-not applicable}; linkage still captured"
+        stage_set_status "$name" "$guard_status" "$guard_note; linkage still captured"
         if [[ $linkage_rc -ne 0 ]]; then
             stage_record_exec "$name" "readelf -d -- $RUN_TARGET" "$linkage_rc"
             stage_set_status "$name" failed "library metadata failed (exit $linkage_rc); trace skipped"

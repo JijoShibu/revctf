@@ -208,8 +208,42 @@ test_ghidra() {
     if [[ $rc -eq 0 ]]; then [[ ${STAGE_STATUS[ghidra]} == ok ]];
     else [[ ${STAGE_STATUS[ghidra]} == failed ]]; fi
 }
+test_ghidra_retry() {
+    local mode="$1" calls=0
+    setup_stage "retry-$mode"
+    source "$ROOT/lib/stage_ghidra.sh"
+    PF_GHIDRA_HEADLESS=simulated REVCTF_SCRIPTS="$ROOT/scripts"
+    OPT[ghidra_script]="$ROOT/scripts/jython_decompile.py"
+    pf_check_disk() { return 0; }
+    tier_mb_of() { printf 1024; }
+    st_run_bounded() {
+        local attempt=$calls
+        calls=$((calls+1))
+        printf 'verified=1\n' > "$RUN_OUTDIR/ghidra-memory.$attempt.txt"
+        printf '=== REVCTF-GHIDRA-BEGIN ===\nretained attempt %s\n=== REVCTF-GHIDRA-END ===\n' "$attempt" > "$2"
+        : > "$3"
+        if [[ $attempt -eq 0 ]]; then
+            if [[ $mode == oom ]]; then
+                printf 'java.lang.OutOfMemoryError: Java heap space\n' > "$3"
+                return 1
+            fi
+            return 137
+        fi
+        return 0
+    }
+    stage_ghidra
+    if [[ $mode == oom ]]; then
+        [[ $calls -eq 2 && ${STAGE_STATUS[ghidra]} == partial ]] || return 1
+        grep -q 'retained attempt 0' "$RUN_OUTDIR/ghidra-attempt.0.stdout" &&
+            grep -q 'retained attempt 1' "$RUN_OUTDIR/ghidra-attempt.1.stdout"
+    else
+        [[ $calls -eq 1 && ${STAGE_STATUS[ghidra]} == failed ]] &&
+            [[ ${STAGE_NOTE[ghidra]} == *'cause unconfirmed'* && ! -e $RUN_OUTDIR/ghidra-attempt.1.stdout ]]
+    fi
+}
+
 test_linkage() {
-    local parser_rc="$1" calls=0
+    local parser_rc="$1" guard_status="${2:-skipped}" calls=0
     setup_stage "linkage-$parser_rc"
     # shellcheck source=../lib/stage_strace.sh
     source "$ROOT/lib/stage_strace.sh"
@@ -219,11 +253,11 @@ test_linkage() {
         [[ $* == *'-- readelf -d --'* ]] || return 88
         printf 'NEEDED libc.so.6\n' > "$2"; : > "$3"; return "$parser_rc"
     }
-    dyn_guard() { stage_skip strace 'sandbox unavailable'; return 1; }
+    dyn_guard() { stage_set_status strace "$guard_status" 'sandbox unavailable'; return 1; }
     stage_strace
     [[ $calls -eq 1 && ! -e $RUN_WORKDIR/ldd-called ]] || return 1
     grep -q 'NEEDED libc.so.6' "${STAGE_OUT[strace]}" || return 1
-    if [[ $parser_rc -eq 0 ]]; then [[ ${STAGE_STATUS[strace]} == skipped ]];
+    if [[ $parser_rc -eq 0 ]]; then [[ ${STAGE_STATUS[strace]} == "$guard_status" ]];
     else [[ ${STAGE_STATUS[strace]} == failed && ${STAGE_RC[strace]} -eq $parser_rc ]]; fi
 }
 test_scope() {
@@ -273,8 +307,11 @@ check 'Ghidra loader error with partial output is failed' test_ghidra load
 check 'Ghidra stdout launcher error is failed' test_ghidra stdoutload
 check 'Ghidra completed output and custom script path work' test_ghidra success
 check 'Ghidra cannot report success without verified memory evidence' test_ghidra unverified
+check 'evidenced Java memory failure gets one partial retry, retaining both attempts' test_ghidra_retry oom
+check 'an unexplained forced kill never triggers a memory retry' test_ghidra_retry killed
 check 'linkage read without ldd when sandbox unavailable' test_linkage 0
 check 'linkage failure is not called a static binary' test_linkage 1
+check 'execution protection failure is not downgraded to an ordinary skip' test_linkage 0 failed
 check 'user memory scope selected when available' test_scope user
 check 'system memory scope selected when user scope fails' test_scope system
 check 'memory fallback selected when both scopes fail' test_scope none

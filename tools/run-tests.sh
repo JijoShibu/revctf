@@ -236,7 +236,7 @@ EOF
     assert_match "config: CLI flag overrides it" 'output *: /tmp/from-cli' \
         "$RC" scan "$ROOT/README.md" --skip-ghidra --verbose --output /tmp/from-cli
     rm -f "$cfg"
-    assert_exit "absent default config is fine"  0 "$RC" scan "$ROOT/README.md" --skip-ghidra
+    assert_exit "absent default config is fine"  0 "$RC" scan /bin/true --skip-ghidra
 
     # --- display mode selection (v6 §10) ---
     assert_match "piped output -> line mode" 'display *: line' \
@@ -253,7 +253,7 @@ EOF
     # --- symlink resolution (install.sh puts revctf on PATH as a symlink) ---
     local linkdir="$FIXTURES/linkbin"
     mkdir -p "$linkdir"; ln -sf "$RC" "$linkdir/revctf"
-    assert_exit "runs correctly through a symlink" 0 "$linkdir/revctf" scan "$ROOT/README.md" --skip-ghidra
+    assert_exit "runs correctly through a symlink" 0 "$linkdir/revctf" scan /bin/true --skip-ghidra
 }
 
 test_m1() {
@@ -1909,6 +1909,10 @@ test_m5enforce() {
     # small target because MemoryMax reclaims page cache before it kills anything.
     local bst btgt bout brep
     for bst in "${bounded[@]}"; do
+        if [[ $bst == ltrace || $bst == strace ]]; then
+            skip "1MB breach for $bst" "Docker rejects limits below 6MB; test-lifecycle.py measures and breaches the container's 64MiB limit"
+            continue
+        fi
         btgt="${ceil_target[$bst]:-}"
         if [[ -z $btgt ]]; then
             no "no enforcement target for the bounded stage '$bst'" \
