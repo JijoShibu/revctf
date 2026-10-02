@@ -28,9 +28,10 @@ git clone https://github.com/JijoShibu/revctf.git && cd revctf
 sudo ./install.sh
 ```
 
-`install.sh` is not optional. It installs the complete toolchain and builds the sandbox
-container during a network window; at scan time a missing tool is a hard error rather than
-a silently thinner report. Run it while online.
+Run `install.sh` while online. It installs the required tools, including Java 21 for
+Ghidra, and builds the sandbox when Docker is available. Optional Java/.NET decompilers
+are attempted separately; an unavailable package is reported. A scan that needs a
+missing analysis tool reports the problem rather than claiming that step succeeded.
 
 It does **not** install Docker — Kali does not ship it, and pulling in a ~500MB daemon
 uninvited is not the installer's call. Without Docker the two stages that execute the target
@@ -334,9 +335,10 @@ harness asserts that this list and that one agree — so neither can drift.
 | Batch mode (a directory target) | exits 1 with a clear message | M7 |
 
 
-`install.sh` is complete and has been run end-to-end on Kali: apt groups, FLOSS and
-uncompyle6 into a venv (a system-wide `pip install` fails on modern Debian/Ubuntu), and
-Ghidra. It installs the **pinned, verified** Ghidra build rather than the newest release —
+The installer sets up system packages, FLOSS and uncompyle6 in an isolated Python
+environment, and Ghidra with its Java development kit. The current installation results
+and unavailable optional packages are recorded in [the validation report](docs/reliability-validation.md).
+It installs the **pinned, verified** Ghidra build rather than the newest release —
 `GHIDRA_LATEST=1` opts into newest, but Ghidra 12.x needs PyGhidra wiring that does not
 exist yet. `tools/bootstrap-kali.sh` remains as the alternative that also pulls the
 build-only dependencies the test corpus needs.
