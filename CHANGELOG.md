@@ -21,6 +21,8 @@ Changes after the 2.0 preview will be recorded here.
 
 ### Reliability
 
+- Install Java 21 explicitly for Ghidra, even when optional Java decompilers are unavailable.
+  Retry interrupted Ghidra downloads within a time limit and remove failed partial downloads.
 - Register uniquely labelled Docker containers before startup, remove them on completion
   or interruption, and verify cleanup within a ten-second deadline. Unconfirmed removal
   leaves a prominent warning and recovery instructions, and prevents further execution.
