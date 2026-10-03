@@ -21,6 +21,16 @@ Changes after the 2.0 preview will be recorded here.
 
 ### Reliability
 
+- Preserve full managed and radare2 captures beyond the report preview. Report mixed
+  Python success/failure and unprocessed files as partial, retaining each file's output.
+- Bound the final candidate worker, preserve byte boundaries during hex decoding, and
+  stream stack-string input. Removed token and byte cutoffs no longer hide later answers.
+- Propose Ghidra 12.1.4 with verified downloads and a Java output script; final Kali
+  validation is required before publication. Pin the extractor, Python tool versions,
+  and sandbox base; use a separate preview sandbox image and bound container logs.
+- Add reviewed publication with evidence checks, a seven-day preview gate, an independent
+  test requirement, security guidance, and repository protection settings.
+
 - Install Java 21 explicitly for Ghidra, even when optional Java decompilers are unavailable.
   Retry interrupted Ghidra downloads within a time limit and remove failed partial downloads.
 - Register uniquely labelled Docker containers before startup, remove them on completion

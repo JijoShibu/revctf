@@ -4,10 +4,16 @@ on:
   pull_request:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   controlled-tests:
@@ -30,15 +36,29 @@ jobs:
       - name: Check shell syntax and style
         shell: bash
         run: |
-          for script in revctf install.sh lib/*.sh tools/*.sh; do
+          for script in revctf install.sh lib/*.sh tools/*.sh dependencies/*.sh; do
             bash -n "$script"
           done
-          shellcheck -S style revctf install.sh lib/*.sh tools/*.sh
+          shellcheck -S style revctf install.sh lib/*.sh tools/*.sh dependencies/*.sh
+      - name: Check workflow syntax
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 --max-time 120 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$RUNNER_TEMP/actionlint.tar.gz"
+          printf '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  %s\n' \
+            "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check -
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
       - name: Check release consistency
         run: python3 tools/check-release.py
       - name: Run controlled reliability tests
         run: bash tools/test-reliability.sh
       - name: Check Linux resource handling
         run: bash tools/test-resources.sh
+      - name: Check candidate accuracy and preserved evidence
+        run: bash tools/test-accuracy.sh
+      - name: Check publication gates
+        run: python3 tools/test-release.py
 
 # These jobs do not execute submitted challenges or replace real Kali/Ghidra/Docker tests.
