@@ -90,7 +90,7 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
 ```
 
 > **The socket mount gives the container root-equivalent control of the host daemon.** That
-> is why install.sh can build `revctf-sandbox:1` from inside. Run it only on a machine you
+> is why install.sh can build the current preview sandbox from inside. Run it only on a machine you
 > own, from a throwaway `--rm` container. Some agent sandboxes refuse this mount; if yours
 > does, run A-1 by hand and let A-2 carry the automated result.
 
@@ -135,14 +135,14 @@ for pkg in file:file binutils:objdump binwalk:binwalk ltrace:ltrace strace:strac
   command -v "$b" >/dev/null 2>&1 && echo "ok   $pkg" || echo "MISS $pkg"
 done
 command -v floss && floss --version            # must come from a venv, not system pip
-command -v analyzeHeadless; ls -d /opt/ghidra_*  # must be 11.2.1, never 11.3+ / 12.x
+command -v analyzeHeadless; ls -d /opt/ghidra_*  # selected release must be 12.1.4
 ls -l scripts/pyinstxtractor.py                # fetched, or PyInstaller unwrap is dead
 docker images | grep -i revctf                 # A-1 only: sandbox image built?
 revctf --version
 dpkg -l curl ca-certificates python3-venv      # the 2026-08-28 bootstrap fix
 ```
 
-**Gate A:** every core tool resolves; FLOSS runs from a venv; Ghidra is 11.2.1;
+**Gate A:** every core tool resolves; FLOSS runs from the preview venv; Ghidra is 12.1.4;
 `pyinstxtractor.py` exists; A-1 built the sandbox image; and A-2's missing-Docker behaviour
 is recorded exactly as observed.
 
@@ -232,8 +232,8 @@ all. A whole-report `grep picoCTF` passes with the scanner completely dead.
 **This is really a Ghidra-install test.** `found by: ghidra` is the point: the flag is a
 stack string, invisible to `strings` before or after unpacking, and FLOSS's stack-string
 extraction is PE-only. Nothing but the decompile pass reaches it. So `0 high` means Ghidra
-did not install, did not run, or installed as a 12.x build whose post-script fails while
-`analyzeHeadless` still exits 0 — precisely the silent failure the 11.2.1 pin avoids.
+did not install, did not run, or its post-script failed. The default Java script must
+finish, and its heap guard must verify the allowance. An exit code of zero alone is insufficient.
 Capture `ghidra.stderr` and `ls -d /opt/ghidra*`.
 
 Then the guarantees the report is supposed to carry:

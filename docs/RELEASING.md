@@ -25,6 +25,25 @@ unmerged until the maintainer explicitly authorizes merging and publication.
 
 ## Publish an approved preview
 
+Use **Actions → Publish reviewed release → Run workflow** on `main`. Supply the full
+reviewed commit and version without `v`. The workflow reruns the basic checks, requires
+the current runtime digest in `docs/release-evidence.json`, and stops on unfinished Kali
+checks. It builds a deterministic source archive in a read-only job. A separate job
+rebuilds that exact archive, compares its checksum, and waits for the `release`
+environment's maintainer approval before receiving write access.
+
+The publisher creates an annotated tag with the project author's identity, uploads assets
+to a draft, verifies the uploaded hashes, and then publishes. An interrupted draft can be
+resumed if its tag and assets still match. Conflicting assets require manual review;
+published tags and assets must never be replaced. The workflow downloads the public
+archive without sign-in and verifies its checksum. The Kali installation and controlled
+scan from that public download are a separate final check.
+
+The evidence file is deliberately incomplete while final tests are pending. Do not mark
+checks passed merely to enable publication. Generate its runtime identity with
+`python3 tools/release.py digest` after committing runtime changes; record actual logs,
+failed attempts, and skips alongside successful final checks.
+
 After explicit authorization, merge the reviewed changes and verify the resulting tree.
 Set the published status/date in the README and release notes, commit those edits, and
 run version, documentation, syntax, and smoke checks on that final commit. If merging
@@ -82,6 +101,11 @@ version, Kali version, RAM, command, expected result and relevant redacted outpu
 Stable 2.0.0 requires at least seven days since preview publication, one independent Kali
 test report, all required checks passing, no unresolved release-blocking defects, and
 maintainer review. No scheduled monitoring is created by these instructions.
+
+Give independent testers [these instructions](INDEPENDENT-TEST.md). The automatic stable
+gate requires seven days since the latest published preview and a maintainer-reviewed
+GitHub issue written by the independent tester. Update that record when another preview
+needs retesting. Keep the original evidence and release history.
 
 Substantive fixes produce `rc.2`, `rc.3`, and so on, with affected checks repeated. Keep
 the stable gate open until the revised behavior has adequate review. For stable 2.0.0,

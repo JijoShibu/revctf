@@ -33,6 +33,13 @@ Ghidra, and builds the sandbox when Docker is available. Optional Java/.NET deco
 are attempted separately; an unavailable package is reported. A scan that needs a
 missing analysis tool reports the problem rather than claiming that step succeeded.
 
+The proposed 2.0 profile uses Ghidra 12.1.4 and verifies downloaded Ghidra and extractor
+files before installing them. Existing unrelated tools are preserved. See the
+[dependency profile](dependencies/README.md) for versions and remaining validation.
+The supported host is Kali Linux on Intel/AMD 64-bit computers; it analyzes Linux and
+Windows executables. A Windows host or automatic execution of Windows programs is not
+part of this release's support promise.
+
 It does **not** install Docker — Kali does not ship it, and pulling in a ~500MB daemon
 uninvited is not the installer's call. Without Docker the two stages that execute the target
 skip and say so; install.sh warns, tells you the command, and still exits 0, because an
@@ -243,13 +250,15 @@ file: the shell opens redirected files before revctf can check them.
 familiar flag; a convincing decoy can receive the same rating. Confirm an answer against
 the challenge's known answer or acceptance check before calling it solved.
 
-The current search is limited: each capture/decoding pass retains up to 50 known-format
-matches and 50 custom-format matches, 20 hash-like matches and 30 generic matches.
-Each capture's encoding sweep tries the first 400 distinct Base64 tokens and 200 each
-for Base32 and hex (in sorted order). ROT13/ROT47 examine the first 4 MiB; reconstructed
-stack-string output is limited to 1 MiB. Disassembly and decompilation also have limits.
-A flag beyond these limits can be missed. Expanding coverage with clear per-run limit
-notices is still planned; an empty result does not prove the file contains no flag.
+The final candidate search uses a separate worker with a 384 MiB memory allowance and
+a 300-second default time limit. It searches full preserved captures, including output
+beyond the short managed-code and radare2 report previews. The previous encoding-token
+and ROT byte cutoffs have been removed. The report loads at most 10,000 candidate records;
+a reached limit or failed worker marks the search partial and keeps its evidence.
+Stack reconstruction skips exceptionally long lines or runs with an explicit incomplete
+status. Ghidra analyzes up to 200 selected functions and reports failed or unprocessed
+functions. These protections can still leave work unfinished; no result proves that a
+file contains no flag.
 
 Custom `--ghidra-script` files are loaded from their own directory. They must use the
 same output contract as the bundled scripts: print `=== REVCTF-GHIDRA-BEGIN ===` before
@@ -345,15 +354,18 @@ build-only dependencies the test corpus needs.
 
 ## Requirements
 
-Kali Linux (or Debian-derived), Bash 4+, **4GB RAM** for full behaviour and ~4GB free disk
+Kali Linux amd64, Bash 4+, **4GB RAM** recommended and at least 4GB free disk
 (Ghidra alone unpacks to ~400MB). Plus the toolchain `install.sh` sets up: `file`,
 `strings`, `binwalk`, `hexdump`, `ltrace`, `strace`, `radare2`, `checksec`, `objdump`,
-`readelf`, `upx`, FLOSS, Java/.NET/Python decompilers, and Ghidra (**11.2.1, pinned** —
-12.x breaks the headless post-script; `GHIDRA_LATEST=1` opts in with a warning), found via
+`readelf`, `upx`, FLOSS, Java/.NET/Python decompilers, and Ghidra (**12.1.4, pinned**), found via
 `PATH`, `GHIDRA_HOME`, or `/opt/ghidra*`. **Docker is recommended, not required** — the two
 executing stages (`ltrace`, `strace`) are sandboxed by default and need it; without it they
 skip rather than running the target on your machine, and everything else runs normally. `systemd-run` is preferred for memory bounding,
 with a documented `ulimit -v` fallback.
+
+Ghidra versions outside the release profile are rejected before analysis. Update the
+selected installation or explicitly use `--skip-ghidra`. `GHIDRA_LATEST` is no longer an
+installer upgrade route; upgrades need a reviewed profile and affected tests.
 
 The verification harness needs the test corpus, which is gitignored — a fresh clone must
 run `./tools/build-test-corpus.sh` before `./tools/run-tests.sh`.

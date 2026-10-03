@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0-rc.1",
+  "runtime_sha256": null,
+  "configured_ram_mib": 4096,
+  "vm_restored_16gb": false,
+  "checks": {},
+  "open_blockers": [
+    "Final Kali access and validation pending after dependency and accuracy changes",
+    "Python transitive dependency lock and clean installation rehearsal pending"
+  ],
+  "independent_test": null
+}
