@@ -49,10 +49,10 @@ Set the published status/date in the README and release notes, commit those edit
 run version, documentation, syntax, and smoke checks on that final commit. If merging
 introduced other code, repeat the affected tests before tagging.
 
-Create an annotated `v2.0.0-rc.1` tag at that exact commit. Build a new source archive and
-checksum from the tag so they match the published source, not the earlier review archive.
-Create a GitHub release marked **pre-release**, attach the archive and checksum, and
-use the reviewed release notes. Do not designate a preview as the latest stable release.
+Run the approved workflow at that exact commit. It creates the annotated
+`v2.0.0-rc.1` tag, archive and checksum, then publishes the **pre-release** with the
+reviewed notes. Do not create a parallel manual release or designate a preview as the
+latest stable release.
 
 Download the published archive anonymously, verify the checksum, unpack it into a new
 directory, and check `--version`, file permissions, shell syntax, and a controlled scan.

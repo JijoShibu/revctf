@@ -61,6 +61,8 @@ jobs:
         run: bash tools/test-accuracy.sh
       - name: Check publication gates
         if: ${{ !cancelled() }}
-        run: python3 tools/test-release.py
+        run: |
+          python3 tools/test-release.py
+          python3 tools/test-publish.py
 
 # These jobs do not execute submitted challenges or replace real Kali/Ghidra/Docker tests.
