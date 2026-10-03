@@ -51,7 +51,7 @@ _managed_java() {
     if [[ $(wc -l < "$out.d" 2>/dev/null || echo 0) -gt $MANAGED_MAX_LINES ]]; then
         printf '\n(decompilation capped at %s lines)\n' "$MANAGED_MAX_LINES" >> "$out"
     fi
-    rm -f "$out.d"
+    mv -- "$out.d" "$RUN_OUTDIR/managed-full.txt"
 
     stage_record_exec "$name" "${cmd[*]}" "$rc"
     _managed_classify "$name" "$tool" "$rc"
@@ -78,7 +78,7 @@ _managed_dotnet() {
     printf '=== .NET decompilation (%s) ===\n\n' "$tool" > "$out"
     st_run_bounded "$ST_T_DECOMP" "$out.d" "$err" -- "${cmd[@]}" || rc=$?
     head -n "$MANAGED_MAX_LINES" "$out.d" 2>/dev/null | st_strip_ansi >> "$out"
-    rm -f "$out.d"
+    mv -- "$out.d" "$RUN_OUTDIR/managed-full.txt"
 
     stage_record_exec "$name" "${cmd[*]}" "$rc"
     _managed_classify "$name" "$tool" "$rc"

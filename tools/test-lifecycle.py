@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real Docker lifecycle tests, using only an owned, generated sleeping program.
 
-Requires the installed revctf dependencies and revctf-sandbox:1. No network access.
+Requires installed revctf dependencies and the current preview sandbox. No network access.
 All retained evidence is under a fresh temporary directory printed at startup.
 """
 import os

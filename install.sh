@@ -18,6 +18,8 @@ set -uo pipefail   # never `set -e` — see docs/CONTRIBUTING.md §2
 
 REVCTF_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX="${PREFIX:-/usr/local/bin}"
+# shellcheck source=dependencies/profile.sh
+source "$REVCTF_ROOT/dependencies/profile.sh"
 
 # --------------------------------------------------------------------------------------
 # Who are we installing FOR?
@@ -44,16 +46,15 @@ REVCTF_HOME="${REVCTF_HOME:-$INSTALL_HOME/.revctf}"
 # flare-floss cannot be pip-installed system-wide on modern Debian/Ubuntu — its `halo`
 # dependency dies with `AttributeError: install_layout` (docs/CONTRIBUTING.md §3). A venv is the
 # working route; uncompyle6 rides along in the same venv as the Python-decompile fallback.
-FLOSS_VENV="${FLOSS_VENV:-/opt/floss-venv}"
+FLOSS_VENV="${FLOSS_VENV:-/opt/revctf-tools-2.0.0-rc.1}"
 # Must match lib/sandbox.sh's default, or install.sh builds an image revctf never looks for.
-SBX_IMAGE="${REVCTF_SBX_IMAGE:-revctf-sandbox:1}"
-PYINSTX_URL="${PYINSTX_URL:-https://raw.githubusercontent.com/extremecoders-re/pyinstxtractor/master/pyinstxtractor.py}"
+SBX_IMAGE="${REVCTF_SBX_IMAGE:-revctf-sandbox:2.0.0-rc.1}"
+PYINSTX_URL="https://raw.githubusercontent.com/extremecoders-re/pyinstxtractor/$PYINSTX_COMMIT/pyinstxtractor.py"
 
 # Ghidra is not in apt. Resolved from the GitHub releases API, with a fallback to a build
 # already verified against this codebase — the release API returned 403 in one build
 # sandbox while the release-asset host worked, so both paths are kept.
 GHIDRA_DIR="${GHIDRA_DIR:-/opt}"
-GHIDRA_FALLBACK="${GHIDRA_FALLBACK:-11.2.1_PUBLIC_20241105}"
 
 # BOOTSTRAP — what install.sh's OWN steps need before they can run.
 #
@@ -135,58 +136,30 @@ run_as_install_user() {
     fi
 }
 
-# --------------------------------------------------------------------------------------
-# pyinstxtractor (M6)
-# --------------------------------------------------------------------------------------
-# PyInstaller-packed challenges are common and revctf could not unwrap a single one:
-# lib/stage_triage.sh looks for `pyinstxtractor` and gives up when it is absent, which is
-# always, because it is packaged nowhere — not apt, not pip.
-#
-# WHY IT IS FETCHED HERE RATHER THAN COMMITTED INTO THE REPO. It is GPLv3; revctf is MIT.
-#
-# This comment used to say vendoring would become "strictly better" once revctf adopted a
-# licence. That was written before there was one, and it is now backwards: MIT is precisely
-# the licence that makes vendoring worse, not better. GPLv3 permits verbatim
-# redistribution, so committing the file is *allowed* — but a repo whose LICENSE says MIT
-# while a GPLv3 file sits in `scripts/` misleads everyone who redistributes it, and fixing
-# that honestly costs a THIRD-PARTY notice, the full GPLv3 text and an exception clause in
-# LICENSE. Reviewed and decided again on 2026-09-01: keep fetching.
-#
-# revctf runs it as a separate process, so nothing here links against it — there is no
-# copyleft reach into revctf's own code either way.
-#
-# The reliability objection to fetching was tested rather than argued: two from-zero
-# container installs both fetched it cleanly, and the `grep 'PyInstaller Extractor'` guard
-# below means a captive portal, a 404 page or a rate-limit body — all of which arrive as a
-# perfectly successful 200 — fail loudly into the summary instead of installing HTML with a
-# `.py` extension. The failure mode this step is accused of does not exist.
+# Download separately to preserve upstream's GPLv3 licence and attribution.
+verify_download() {
+    local file="$1" expected="$2" actual
+    [[ $expected =~ ^[0-9a-f]{64}$ && -f $file && ! -L $file ]] || return 1
+    actual=$(sha256sum -- "$file") || return 1
+    [[ ${actual%% *} == "$expected" ]]
+}
+
 step_pyinstxtractor() {
-    say "pyinstxtractor (unwraps PyInstaller executables; packaged nowhere, so fetched)"
-    local dest="$REVCTF_ROOT/scripts/pyinstxtractor.py"
-    if [[ -s $dest ]]; then
-        ok "already present at $dest"
-        return 0
+    say "PyInstaller extractor (pinned upstream source)"
+    local dest="$REVCTF_ROOT/scripts/pyinstxtractor.py" tmp
+    if verify_download "$dest" "$PYINSTX_SHA256"; then
+        ok "verified $dest"; return 0
     fi
-    if ! command -v curl >/dev/null 2>&1; then
-        warn "curl is missing; PyInstaller targets will fail to unwrap"
-        FAILED+=("pyinstxtractor (curl missing)")
-        return 0
-    fi
-    if curl -fsSL --retry 2 -o "$dest.part" "$PYINSTX_URL" 2>/dev/null \
-       && head -n 40 "$dest.part" | grep -q 'PyInstaller Extractor'; then
-        # The grep is not decoration. A captive portal, a 404 page or a rate-limit body all
-        # arrive as a perfectly successful 200 with HTML in it, and a `.py` full of HTML
-        # fails at triage time with a SyntaxError that points at revctf rather than at the
-        # download.
-        mv -f "$dest.part" "$dest" && chmod 0755 "$dest" 2>/dev/null
-        chown "$INSTALL_USER" "$dest" 2>/dev/null
-        ok "installed $dest"
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/revctf-extractor.XXXXXX") || return 1
+    if curl -fsSL --retry 2 --connect-timeout 20 --max-time 120 \
+            -o "$tmp/extractor.py" "$PYINSTX_URL" &&
+            verify_download "$tmp/extractor.py" "$PYINSTX_SHA256" &&
+            install -m 0755 "$tmp/extractor.py" "$dest"; then
+        ok "installed verified extractor $PYINSTX_COMMIT"
     else
-        rm -f "$dest.part"
-        warn "could not fetch pyinstxtractor; PyInstaller targets will fail to unwrap with an install hint"
-        FAILED+=("pyinstxtractor download")
+        FAILED+=("extractor download, checksum or installation failed")
     fi
-    return 0
+    rm -rf -- "$tmp"
 }
 
 # --------------------------------------------------------------------------------------
@@ -233,11 +206,14 @@ step_sandbox() {
         printf '        ltrace and strace will skip until this is fixed; --no-sandbox opts out\n'
         return 0
     fi
-    if docker image inspect "$SBX_IMAGE" >/dev/null 2>&1; then
+    local recipe existing
+    recipe=$(sha256sum "$REVCTF_ROOT/docker/Dockerfile"); recipe=${recipe%% *}
+    existing=$(docker image inspect --format '{{index .Config.Labels "revctf.recipe"}}' "$SBX_IMAGE" 2>/dev/null)
+    if [[ $existing == "$recipe" ]]; then
         ok "$SBX_IMAGE already built"
         return 0
     fi
-    if docker build -q -t "$SBX_IMAGE" "$REVCTF_ROOT/docker" >/dev/null 2>&1; then
+    if docker build -q --label "revctf.recipe=$recipe" -t "$SBX_IMAGE" "$REVCTF_ROOT/docker" >/dev/null 2>&1; then
         ok "built $SBX_IMAGE"
     else
         warn "docker build failed; re-run manually to see why: docker build -t $SBX_IMAGE $REVCTF_ROOT/docker"
@@ -283,42 +259,44 @@ step_apt() {
 }
 
 step_floss() {
-    say "FLOSS + uncompyle6 (in a venv — pip install --break-system-packages is known to fail)"
-    if command -v floss >/dev/null 2>&1; then
-        ok "floss already on PATH"
-    else
-        if ! run_owner "$FLOSS_VENV" python3 -m venv "$FLOSS_VENV"; then
-            FAILED+=("floss venv")
-        else
-            run_owner "$FLOSS_VENV" "$FLOSS_VENV/bin/pip" install -q --upgrade pip || warn "pip upgrade failed; continuing"
-            if run_owner "$FLOSS_VENV" "$FLOSS_VENV/bin/pip" install -q flare-floss; then
-                # The `ln` return value used to be ignored, so a failed symlink still
-                # printed "ok floss installed and linked" — caught by the rootless
-                # rehearsal, where $PREFIX did not exist yet. Reporting success for work
-                # that did not happen is the defect class this project keeps finding.
-                if link_into_prefix "$FLOSS_VENV/bin/floss" floss; then
-                    ok "floss installed and linked at $PREFIX/floss"
-                else
-                    FAILED+=("floss symlink into $PREFIX")
-                fi
-            else
-                FAILED+=("flare-floss install")
-            fi
-        fi
+    say "FLOSS and Python bytecode tools (isolated, pinned versions)"
+    if ! run_owner "$FLOSS_VENV" python3 -m venv "$FLOSS_VENV" ||
+       ! run_owner "$FLOSS_VENV" "$FLOSS_VENV/bin/python" -m pip install \
+           --disable-pip-version-check "flare-floss==$FLOSS_VERSION" "uncompyle6==$UNCOMPYLE6_VERSION" ||
+       ! run_owner "$FLOSS_VENV" "$FLOSS_VENV/bin/python" -m pip check; then
+        FAILED+=("isolated Python tool installation"); return 1
     fi
-
-    if command -v uncompyle6 >/dev/null 2>&1; then
-        ok "uncompyle6 already on PATH"
-    elif [[ -x $FLOSS_VENV/bin/pip ]]; then
-        if run_owner "$FLOSS_VENV" "$FLOSS_VENV/bin/pip" install -q uncompyle6 2>/dev/null \
-           && link_into_prefix "$FLOSS_VENV/bin/uncompyle6" uncompyle6; then
-            ok "uncompyle6 installed and linked at $PREFIX/uncompyle6"
+    local tool
+    for tool in floss uncompyle6; do
+        if link_into_prefix "$FLOSS_VENV/bin/$tool" "$tool"; then
+            ok "linked tested version of $tool"
         else
-            # Soft: scripts/pyc_disasm.py is the always-available fallback for stage 12.
-            warn "uncompyle6 unavailable (scripts/pyc_disasm.py is the fallback)"
+            FAILED+=("$tool command link into $PREFIX")
         fi
-    fi
+    done
+    # shellcheck disable=SC2016  # $1 is the child shell's argument.
+    run_owner "$FLOSS_VENV" bash -c '"$1/bin/python" -m pip freeze > "$1/installed-versions.txt"' bash "$FLOSS_VENV"
 }
+
+_install_ghidra_archive() (
+    # A private directory on the destination filesystem lets the final move be atomic.
+    local home="$1" tmp url
+    run_owner "$GHIDRA_DIR" mkdir -p -- "$GHIDRA_DIR" || exit 1
+    tmp=$(run_owner "$GHIDRA_DIR" mktemp -d "$GHIDRA_DIR/.revctf-ghidra.XXXXXX") || exit 1
+    trap 'run_owner "$GHIDRA_DIR" rm -rf -- "$tmp"' EXIT
+    url="https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_RELEASE%%_*}_build/ghidra_${GHIDRA_RELEASE}.zip"
+    run_owner "$GHIDRA_DIR" curl -fsSL --retry 3 --retry-all-errors \
+        --connect-timeout 20 --max-time 600 -o "$tmp/ghidra.zip" "$url" || exit 1
+    local actual
+    actual=$(run_owner "$GHIDRA_DIR" sha256sum -- "$tmp/ghidra.zip") || exit 1
+    [[ ${actual%% *} == "$GHIDRA_SHA256" ]] || { warn 'Ghidra checksum mismatch'; exit 1; }
+    run_owner "$GHIDRA_DIR" unzip -q "$tmp/ghidra.zip" -d "$tmp/extracted" || exit 1
+    local extracted="$tmp/extracted/ghidra_${GHIDRA_RELEASE%%_PUBLIC_*}_PUBLIC"
+    run_owner "$GHIDRA_DIR" test -x "$extracted/support/analyzeHeadless" || exit 1
+    [[ ! -e $home ]] || exit 1
+    printf '%s\n' "$GHIDRA_SHA256" | run_owner "$GHIDRA_DIR" tee "$extracted/.revctf-archive.sha256" >/dev/null || exit 1
+    run_owner "$GHIDRA_DIR" mv -T -- "$extracted" "$home"
+)
 
 step_ghidra() {
     say "Ghidra"
@@ -332,84 +310,26 @@ step_ghidra() {
         FAILED+=("Ghidra Java 21 development kit — install openjdk-21-jdk-headless and re-run install.sh")
         return 1
     fi
-    # ALREADY INSTALLED IS NOT A REASON TO RETURN.
-    #
-    # This used to `return 0` here, which made the GHIDRA_HOME sync at the end of this
-    # function unreachable on every run after the first. Combined with the append guard
-    # below only firing when NO GHIDRA_HOME line existed, a wrong value written once could
-    # never be corrected by any later run — observed: a line still pointing at a 12.1.3
-    # install that had been replaced, which had to be fixed by hand. Harmless only while
-    # the stale path does not resolve (D12 warns and falls back to PATH); the moment such a
-    # path exists again it would silently override a deliberately pinned install.
-    local home=""
-    if command -v analyzeHeadless >/dev/null 2>&1 || compgen -G "$GHIDRA_DIR/ghidra_*" >/dev/null 2>&1; then
-        home="$(_ghidra_install_root)"
-        if [[ -n $home ]]; then
-            ok "already installed at $home"
-            _sync_ghidra_home "$home"
-        else
-            ok "already installed"
+    if [[ ${GHIDRA_LATEST:-0} != 0 ]]; then
+        FAILED+=("GHIDRA_LATEST is unsupported: update the reviewed dependency profile instead")
+        return 1
+    fi
+    local home="$GHIDRA_DIR/ghidra_${GHIDRA_RELEASE%%_PUBLIC_*}_PUBLIC"
+    if [[ -e $home ]]; then
+        if [[ ! -x $home/support/analyzeHeadless ]] ||
+                ! grep -qx "$GHIDRA_SHA256" "$home/.revctf-archive.sha256" 2>/dev/null; then
+            FAILED+=("unverified existing Ghidra at $home; preserve it and select a fresh GHIDRA_DIR")
+            return 1
         fi
-        return 0
-    fi
-    if ! command -v curl >/dev/null 2>&1; then
-        FAILED+=("ghidra (curl missing)")
+    elif ! _install_ghidra_archive "$home"; then
+        FAILED+=("verified Ghidra installation failed; previous tools were preserved")
         return 1
     fi
-
-    # INSTALL THE PINNED, VERIFIED BUILD BY DEFAULT — NOT "latest".
-    #
-    # The first version of this step asked the releases API for `latest` and used the pinned
-    # build only as a fallback. On 2026-08-20 that installed Ghidra 12.1.3, and the result
-    # was a silently broken decompile stage: 12.x ships PyGhidra with no Jython, PyGhidra is
-    # not enabled under plain `analyzeHeadless`, and the post-script died with "Ghidra was
-    # not started with PyGhidra" while analyzeHeadless still exited 0. The corpus crackme's
-    # password — which 11.2.1 recovers — was simply not found, and nothing said why.
-    #
-    # An installer that silently upgrades the one dependency whose behaviour the whole
-    # project is calibrated against is the version-decay trap this codebase has already been
-    # bitten by twice (upx's PIE bug, radare2 finding `main` in stripped binaries — see
-    # docs/CONTRIBUTING.md §3). So: pin by default, and make "newest" an explicit, informed choice.
-    local url=""
-    if [[ ${GHIDRA_LATEST:-0} -eq 1 ]]; then
-        warn "GHIDRA_LATEST=1: installing the newest release. revctf is verified against ${GHIDRA_FALLBACK%%_*}; newer majors may change the post-script runtime."
-        url="$(curl -fsSL https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/latest 2>/dev/null \
-               | grep -oE 'https://[^"]+ghidra_[0-9.]+_PUBLIC_[0-9]+\.zip' | head -1)"
-        [[ -z $url ]] && warn "release API gave nothing; using the pinned build instead"
+    if ! link_into_prefix "$home/support/analyzeHeadless" analyzeHeadless; then
+        FAILED+=("analyzeHeadless command link into $PREFIX"); return 1
     fi
-    if [[ -z $url ]]; then
-        url="https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_FALLBACK%%_*}_build/ghidra_${GHIDRA_FALLBACK}.zip"
-    fi
-
-    local zip="/tmp/ghidra-install.$$.zip"
-    printf '    downloading %s\n' "$url"
-    if ! curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 600 -o "$zip" "$url"; then
-        FAILED+=("ghidra download — install manually and set GHIDRA_HOME")
-        rm -f "$zip"
-        return 1
-    fi
-    if ! run_owner "$GHIDRA_DIR" unzip -q -o "$zip" -d "$GHIDRA_DIR"; then
-        FAILED+=("ghidra extract")
-        rm -f "$zip"
-        return 1
-    fi
-    rm -f "$zip"
-
-    home="$(compgen -G "$GHIDRA_DIR/ghidra_*" | head -1)"
-    if [[ -z $home ]]; then
-        FAILED+=("ghidra extract — no ghidra_* directory found under $GHIDRA_DIR")
-        return 1
-    fi
-    if link_into_prefix "$home/support/analyzeHeadless" analyzeHeadless; then
-        ok "installed at $home, linked at $PREFIX/analyzeHeadless"
-    else
-        FAILED+=("analyzeHeadless symlink into $PREFIX")
-    fi
-
-    # analyzeHeadless is found via PATH -> GHIDRA_HOME -> /opt/ghidra* (pf_detect_ghidra_
-    # runtime, lib/preflight.sh). The symlink covers PATH; GHIDRA_HOME is a convenience for
-    # anything that reads the variable directly.
-    _sync_ghidra_home "$home"
+    _sync_ghidra_home "$home" || { FAILED+=("GHIDRA_HOME configuration"); return 1; }
+    ok "Ghidra ${GHIDRA_RELEASE%%_*} at $home"
 }
 
 # _ghidra_install_root — the Ghidra directory an existing install lives in, or empty.
@@ -433,35 +353,24 @@ _ghidra_install_root() {
 # since D12 now makes GHIDRA_HOME *win* over PATH, a stale line is no longer cosmetic: it
 # would silently redirect every scan to whatever install it names.
 _sync_ghidra_home() {
-    local root="$1" rc="$INSTALL_HOME/.bashrc" current=""
-    [[ -n $root ]] || return 0
-    [[ -f $rc ]] || return 0
-
-    current="$(sed -n 's/^[[:space:]]*export[[:space:]]\+GHIDRA_HOME=//p' "$rc" 2>/dev/null | tail -1)"
-    current="${current%\"}"; current="${current#\"}"
-
-    if [[ $current == "$root" ]]; then
-        ok "GHIDRA_HOME in $rc already points at $root"
-        return 0
-    fi
-
-    if [[ -n $current ]]; then
-        # Rewrite in place, as the invoking user so the file does not become root-owned.
-        if run_as_install_user sed -i "s|^[[:space:]]*export[[:space:]]\+GHIDRA_HOME=.*|export GHIDRA_HOME=$root|" "$rc" 2>/dev/null; then
-            ok "GHIDRA_HOME in $rc updated: $current -> $root"
-        else
-            warn "$rc still exports GHIDRA_HOME=$current, which is stale. Fix it by hand: export GHIDRA_HOME=$root"
-        fi
-        return 0
-    fi
-
-    if printf '\nexport GHIDRA_HOME=%s\n' "$root" \
-         | run_as_install_user tee -a "$rc" >/dev/null 2>&1; then
-        ok "GHIDRA_HOME appended to $rc (new shells only — export it now to use this one)"
-    else
-        warn "could not append GHIDRA_HOME to $rc; set it yourself: export GHIDRA_HOME=$root"
-    fi
-    return 0
+    local root="$1" rc="$INSTALL_HOME/.bashrc"
+    [[ -n $root && -f $rc ]] || return 0
+    # shlex quoting handles spaces, quotes and shell metacharacters in custom paths.
+    run_as_install_user python3 - "$rc" "$root" <<'PY'
+from pathlib import Path
+import re
+import shlex
+import sys
+path = Path(sys.argv[1])
+line = 'export GHIDRA_HOME=' + shlex.quote(sys.argv[2])
+text = path.read_text()
+pattern = r'^[ \t]*export[ \t]+GHIDRA_HOME=.*$'
+if re.search(pattern, text, flags=re.MULTILINE):
+    text = re.sub(pattern, lambda match: line, text, flags=re.MULTILINE)
+else:
+    text += '\n' + line + '\n'
+path.write_text(text)
+PY
 }
 
 main() {
@@ -494,6 +403,7 @@ main() {
         ok "linked $PREFIX/revctf"
     else
         warn "could not link into $PREFIX — add $REVCTF_ROOT to your PATH instead"
+        FAILED+=("revctf command link into $PREFIX")
     fi
 
     say "Summary"

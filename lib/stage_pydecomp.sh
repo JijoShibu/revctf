@@ -45,11 +45,12 @@ stage_pydecomp() {
         fi
     } > "$out"
 
-    local f n=0 any=0 rc=0 last_rc=0
+    local f n=0 any=0 rc=0 last_rc=0 incomplete=0 capture errors
     for f in "${targets[@]}"; do
-        [[ -n $f && -f $f ]] || continue
+        [[ -n $f && -f $f ]] || { incomplete=1; continue; }
         n=$(( n + 1 ))
         [[ $n -gt $PYDECOMP_MAX_FILES ]] && {
+            incomplete=1; n=$((n - 1))
             printf '\n(capped at %s files)\n' "$PYDECOMP_MAX_FILES" >> "$out"; break; }
 
         printf '\n/* ---- %s ---- */\n' "$(basename "$f")" >> "$out"
@@ -67,23 +68,30 @@ stage_pydecomp() {
         # ANSI stripping moves to after the run: st_run_bounded needs a real file to redirect
         # into, and a pipe would put the tool on the far side of the bound anyway.
         rc=0
+        capture="$RUN_OUTDIR/pydecomp-$n.txt"
+        errors="$RUN_OUTDIR/pydecomp-$n.stderr"
         if [[ -n $tool ]]; then
-            st_run_bounded "$ST_T_DECOMP" "$out.d" "$err" -- "$tool" "$f" || rc=$?
+            st_run_bounded "$ST_T_DECOMP" "$capture" "$errors" -- "$tool" "$f" || rc=$?
         else
             # NOT `python3 -m dis`: dis treats its argument as source, so a .pyc fails
             # with "source code string cannot contain null bytes". scripts/pyc_disasm.py
             # unmarshals the code object first.
-            st_run_bounded "$ST_T_DECOMP" "$out.d" "$err" \
+            st_run_bounded "$ST_T_DECOMP" "$capture" "$errors" \
                 -- python3 "$REVCTF_SCRIPTS/pyc_disasm.py" "$f" || rc=$?
         fi
         [[ $rc -eq 0 ]] && any=1
-        [[ $rc -ne 0 ]] && last_rc=$rc
-        st_strip_ansi < "$out.d" >> "$out" 2>/dev/null
-        rm -f "$out.d"
+        [[ $rc -ne 0 ]] && { last_rc=$rc; incomplete=1; }
+        [[ -n $ST_LIMIT_NOTE ]] && incomplete=1
+        printf 'File %s: exit %s; capture %s\n' "$f" "$rc" "$capture" >> "$err"
+        cat -- "$errors" >> "$err"
+        head -n 6000 "$capture" | st_strip_ansi >> "$out"
+        printf '\nFull capture: %s\n' "$capture" >> "$out"
     done
 
-    stage_record_exec "$name" "${tool:-pyc_disasm.py} <${n} bytecode file(s)>" 0
-    if [[ $any -eq 1 ]]; then
+    stage_record_exec "$name" "${tool:-pyc_disasm.py} <${n} bytecode file(s)>" "$last_rc"
+    if [[ $incomplete -eq 1 ]]; then
+        stage_set_status "$name" partial "some bytecode files failed, were missing or exceeded a limit; individual captures preserved"
+    elif [[ $any -eq 1 ]]; then
         stage_write "$name" ok
         stage_set_status "$name" ok "${tool:-bytecode listing} over $n file(s)"
     elif [[ $last_rc -eq 124 || $last_rc -eq 137 ]]; then

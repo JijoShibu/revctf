@@ -432,6 +432,12 @@ preflight_run() {
     else
         pf_find_ghidra || return 1
         pf_detect_ghidra_version
+        if [[ ${PF_VERSION[ghidra]:-unknown} != 12.1.4 ]]; then
+            printf 'revctf: this release requires Ghidra 12.1.4; selected %s at %s.\n' \
+                "${PF_VERSION[ghidra]:-unknown}" "$PF_GHIDRA_HEADLESS" >&2
+            printf 'Run install.sh and update GHIDRA_HOME, or select --skip-ghidra explicitly.\n' >&2
+            return 1
+        fi
     fi
 
     pf_detect_binwalk_version

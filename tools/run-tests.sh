@@ -1788,7 +1788,7 @@ test_m6() {
           timeout 25 docker start --attach "$SBX_NAME" )
     }
 
-    if ! timeout 25 docker run --rm --network=bridge revctf-sandbox:1 \
+    if ! timeout 25 docker run --rm --network=bridge "$SBX_IMAGE" \
             bash -c "$probe" >/dev/null 2>&1; then
         skip "no network egress from the sandbox" \
             "this host cannot reach 1.1.1.1:53 even WITH networking, so the negative result would prove nothing"

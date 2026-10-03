@@ -26,7 +26,6 @@ yields the ciphertext, because both pass the buffer through a rotate before prin
 caller therefore also runs the result through ROT47, which recovers both flags exactly.
 """
 import re
-import pathlib
 import sys
 
 # Any 0x literal up to 8 bytes. Length is what separates signal from noise, but it cannot
@@ -44,7 +43,8 @@ IMM_START_DIGITS = 8
 
 # A run is only worth emitting if it could plausibly hold a wrapped flag.
 MIN_RUN = 8
-MAX_RUNS = 2000
+MAX_LINE = 65536
+MAX_RUN = 4096
 
 
 def decode(hexstr):
@@ -57,7 +57,7 @@ def decode(hexstr):
         return ''
     # NULs are padding in a short trailing store, not a terminator to respect -- the flag
     # can continue in the next immediate.
-    raw = raw.replace(b'\x00', b'')
+    raw = raw.rstrip(b'\x00')
     if not raw:
         return ''
     # Reject anything not printable: a genuine stack string is text by construction, and
@@ -68,44 +68,52 @@ def decode(hexstr):
 
 
 def main():
-    runs = []
-    current = []
-    # stdin is the normal route (the sweep pipes a capture in); an optional path argument
-    # exists so a caller that already has the file -- notably the harness, which cannot
-    # redirect through its assert helper -- does not have to shell out to do it.
-    if len(sys.argv) > 1:
-        raw = pathlib.Path(sys.argv[1]).read_bytes()
-    else:
-        raw = sys.stdin.buffer.read()
-    data = raw.decode('utf-8', 'replace')
-    for line in data.splitlines():
+    current = ''
+    partial = False
+    source = open(sys.argv[1], 'rb') if len(sys.argv) > 1 else sys.stdin.buffer
+
+    def emit(run):
+        if len(run) >= MIN_RUN:
+            print(run, flush=True)
+
+    while True:
+        raw = source.readline(MAX_LINE + 1)
+        if not raw:
+            break
+        if len(raw) > MAX_LINE:
+            emit(current)
+            current = ''
+            partial = True
+            while raw and not raw.endswith(b'\n'):
+                raw = source.readline(MAX_LINE + 1)
+            continue
+        line = raw.decode('utf-8', 'replace')
         found = IMM.findall(line)
         if not found:
-            # A line with no immediate ends the run: consecutive stores are what make a
-            # stack string, and joining across unrelated code would splice noise together.
-            if current:
-                runs.append(''.join(current))
-                current = []
+            emit(current)
+            current = ''
             continue
         for h in found:
             if len(h) < IMM_START_DIGITS and not current:
                 continue          # too short to begin a run
             piece = decode(h)
             if piece:
-                current.append(piece)
+                if len(current) + len(piece) > MAX_RUN:
+                    emit(current)
+                    current = ''
+                    partial = True
+                current += piece
             elif current:
-                runs.append(''.join(current))
-                current = []
-        if len(runs) >= MAX_RUNS:
-            break
-    if current:
-        runs.append(''.join(current))
-
-    out = sys.stdout
-    for r in runs[:MAX_RUNS]:
-        if len(r) >= MIN_RUN:
-            out.write(r + '\n')
+                emit(current)
+                current = ''
+    emit(current)
+    if source is not sys.stdin.buffer:
+        source.close()
+    if partial:
+        print('Stack-string search incomplete: an input line or reconstructed run exceeded its limit.', file=sys.stderr)
+        return 2
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

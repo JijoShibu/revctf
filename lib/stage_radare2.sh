@@ -63,7 +63,7 @@ iz
 ?e === REVCTF-SECTION Entry points ===
 ie"
 
-    local raw="$RUN_WORKDIR/r2.raw"
+    local raw="$RUN_OUTDIR/radare2-analysis.txt"
     st_run_bounded "$ST_T_RADARE2" "$raw" "$err" \
         -- r2 -N -q -e scr.color=0 -c "$script" "$RUN_TARGET" || rc=$?
 
@@ -75,7 +75,7 @@ ie"
             printf 'is expensive and rarely informative. objdump above has the raw\n'
             printf 'disassembly, and binwalk has the structural view.\n'
         } > "$out"
-        cat "$raw" >> "$out" 2>/dev/null; rm -f "$raw"
+        cat "$raw" >> "$out" 2>/dev/null
         stage_record_exec "$name" "r2 -N -q -c '$analysis; ...' $RUN_TARGET" "$rc"
         # Names the real cause rather than asserting the time bound: since M5 a 137 here is
         # most likely the tier's radare2 ceiling, and reporting that as a timeout sends the
@@ -99,7 +99,7 @@ ie"
 
     # Second session, only for the disassembly itself. Re-analysing is unavoidable here
     # (r2 sessions do not persist), but it is one extra pass rather than five.
-    local dis="$RUN_WORKDIR/r2.dis"
+    local dis="$RUN_OUTDIR/radare2-disassembly.txt"
     st_run_bounded "$ST_T_RADARE2" "$dis" "$err.dis" \
         -- r2 -N -q -e scr.color=0 \
              -c "$analysis; s $target_sym; axt; ?e === REVCTF-SECTION Disassembly ===; pdf" \
@@ -117,7 +117,7 @@ ie"
         head -n "$R2_DISASM_MAX" "$dis" 2>/dev/null | st_strip_ansi
         printf '\n(disassembly capped at %s lines)\n' "$R2_DISASM_MAX"
     } > "$out"
-    rm -f "$raw" "$dis"
+    printf '\nFull captures: %s and %s\n' "$raw" "$dis" >> "$out"
 
     stage_record_exec "$name" "r2 -N -q -c '$analysis; s $target_sym; pdf' $RUN_TARGET" "$rc"
     if [[ $rc -eq 124 || $rc -eq 137 ]]; then

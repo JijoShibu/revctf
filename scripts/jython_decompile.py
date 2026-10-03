@@ -28,7 +28,7 @@ from ghidra.app.decompiler import DecompInterface       # noqa: F821
 from ghidra.util.task import ConsoleTaskMonitor         # noqa: F821
 
 MAX_FUNCS = 200
-MAX_LINES_PER_FUNC = 400
+# Full function output is kept; the command runner bounds files and elapsed time.
 
 # Ghidra injects these into the script's namespace.
 program = currentProgram                                # noqa: F821
@@ -83,6 +83,8 @@ try:
                 interesting.append(f)
             elif not n.startswith(("_", "frame_dummy", "register_tm", "deregister")):
                 rest.append(f)
+        omitted = len(funcs) - len(interesting) - len(rest)
+        emit("Coverage: %d functions selected, %d runtime/helper functions excluded" % (len(interesting) + len(rest), omitted))
         ordered = interesting + rest
 
         decomp = DecompInterface()
@@ -97,23 +99,21 @@ try:
         shown = 0
         for f in ordered:
             if shown >= MAX_FUNCS:
-                emit("... decompilation capped at %d functions" % MAX_FUNCS)
+                emit("REVCTF-PARTIAL: decompilation capped at %d functions" % MAX_FUNCS)
                 break
             try:
                 res = decomp.decompileFunction(f, 60, monitor)
                 if res is None or not res.decompileCompleted():
-                    emit("/* %s: decompilation failed */" % f.getName())
+                    emit("REVCTF-PARTIAL: %s: decompilation failed" % f.getName())
                     continue
                 code = res.getDecompiledFunction().getC()
-                lines = code.split("\n")
-                if len(lines) > MAX_LINES_PER_FUNC:
-                    lines = lines[:MAX_LINES_PER_FUNC] + ["/* ... truncated ... */"]
+
                 emit("/* ---- %s @ %s ---- */" % (f.getName(), f.getEntryPoint()))
-                emit("\n".join(lines))
+                emit(code)
                 emit("")
                 shown += 1
             except Exception:
-                emit("/* %s: %s */" % (f.getName(), sys.exc_info()[1]))
+                emit("REVCTF-PARTIAL: %s: %s" % (f.getName(), sys.exc_info()[1]))
         decomp.dispose()
 
 except Exception:
