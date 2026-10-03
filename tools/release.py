@@ -72,7 +72,7 @@ def check_stable(record, releases, now):
     published = dt.datetime.fromisoformat(preview['published_at'].replace('Z', '+00:00'))
     if now - published < dt.timedelta(days=7):
         raise ValueError('The latest preview has not been available for seven days')
-    report = record.get('independent_test', {})
+    report = record.get('independent_test') or {}
     if (report.get('version') != preview['tag_name'][1:] or report.get('result') != 'passed' or
             report.get('maintainer_reviewed') is not True or not report.get('issue_number') or
             report.get('tester', '').lower() in ('', 'jijoshibu')):

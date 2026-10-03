@@ -57,8 +57,10 @@ jobs:
       - name: Check Linux resource handling
         run: bash tools/test-resources.sh
       - name: Check candidate accuracy and preserved evidence
+        if: ${{ !cancelled() }}
         run: bash tools/test-accuracy.sh
       - name: Check publication gates
+        if: ${{ !cancelled() }}
         run: python3 tools/test-release.py
 
 # These jobs do not execute submitted challenges or replace real Kali/Ghidra/Docker tests.
