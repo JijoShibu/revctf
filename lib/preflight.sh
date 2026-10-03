@@ -29,6 +29,8 @@ declare -g  PF_GHIDRA_SCRIPT_KIND=""   # pyghidra | jython
 declare -g  PF_BINWALK_MAJOR=""
 declare -g  PF_DISK_FREE_MB=0
 declare -g  PF_SYSTEMD_RUN_USABLE=0
+# shellcheck disable=SC2034  # consumed by lib/stage.sh
+declare -g  PF_SYSTEMD_RUN_MODE="none"
 declare -g  PF_NOTICES=""              # newline-joined notes for the report
 
 PF_MIN_DISK_MB="${PF_MIN_DISK_MB:-1024}"
@@ -392,16 +394,20 @@ pf_check_disk() {
 # memory bounding is best-effort (VSZ, not RSS) on this host.
 pf_check_systemd_run() {
     PF_SYSTEMD_RUN_USABLE=0
+    PF_SYSTEMD_RUN_MODE="none"
     command -v systemd-run >/dev/null 2>&1 || {
         pf_note "systemd-run not available; memory bounding falls back to 'ulimit -v' (bounds virtual size, not RSS)."
         return 0
     }
-    if timeout 10 systemd-run --user --scope --quiet \
-            -p MemoryMax=64M /bin/true >/dev/null 2>&1; then
+    if timeout 10 systemd-run --user --scope --quiet --collect \
+            -p MemoryMax=64M -p MemorySwapMax=0 -- /bin/true >/dev/null 2>&1; then
         PF_SYSTEMD_RUN_USABLE=1
-    elif timeout 10 systemd-run --scope --quiet \
-            -p MemoryMax=64M /bin/true >/dev/null 2>&1; then
+        PF_SYSTEMD_RUN_MODE="user"
+    elif timeout 10 systemd-run --scope --quiet --collect \
+            -p MemoryMax=64M -p MemorySwapMax=0 -- /bin/true >/dev/null 2>&1; then
         PF_SYSTEMD_RUN_USABLE=1
+        # shellcheck disable=SC2034  # consumed by lib/stage.sh
+        PF_SYSTEMD_RUN_MODE="system"
     else
         pf_note "systemd-run is present but unusable here; memory bounding falls back to 'ulimit -v' (bounds virtual size, not RSS)."
     fi
@@ -426,6 +432,12 @@ preflight_run() {
     else
         pf_find_ghidra || return 1
         pf_detect_ghidra_version
+        if [[ ${PF_VERSION[ghidra]:-unknown} != 12.1.4 ]]; then
+            printf 'revctf: this release requires Ghidra 12.1.4; selected %s at %s.\n' \
+                "${PF_VERSION[ghidra]:-unknown}" "$PF_GHIDRA_HEADLESS" >&2
+            printf 'Run install.sh and update GHIDRA_HOME, or select --skip-ghidra explicitly.\n' >&2
+            return 1
+        fi
     fi
 
     pf_detect_binwalk_version

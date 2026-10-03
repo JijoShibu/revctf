@@ -4,8 +4,49 @@
 `revctf` and a green harness — and catch this project's recurring defect, *things that look
 installed or tested but quietly do nothing*, before a release.
 
-**Deployment is `git clone` + `sudo ./install.sh`.** There is no CI, no package, no
-distribution channel, and nothing here should add one.
+**Deployment is `git clone` + `sudo ./install.sh`.** Basic GitHub checks now cover shell
+code and controlled regressions. They supplement the real installation and Kali checks
+below; they do not publish releases or replace integration testing.
+
+## Current preview procedure
+
+Use the exact commit proposed for 2.0.0-rc.1 and record its hash. Before publication,
+transfer a `git archive` of that commit into the disposable installation environment;
+after publication, fetch the exact tag anonymously. Do not test an unrelated `main`
+checkout and call it preview validation.
+
+Test at a real 4096 MB VM allocation and record Linux total RAM separately. Preserve
+the existing swap configuration and disclose it. Simulated tier values are branch tests,
+not proof of operation on a 2 GB VM. Run heavy analyses sequentially.
+
+For a fresh installation, use a disposable Kali container with no toolchain, no Docker
+socket mount and no privileged mode. Record the base image identity and absent tools,
+copy in the proposed source, run the installer online, and check the resulting tools.
+The documented missing-Docker warning is expected in this environment. Build and test
+the sandbox separately on the Kali VM using the candidate's Dockerfile.
+
+Generate a small native example with a known answer. After installation, disconnect the
+disposable container's network and scan that example. Verify the actual candidate output,
+report status and Ghidra results. A successful installer exit alone is insufficient.
+
+On the VM, run syntax and ShellCheck, `tools/check-release.py`, controlled reliability
+and resource tests, the corpus/native suites, real Docker lifecycle tests and actual
+Ghidra heap/process measurements. Retain stdout, stderr, exit codes and relevant captures.
+Run the interactive display checks on a real terminal or explicitly record them as skipped.
+
+Inspect tests that fail before changing expectations. Check known answers in the candidate
+section and completed Ghidra output; text elsewhere in a report does not prove recovery.
+Resource tests must observe file sizes, container absence and actual memory settings.
+
+Before leaving the VM, verify test challenges have stopped, preserve evidence, shut down
+normally, and restore 16384 MB. Record failed and skipped checks in the release validation
+report. Follow [RELEASING.md](RELEASING.md) for the review and publication gates.
+
+## Historical installation rehearsal
+
+The earlier procedure below records previous installation investigations. Its old tag
+names, dates and host-socket example are historical; use the current procedure above for
+the preview. Do not mount a Docker socket merely to repeat that old setup.
 
 **Golden rule.** Never trust an exit code. After every step check the *artifact the user
 keeps* — the tool on `PATH`, the file on disk, the flag in the report — not "the script
@@ -49,7 +90,7 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
 ```
 
 > **The socket mount gives the container root-equivalent control of the host daemon.** That
-> is why install.sh can build `revctf-sandbox:1` from inside. Run it only on a machine you
+> is why install.sh can build the current preview sandbox from inside. Run it only on a machine you
 > own, from a throwaway `--rm` container. Some agent sandboxes refuse this mount; if yours
 > does, run A-1 by hand and let A-2 carry the automated result.
 
@@ -94,14 +135,14 @@ for pkg in file:file binutils:objdump binwalk:binwalk ltrace:ltrace strace:strac
   command -v "$b" >/dev/null 2>&1 && echo "ok   $pkg" || echo "MISS $pkg"
 done
 command -v floss && floss --version            # must come from a venv, not system pip
-command -v analyzeHeadless; ls -d /opt/ghidra_*  # must be 11.2.1, never 11.3+ / 12.x
+command -v analyzeHeadless; ls -d /opt/ghidra_*  # selected release must be 12.1.4
 ls -l scripts/pyinstxtractor.py                # fetched, or PyInstaller unwrap is dead
 docker images | grep -i revctf                 # A-1 only: sandbox image built?
 revctf --version
 dpkg -l curl ca-certificates python3-venv      # the 2026-08-28 bootstrap fix
 ```
 
-**Gate A:** every core tool resolves; FLOSS runs from a venv; Ghidra is 11.2.1;
+**Gate A:** every core tool resolves; FLOSS runs from the preview venv; Ghidra is 12.1.4;
 `pyinstxtractor.py` exists; A-1 built the sandbox image; and A-2's missing-Docker behaviour
 is recorded exactly as observed.
 
@@ -191,8 +232,8 @@ all. A whole-report `grep picoCTF` passes with the scanner completely dead.
 **This is really a Ghidra-install test.** `found by: ghidra` is the point: the flag is a
 stack string, invisible to `strings` before or after unpacking, and FLOSS's stack-string
 extraction is PE-only. Nothing but the decompile pass reaches it. So `0 high` means Ghidra
-did not install, did not run, or installed as a 12.x build whose post-script fails while
-`analyzeHeadless` still exits 0 — precisely the silent failure the 11.2.1 pin avoids.
+did not install, did not run, or its post-script failed. The default Java script must
+finish, and its heap guard must verify the allowance. An exit code of zero alone is insufficient.
 Capture `ghidra.stderr` and `ls -d /opt/ghidra*`.
 
 Then the guarantees the report is supposed to carry:

@@ -11,8 +11,24 @@
 # the report is meant to be read.
 OBJDUMP_DISASM_LINES="${OBJDUMP_DISASM_LINES:-4000}"
 
+# Run each parser through the common limits and keep its real exit code. Truncate the
+# saved disassembly only after the command exits, so head cannot hide a parser failure.
+_objdump_part() {
+    local lines="$1"; shift
+    local rc=0 raw="$RUN_WORKDIR/binutils.raw" err="$RUN_WORKDIR/binutils.err"
+    st_run_bounded "$ST_T_LIGHT" "$raw" "$err" -- "$@" || rc=$?
+    cat "$err" >> "$(stage_err_path objdump)" 2>/dev/null
+    if [[ $lines -gt 0 ]]; then head -n "$lines" "$raw"; else cat "$raw"; fi
+    if [[ $rc -ne 0 ]]; then
+        printf '\n(command failed with exit %s; partial output kept)\n' "$rc"
+        stage_record_exec objdump "$*" "$rc"
+    fi
+    rm -f "$raw" "$err"
+    return "$rc"
+}
+
 stage_objdump() {
-    local name="objdump" out err
+    local name="objdump" out err rc=0
     out="$(stage_out_path "$name")"
     err="$(stage_err_path "$name")"
     : > "$err"
@@ -26,36 +42,40 @@ stage_objdump() {
     {
         if [[ $RUN_FORMAT == elf ]]; then
             printf '=== ELF header (readelf -h) ===\n'
-            timeout -k 5 "$ST_T_LIGHT" readelf -h -- "$RUN_TARGET" 2>>"$err"
+            _objdump_part 0 readelf -h -- "$RUN_TARGET" || rc=$?
 
             printf '\n=== Sections (readelf -S) ===\n'
-            timeout -k 5 "$ST_T_LIGHT" readelf -S -W -- "$RUN_TARGET" 2>>"$err"
+            _objdump_part 0 readelf -S -W -- "$RUN_TARGET" || rc=$?
 
             printf '\n=== Dynamic symbols (readelf --dyn-syms) ===\n'
-            timeout -k 5 "$ST_T_LIGHT" readelf --dyn-syms -W -- "$RUN_TARGET" 2>>"$err"
+            _objdump_part 0 readelf --dyn-syms -W -- "$RUN_TARGET" || rc=$?
 
             printf '\n=== Relocations (readelf -r) ===\n'
-            timeout -k 5 "$ST_T_LIGHT" readelf -r -W -- "$RUN_TARGET" 2>>"$err"
+            _objdump_part 0 readelf -r -W -- "$RUN_TARGET" || rc=$?
         else
             printf '=== Headers (objdump -f) ===\n'
-            timeout -k 5 "$ST_T_LIGHT" objdump -f -- "$RUN_TARGET" 2>>"$err"
+            _objdump_part 0 objdump -f -- "$RUN_TARGET" || rc=$?
 
             printf '\n=== Section headers (objdump -h) ===\n'
-            timeout -k 5 "$ST_T_LIGHT" objdump -h -- "$RUN_TARGET" 2>>"$err"
+            _objdump_part 0 objdump -h -- "$RUN_TARGET" || rc=$?
         fi
 
         printf '\n=== Symbol table (objdump -t) ===\n'
-        timeout -k 5 "$ST_T_LIGHT" objdump -t -- "$RUN_TARGET" 2>>"$err" \
-            || printf '(no symbol table — the binary is probably stripped)\n'
+        _objdump_part 0 objdump -t -- "$RUN_TARGET" || rc=$?
 
         printf '\n=== Disassembly of executable sections (objdump -d, first %s lines) ===\n' \
             "$OBJDUMP_DISASM_LINES"
-        timeout -k 5 "$ST_T_LIGHT" objdump -d -- "$RUN_TARGET" 2>>"$err" \
-            | head -n "$OBJDUMP_DISASM_LINES"
+        _objdump_part "$OBJDUMP_DISASM_LINES" objdump -d -- "$RUN_TARGET" || rc=$?
         printf '\n(disassembly capped at %s lines; radare2 and Ghidra sections below go deeper)\n' \
             "$OBJDUMP_DISASM_LINES"
     } > "$out"
 
-    stage_write "$name"
+    if [[ $rc -eq 124 || $rc -eq 137 ]]; then
+        stage_set_status "$name" failed "$(st_explain_kill "$rc" "$ST_T_LIGHT")"
+    elif [[ $rc -ne 0 ]]; then
+        stage_set_status "$name" failed "one or more binutils commands failed (last failure: exit $rc; partial output kept)"
+    else
+        stage_write "$name"
+    fi
     return 0
 }

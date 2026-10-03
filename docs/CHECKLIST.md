@@ -1,4 +1,26 @@
-# revctf — Development Checklist
+# RevCTF release checklist
+
+The current release procedure is [RELEASING.md](RELEASING.md). Record actual results in
+[reliability-validation.md](reliability-validation.md); this checklist is a gate list,
+not a claim that checks have passed.
+
+- [x] Required behavior checks pass; failures, corrected reruns and skips are explained.
+- [x] A disposable clean Kali install produces working tools and known-answer scan results.
+- [x] Offline scanning is checked after installation.
+- [ ] GitHub basic checks pass on the exact commit selected for publication; recheck after merging.
+- [x] Version, author, README, changelog and preview notes agree for the proposed preview.
+- [ ] Rebuild and inspect the source archive and checksum from the final publication commit.
+  The earlier review archive is identified separately in its manifest.
+- [x] Test challenges have stopped; Kali is off with 16384 MB restored.
+- [ ] The maintainer explicitly authorizes merging and preview publication.
+- [ ] The published archive is independently downloaded and verified.
+- [ ] Stable release has seven days of preview availability, an independent Kali report,
+  resolved blockers, and separate maintainer approval.
+
+## Archived development checklist
+
+The original milestone record follows. Its counts and completed boxes describe the
+earlier development state and must not be used as current release evidence.
 
 Generated companion to `revctf-checklist.html`. Milestones refer to
 `revctf_executionmasterplan.md`; this file is the source of truth for status.

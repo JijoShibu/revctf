@@ -1,6 +1,6 @@
 # revctf
 
-**Created by Jijo Shibu** · MIT licence ([LICENSE](LICENSE)) · <https://github.com/JijoShibu/revctf>
+**Created by Jijo Shibu <jijoshibu@gmail.com>** · MIT licence ([LICENSE](LICENSE)) · <https://github.com/JijoShibu/revctf>
 
 Automated reverse-engineering CTF analysis pipeline for Kali Linux.
 
@@ -12,14 +12,12 @@ Docker they skip rather than running the binary on your machine.
 
 Directory targets are M7 and are not in this build — a directory exits 1 with a message.
 
-> **Status: v1.0 — M6 complete.** Single-file scanning works end to end: 14 stages
-> including Ghidra headless, flag detection with the base64/base32/hex/ROT13/ROT47 sweep
-> plus a stack-string decoder, a readable report, and three display modes. The RAM-tier
-> memory ceilings are *enforced* via `systemd-run --scope`, with a global RSS watchdog
-> behind them, and the two stages that execute the challenge binary run inside a
-> network-isolated Docker container **by default**.
-> Batch mode (M7), the prompt layer (M8) and the debug log (M9) are post-1.0.
-> Everything you need to use revctf is on this page. Maintainer documents are in `docs/`.
+> **Status: v2.0.0-rc.1 — preview preparation, not yet published.** This version improves
+> resource limits, cleanup, and the handling of incomplete results. It requires an
+> approximate 4 GB RAM check before scanning. All recovered candidates remain unverified.
+> Read the [preview notes](docs/releases/2.0.0-rc.1.md) and
+> [validation results](docs/reliability-validation.md) before upgrading.
+> Batch scanning, interactive solving, and persistent debug logging remain planned.
 
 ---
 
@@ -30,9 +28,17 @@ git clone https://github.com/JijoShibu/revctf.git && cd revctf
 sudo ./install.sh
 ```
 
-`install.sh` is not optional. It installs the complete toolchain and builds the sandbox
-container during a network window; at scan time a missing tool is a hard error rather than
-a silently thinner report. Run it while online.
+Run `install.sh` while online. It installs the required tools, including Java 21 for
+Ghidra, and builds the sandbox when Docker is available. Optional Java/.NET decompilers
+are attempted separately; an unavailable package is reported. A scan that needs a
+missing analysis tool reports the problem rather than claiming that step succeeded.
+
+The proposed 2.0 profile uses Ghidra 12.1.4 and verifies downloaded Ghidra and extractor
+files before installing them. Existing unrelated tools are preserved. See the
+[dependency profile](dependencies/README.md) for versions and remaining validation.
+The supported host is Kali Linux on Intel/AMD 64-bit computers; it analyzes Linux and
+Windows executables. A Windows host or automatic execution of Windows programs is not
+part of this release's support promise.
 
 It does **not** install Docker — Kali does not ship it, and pulling in a ~500MB daemon
 uninvited is not the installer's call. Without Docker the two stages that execute the target
@@ -42,6 +48,11 @@ install that placed every other tool correctly has not failed. Run
 
 This is the whole deployment path: clone, install, done. `docs/REHEARSAL.md` is the
 procedure for proving it from zero.
+
+For a published release, use its exact tag instead of following the development branch.
+The proposed `v2.0.0-rc.1` tag is not available until the preview is published. See
+[installation, upgrade and rollback](docs/RELEASING.md#install-upgrade-and-rollback)
+for the commands and the release checks.
 
 ## Usage
 
@@ -93,9 +104,21 @@ compete:
 
 ## Adapting to your hardware
 
-RAM is detected at startup and mapped to a tier that sets concurrency and memory ceilings:
+Before dependency checks or analysis, revctf checks Linux's **total RAM**, not free RAM
+or swap. Allocate at least **4 GB (4096 MB)** to Kali. The approximate check accepts
+3891 MiB or more of reported total RAM, allowing for memory reserved by the system;
+it cannot prove the virtual machine's configured allocation.
 
-| Tier | RAM | Phase-1 jobs | radare2 ceiling | Phase-2 ceiling | Ghidra `MAXMEM` | Decompile |
+Below that threshold, or if RAM cannot be measured, scans stop with exit 1 and explain
+how to increase the allocation. `--allow-low-memory` explicitly accepts a potentially
+slower or incomplete scan. This option is command-line only: configuration, `--yes`,
+and reduced-analysis flags cannot bypass the check. The warning appears both at startup
+and in the report. `--help` and `--version` still work; `--dry-run` shows whether a real
+scan would be blocked. revctf does not change system memory or swap settings.
+
+RAM is then mapped to a tier that sets concurrency and memory ceilings:
+
+| Tier | RAM | Phase-1 jobs | radare2 ceiling | Phase-2 ceiling | Ghidra analysis heap | Decompile |
 |---|---|---|---|---|---|---|
 | A | ≥ 3.8GB | 4 | 640MB | 1536MB | 1024M | Full |
 | B | 2.5–3.8GB | 2 | 450MB | 1024MB | 768M | Full |
@@ -109,6 +132,13 @@ from it because a JVM needs 2–4GB of *address space* to start at all and would
 
 A global RSS watchdog is the backstop: if the whole run reaches 90% of detected RAM it
 kills the running tools, stops the scan, and still writes the partial report.
+
+`--maxmem-ghidra` controls the Java analysis heap. Ghidra receives a separate process
+allowance of heap + max(256 MiB, 25% of heap rounded up), so a 1024M heap has a 1280 MiB
+process ceiling. A pre-analysis Java script verifies the actual heap; the report records
+its measurement. Only the child Java environment is changed, not your installation.
+Without usable systemd limits, whole-process enforcement is unavailable and is reported
+as such. A memory failure may trigger one inventory-only retry; that result is **partial**.
 
 Override individually with `--jobs-light`, `--jobs-ghidra`, `--maxmem-ghidra`. Use
 `--dry-run` to see the resolved plan — tier, limits, and exactly which stages would run —
@@ -134,7 +164,7 @@ enforcing them, and the watchdog threshold — before committing to a large batc
 
 - `--skip-ltrace`, `--skip-strace` — skip the stages that **execute** the challenge binary
 - `--skip-ghidra` — skip decompilation; radare2 substitutes
-- `--strict` — stop at the first failed stage. By default a failure is isolated and the
+- `--strict` — stop at the first failed or partial stage. By default a failure is isolated and the
   run continues
 - **The sandbox is on by default.** `ltrace` and `strace` execute the challenge binary, so
   they run inside a `--network=none --read-only --cap-drop=ALL` container, as an
@@ -154,11 +184,27 @@ available and you accept the risk, `--no-sandbox` is the explicit opt-out.
 
 ### Exit status
 
+**Partial** means useful evidence was retained but a requested step did not finish.
+This includes timeouts, output limits and a reduced retry after memory exhaustion.
+Candidates recovered from partial captures remain **UNVERIFIED**. Finding no candidate
+in an incomplete scan does not establish that no flag exists.
+
+On interruption, revctf saves available captures and an incomplete report, then removes
+only containers bearing this scan's unique ownership label. Docker cleanup has a ten-second
+deadline. If removal cannot be verified, `cleanup-warning.txt` identifies the container
+and recovery command, and further challenge execution is blocked. SIGKILL and host crashes
+can prevent cleanup entirely. Original challenge files are never modified.
+
+`ST_MAX_OUT_KB` is a positive whole number of 1024-byte units, enforced per file both
+outside and inside Docker. Reaching the boundary without reliable completion evidence
+marks the result incomplete. This is not an overall disk budget, and limits are never
+automatically increased to hide an incomplete result.
+
 | Code | Meaning |
 |---|---|
-| `0` | Scan completed, every stage succeeded |
-| `2` | Scan completed, but one or more stages failed — or `--strict` stopped it early |
-| `1` | The scan could not run: bad arguments, missing tools, unwritable output |
+| `0` | No requested stage failed or was partial; inapplicable or unavailable optional stages may be skipped |
+| `2` | Scan completed with failed or partial stages — or `--strict` stopped it early |
+| `1` | The scan could not run: RAM check, bad arguments, missing tools, unwritable output |
 | `130` / `143` / `129` | Aborted by SIGINT / SIGTERM / SIGHUP |
 
 > **Stopping a backgrounded scan.** When revctf is launched from a script
@@ -168,14 +214,14 @@ available and you accept the risk, `--no-sandbox` is the explicit opt-out.
 
 ### Limits
 
-Every stage is bounded in both time and output size, so a pathological target cannot hang
-a run or fill a disk:
+Commands have time and file-size limits. These limits reduce resource use; they are not
+a total disk budget, and a large or complicated challenge can still exceed available resources:
 
 | Bound | Default | Override |
 |---|---|---|
 | ltrace timeout | 10s | `--timeout` |
 | Other stage timeouts | 120–1800s by stage | `ST_T_*` env vars |
-| Per-stage capture size | 2GB | `ST_MAX_OUT_KB` |
+| Per raw output or trace file | 2 GiB | `ST_MAX_OUT_KB` (1024-byte units) |
 | Archive expansion | 2GB, and never more than half the free disk | `TRIAGE_MAX_EXPAND_KB` |
 | Container recursion depth | 2 | `TRIAGE_MAX_DEPTH` |
 
@@ -190,8 +236,35 @@ Reports are plain text, written to `./revctf-reports/<name>-<timestamp>/report.t
 4. **Diagnostics** — any stage that failed, with its command, exit code and stderr tail
 5. **What to try next** — derived from what happened on *your* file, not a generic list
 
-A stage that finds nothing says so; one that fails says so. A failure is isolated and the
-run continues.
+A stage that finds nothing says so; one that stops early is marked failed or partial.
+Other stages continue unless `--strict` was selected.
+
+Choose a **new or empty directory** for `--output`. revctf refuses to reuse a directory
+containing files, so earlier reports and the original challenge cannot be overwritten by
+its captures. A `.revctf-lock` directory prevents two scans from sharing the same output.
+If a scan is forcibly killed and leaves a lock behind, choose another output directory.
+Keep shell redirections outside that directory, and never redirect output onto the input
+file: the shell opens redirected files before revctf can check them.
+
+**Every flag candidate is unverified.** High confidence means the text looks like a
+familiar flag; a convincing decoy can receive the same rating. Confirm an answer against
+the challenge's known answer or acceptance check before calling it solved.
+
+The final candidate search uses a separate worker with a 384 MiB memory allowance and
+a 300-second default time limit. It searches full preserved captures, including output
+beyond the short managed-code and radare2 report previews. The previous encoding-token
+and ROT byte cutoffs have been removed. The report loads at most 10,000 candidate records;
+a reached limit or failed worker marks the search partial and keeps its evidence.
+Stack reconstruction skips exceptionally long lines or runs with an explicit incomplete
+status. Ghidra analyzes up to 200 selected functions and reports failed or unprocessed
+functions. These protections can still leave work unfinished; no result proves that a
+file contains no flag.
+
+Custom `--ghidra-script` files are loaded from their own directory. They must use the
+same output contract as the bundled scripts: print `=== REVCTF-GHIDRA-BEGIN ===` before
+results, `=== REVCTF-GHIDRA-END ===` after successful completion, and `REVCTF-ERROR:`
+when an error prevents completion. Missing markers or reported script errors fail the
+stage even if Ghidra itself returns a successful exit code.
 
 `--summary-only` keeps items 1, 2, 4 and 5 and drops the per-stage detail.
 
@@ -271,24 +344,28 @@ harness asserts that this list and that one agree — so neither can drift.
 | Batch mode (a directory target) | exits 1 with a clear message | M7 |
 
 
-`install.sh` is complete and has been run end-to-end on Kali: apt groups, FLOSS and
-uncompyle6 into a venv (a system-wide `pip install` fails on modern Debian/Ubuntu), and
-Ghidra. It installs the **pinned, verified** Ghidra build rather than the newest release —
+The installer sets up system packages, FLOSS and uncompyle6 in an isolated Python
+environment, and Ghidra with its Java development kit. The current installation results
+and unavailable optional packages are recorded in [the validation report](docs/reliability-validation.md).
+It installs the **pinned, verified** Ghidra build rather than the newest release —
 `GHIDRA_LATEST=1` opts into newest, but Ghidra 12.x needs PyGhidra wiring that does not
 exist yet. `tools/bootstrap-kali.sh` remains as the alternative that also pulls the
 build-only dependencies the test corpus needs.
 
 ## Requirements
 
-Kali Linux (or Debian-derived), Bash 4+, **4GB RAM** for full behaviour and ~4GB free disk
+Kali Linux amd64, Bash 4+, **4GB RAM** recommended and at least 4GB free disk
 (Ghidra alone unpacks to ~400MB). Plus the toolchain `install.sh` sets up: `file`,
 `strings`, `binwalk`, `hexdump`, `ltrace`, `strace`, `radare2`, `checksec`, `objdump`,
-`readelf`, `upx`, FLOSS, Java/.NET/Python decompilers, and Ghidra (**11.2.1, pinned** —
-12.x breaks the headless post-script; `GHIDRA_LATEST=1` opts in with a warning), found via
+`readelf`, `upx`, FLOSS, Java/.NET/Python decompilers, and Ghidra (**12.1.4, pinned**), found via
 `PATH`, `GHIDRA_HOME`, or `/opt/ghidra*`. **Docker is recommended, not required** — the two
 executing stages (`ltrace`, `strace`) are sandboxed by default and need it; without it they
 skip rather than running the target on your machine, and everything else runs normally. `systemd-run` is preferred for memory bounding,
 with a documented `ulimit -v` fallback.
+
+Ghidra versions outside the release profile are rejected before analysis. Update the
+selected installation or explicitly use `--skip-ghidra`. `GHIDRA_LATEST` is no longer an
+installer upgrade route; upgrades need a reviewed profile and affected tests.
 
 The verification harness needs the test corpus, which is gitignored — a fresh clone must
 run `./tools/build-test-corpus.sh` before `./tools/run-tests.sh`.
@@ -329,7 +406,7 @@ Everything below `docs/` is for people changing revctf, not people using it.
 
 ## Credits
 
-Created by **Jijo Shibu**. MIT licence — see [LICENSE](LICENSE).
+Created by **Jijo Shibu <jijoshibu@gmail.com>**. MIT licence — see [LICENSE](LICENSE).
 
 revctf is an orchestrator: nearly all of the analysis is done by other people's tools, and
 it would not exist without them.

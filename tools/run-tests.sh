@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+
+cleanup_hung_fixture() {
+    local proc target pid
+    for proc in /proc/[0-9]*/exe; do
+        target=$(readlink "$proc" 2>/dev/null) || continue
+        [[ $target == "$ROOT/test-corpus/hung" ]] || continue
+        pid=${proc#/proc/}; pid=${pid%/exe}
+        kill -KILL "$pid" 2>/dev/null || :
+    done
+}
 #
 # run-tests.sh — verification harness for revctf's milestone gates.
 #
@@ -18,7 +28,9 @@ set -uo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 RC="$ROOT/revctf"
 CORPUS="$ROOT/test-corpus"
-FIXTURES="${TMPDIR:-/tmp}/revctf-test-fixtures"
+FIXTURES=$(mktemp -d "${TMPDIR:-/tmp}/revctf-test-fixtures.XXXXXX") || exit 1
+export TMPDIR="$FIXTURES/work"
+mkdir -p "$TMPDIR"
 
 PASS=0; FAIL=0; SKIP=0
 declare -a FAILURES=()
@@ -131,7 +143,7 @@ mk_masked_path() {
 }
 
 setup_fixtures() {
-    rm -rf "$FIXTURES"; mkdir -p "$FIXTURES/home" "$FIXTURES/scratch"
+    rm -rf "$FIXTURES"; mkdir -p "$FIXTURES/home" "$FIXTURES/scratch" "$TMPDIR"
 
     # Run from inside the fixture tree. Several checks deliberately omit --output to
     # exercise the default path, and that default is ./revctf-reports/<name>-<timestamp>/,
@@ -224,7 +236,7 @@ EOF
     assert_match "config: CLI flag overrides it" 'output *: /tmp/from-cli' \
         "$RC" scan "$ROOT/README.md" --skip-ghidra --verbose --output /tmp/from-cli
     rm -f "$cfg"
-    assert_exit "absent default config is fine"  0 "$RC" scan "$ROOT/README.md" --skip-ghidra
+    assert_exit "absent default config is fine"  0 "$RC" scan /bin/true --skip-ghidra
 
     # --- display mode selection (v6 §10) ---
     assert_match "piped output -> line mode" 'display *: line' \
@@ -241,7 +253,7 @@ EOF
     # --- symlink resolution (install.sh puts revctf on PATH as a symlink) ---
     local linkdir="$FIXTURES/linkbin"
     mkdir -p "$linkdir"; ln -sf "$RC" "$linkdir/revctf"
-    assert_exit "runs correctly through a symlink" 0 "$linkdir/revctf" scan "$ROOT/README.md" --skip-ghidra
+    assert_exit "runs correctly through a symlink" 0 "$linkdir/revctf" scan /bin/true --skip-ghidra
 }
 
 test_m1() {
@@ -302,7 +314,7 @@ test_m1() {
     assert_exit  "missing Ghidra -> exit 1" 1 \
         env -u GHIDRA_HOME PATH="$nog" "$RC" scan "$ROOT/README.md"
     assert_exit  "--skip-ghidra runs without it" 0 \
-        env -u GHIDRA_HOME "$RC" scan "$ROOT/README.md" --skip-ghidra
+        env -u GHIDRA_HOME "$RC" scan /bin/true --skip-ghidra --skip-ltrace --skip-strace
 
     # --- missing tools: core vs install.sh-managed, with the right advice each time ---
     local nocore; nocore=$(mk_masked_path "radare2,rabin2" nocore)
@@ -505,10 +517,10 @@ test_m2() {
 
     # --- unwrap failure isolates: stage fails, pipeline continues ---
     out=$("${RUN[@]}" "$CORPUS/packed_upx_broken" --output "$o/broken" 2>&1)
-    if grep -qE '^triage +failed' <<< "$out"; then
-        ok "an unpackable packed target marks triage failed"
+    if grep -qE '^triage +(failed|partial)' <<< "$out"; then
+        ok "an unpackable packed target marks triage incomplete"
     else
-        no "unwrap failure" "triage did not report failed"
+        no "unwrap failure" "triage did not report failed or partial"
     fi
     if grep -qE '^(strings|objdump) +ok' <<< "$out"; then
         ok "later stages still run after a triage failure (v5 §4.1)"
@@ -649,7 +661,7 @@ test_m3() {
             ok "the orphan sweep leaves no traced process running"
         else
             no "orphan sweep" "the hung target survived the scan"
-            pkill -KILL -f '[h]ung$' 2>/dev/null
+            cleanup_hung_fixture 2>/dev/null
         fi
     else
         skip "hung-target tests" "corpus fixture missing"
@@ -810,14 +822,14 @@ test_qa() {
         "$RC" scan "$CORPUS/crackme" --skip-ghidra --config "$cfg" --output "$o/c4"
 
     # --- QA-2: no work directory may survive any exit path (there was no EXIT trap).
-    rm -rf /tmp/revctf-work.* 2>/dev/null
+    rm -rf "$TMPDIR"/revctf-work.* 2>/dev/null
     printf 'tui = banana\n' > "$cfg"
     "$RC" scan "$CORPUS/crackme" --skip-ghidra --config "$cfg" --output "$o/c5" >/dev/null 2>&1
-    if [[ $(find /tmp -maxdepth 1 -name 'revctf-work.*' 2>/dev/null | wc -l) -eq 0 ]]; then
+    if [[ $(find "$TMPDIR" -maxdepth 1 -name 'revctf-work.*' 2>/dev/null | wc -l) -eq 0 ]]; then
         ok "no work directory is stranded on exit"
     else
         no "work dir leak" "revctf-work.* survived the run"
-        rm -rf /tmp/revctf-work.* 2>/dev/null
+        rm -rf "$TMPDIR"/revctf-work.* 2>/dev/null
     fi
 
     # --- QA-3 (high): a container holding a UPX-packed member was itself declared packed,
@@ -900,7 +912,10 @@ open('$o/fat.macho','wb').write(d)" 2>/dev/null
     python3 -c "
 import zipfile
 z = zipfile.ZipFile('$o/bomb.zip','w',zipfile.ZIP_DEFLATED,compresslevel=9)
-z.writestr('big', b'\0'*(3*1024*1024*1024))
+with z.open('big', 'w', force_zip64=True) as dest:
+    chunk = bytes(1024*1024)
+    for _ in range(3*1024):
+        dest.write(chunk)
 z.close()" 2>/dev/null
     if [[ -f $o/bomb.zip ]]; then
         "$RC" scan "$o/bomb.zip" --skip-ghidra --output "$o/bomb" >/dev/null 2>&1
@@ -943,7 +958,7 @@ z.close()" 2>/dev/null
     # SIGTERM exercises the identical abort path and is the correct way to stop a
     # backgrounded revctf.
     if have_big; then
-        rm -rf /tmp/revctf-work.* 2>/dev/null
+        rm -rf "$TMPDIR"/revctf-work.* 2>/dev/null
         # The signal deliberately lands during binwalk — the slowest stage on this target,
         # and the one that used to run its tool in the foreground and swallow the signal.
         "$RC" scan "$CORPUS/large_blob.bin" --skip-ghidra --output "$o/int" >/dev/null 2>&1 &
@@ -967,22 +982,22 @@ z.close()" 2>/dev/null
             no "abort latency" "took ${elapsed}s to stop; a stage is swallowing the signal"
         fi
         # shellcheck disable=SC2009
-        if [[ $(ps -eo args 2>/dev/null | grep -c '^binwalk') -eq 0 ]]; then
+        if [[ $(ps -eo args 2>/dev/null | grep '^binwalk' | grep -Fc -- "$CORPUS/large_blob.bin") -eq 0 ]]; then
             ok "an abort leaves no orphaned tool process"
         else
             no "orphan after abort" "a binwalk process survived"
-            pkill -KILL -f '^binwalk' 2>/dev/null
+            printf 'Inspect the retained scan evidence before stopping its tool manually.\n' >&2
         fi
-        if [[ $(find /tmp -maxdepth 1 -name 'revctf-work.*' 2>/dev/null | wc -l) -eq 0 ]]; then
+        if [[ $(find "$TMPDIR" -maxdepth 1 -name 'revctf-work.*' 2>/dev/null | wc -l) -eq 0 ]]; then
             ok "an abort leaves no work directory"
         else
             no "work dir after abort" "revctf-work.* survived"
-            rm -rf /tmp/revctf-work.* 2>/dev/null
+            rm -rf "$TMPDIR"/revctf-work.* 2>/dev/null
         fi
 
         # SIGHUP must be trapped too: an untrapped HUP from a dropped SSH session killed
         # the scan with no cleanup at all.
-        rm -rf /tmp/revctf-work.* 2>/dev/null
+        rm -rf "$TMPDIR"/revctf-work.* 2>/dev/null
         # stderr is kept, not discarded: when this check fails it must say why. A bare
         # "got 0" gives nothing to act on, and a signal-handling regression is the last
         # place to accept an opaque failure.
@@ -1020,7 +1035,7 @@ z.close()" 2>/dev/null
                 no "SIGHUP handling" "got $hrc, want 129; stderr: $(tr '\n' ' ' < "$o/hup.err" 2>/dev/null | tail -c 200)"
             fi
         fi
-        rm -rf /tmp/revctf-work.* 2>/dev/null
+        rm -rf "$TMPDIR"/revctf-work.* 2>/dev/null
     else
         skip "abort tests" "$([[ $FAST -eq 1 ]] && echo 'REVCTF_TEST_FAST=1' || echo 'large_blob.bin missing')"
     fi
@@ -1031,7 +1046,7 @@ z.close()" 2>/dev/null
     if have_big; then
         out=$(ST_MAX_OUT_KB=64 "$RC" scan "$CORPUS/large_blob.bin" --skip-ghidra \
                 --output "$o/cap" 2>&1)
-        if grep -qE '^strings +failed .*exceeded' <<< "$out"; then
+        if grep -qE '^strings +partial .*limit' <<< "$out"; then
             ok "a stage exceeding the output cap is stopped and reported"
         else
             no "output cap" "$(grep -m1 '^strings' <<< "$out")"
@@ -1045,13 +1060,15 @@ z.close()" 2>/dev/null
         skip "output cap" "$([[ $FAST -eq 1 ]] && echo 'REVCTF_TEST_FAST=1' || echo 'large_blob.bin missing')"
     fi
 
-    # --strict stops at the first failure; the default still isolates and continues.
+    # --strict stops on useful but incomplete triage; the default continues.
     local nstrict ndefault
     nstrict=$("$RC" scan "$CORPUS/packed_upx_broken" --skip-ghidra --strict \
-                --output "$o/st1" 2>&1 | grep -cE '^[a-z]+ +(ok|empty|failed|skipped)')
+                --output "$o/st1" 2>&1 | grep -cE '^[a-z]+ +(ok|empty|failed|partial|skipped)')
     ndefault=$("$RC" scan "$CORPUS/packed_upx_broken" --skip-ghidra \
-                --output "$o/st2" 2>&1 | grep -cE '^[a-z]+ +(ok|empty|failed|skipped)')
-    if [[ $nstrict -lt $ndefault ]]; then
+                --output "$o/st2" 2>&1 | grep -cE '^[a-z]+ +(ok|empty|failed|partial|skipped)')
+    if [[ $nstrict -lt $ndefault && ! -e $o/st1/strings.txt ]] &&
+            grep -qE '^triage +partial' "$o/st1/report.txt" &&
+            grep -qE '^strings +ok' "$o/st2/report.txt"; then
         ok "--strict stops early ($nstrict stage vs $ndefault by default)"
     else
         no "--strict" "ran $nstrict stages, same as the default $ndefault"
@@ -1433,7 +1450,7 @@ test_m5() {
     # --- --dry-run runs nothing ------------------------------------------------------
     # The defect this pins: the flag was parsed, set OPT[dry_run]=1, and was never read,
     # so a flag the README recommends before a large batch performed the full scan.
-    rm -rf "$o/never" /tmp/revctf-work.* 2>/dev/null
+    rm -rf "$o/never" "$TMPDIR"/revctf-work.* 2>/dev/null
     local before after
     before=$(date +%s)
     out=$("$RC" scan "$t" --dry-run --output "$o/never" 2>&1)
@@ -1445,11 +1462,11 @@ test_m5() {
     else
         ok "--dry-run creates no output directory"
     fi
-    if [[ $(find /tmp -maxdepth 1 -name 'revctf-work.*' 2>/dev/null | wc -l) -eq 0 ]]; then
+    if [[ $(find "$TMPDIR" -maxdepth 1 -name 'revctf-work.*' 2>/dev/null | wc -l) -eq 0 ]]; then
         ok "--dry-run creates no work directory"
     else
         no "--dry-run work dir" "revctf-work.* was created"
-        rm -rf /tmp/revctf-work.* 2>/dev/null
+        rm -rf "$TMPDIR"/revctf-work.* 2>/dev/null
     fi
     assert_no_match "--dry-run produces no report body" 'POSSIBLE FLAGS' printf '%s' "$out"
     assert_no_match "--dry-run runs no stage" 'WHAT RAN' printf '%s' "$out"
@@ -1499,7 +1516,7 @@ test_m5() {
         else
             no "phase-1 jobs at ${ram}MB" "got '$got', wanted '$want_jobs'"
         fi
-        got=$(grep -E '^  Ghidra MAXMEM' <<< "$out" | awk '{print $4}')
+        got=$(grep -E '^  Ghidra heap' <<< "$out" | awk '{print $4}')
         if [[ $got == "$want_mem" ]]; then
             ok "  Tier $want_tier -> MAXMEM $want_mem"
         else
@@ -1518,7 +1535,7 @@ test_m5() {
         env REVCTF_RAM_MB=2000 "$RC" scan "$t" --dry-run
     assert_no_match "a real detection is not labelled injected" 'INJECTED' \
         "$RC" scan "$t" --dry-run
-    assert_match "the detection source is always named" 'via (free -m|/proc/meminfo|injected)' \
+    assert_match "the detection source is always named" 'via (Linux total RAM|free -m|/proc/meminfo|injected)' \
         "$RC" scan "$t" --dry-run
 
     # A non-numeric injection must warn and fall back, never reach an arithmetic test.
@@ -1542,7 +1559,7 @@ test_m5() {
     # --- explicit overrides beat the tier ---------------------------------------------
     out=$(REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run --jobs-light 1 --maxmem-ghidra 2048M 2>/dev/null)
     assert_match "--jobs-light overrides the tier value" 'Phase-1 jobs  : 1' printf '%s' "$out"
-    assert_match "--maxmem-ghidra overrides the tier value" 'MAXMEM : 2048M' printf '%s' "$out"
+    assert_match "--maxmem-ghidra overrides the tier value" 'Ghidra heap +: 2048M' printf '%s' "$out"
     assert_match "an override is recorded in the notes" 'overridden' printf '%s' "$out"
     # validate_opts already rejects this before tier resolution is ever reached, which is
     # the stricter and better behaviour: a nonsensical concurrency is a usage error, not
@@ -1575,7 +1592,7 @@ test_m5() {
     # Tier A's Phase-2 cap must differ from its Ghidra MAXMEM, or the inheritance is back.
     out=$(REVCTF_RAM_MB=8192 "$RC" scan "$t" --dry-run 2>/dev/null)
     if [[ $(grep -E '^  Phase-2 cap' <<< "$out" | awk '{print $4}') != \
-          $(grep -E '^  Ghidra MAXMEM' <<< "$out" | awk '{print $4}')B ]]; then
+          $(grep -E '^  Ghidra heap' <<< "$out" | awk '{print $4}')B ]]; then
         ok "Phase-2 cap is independent of Ghidra MAXMEM"
     else
         no "Phase-2 derivation" "Phase-2 cap equals Ghidra MAXMEM — v6 §5's struck derivation is back"
@@ -1627,7 +1644,7 @@ test_m5() {
         'sandboxed:|skipped:|WILL EXECUTE' "$RC" scan "$t" --dry-run --sandbox
     assert_match "--skip-ghidra is shown in the plan" 'skipped by --skip-ghidra' \
         "$RC" scan "$t" --dry-run --skip-ghidra
-    assert_match "--strict is shown in the plan" 'stop at the first failed stage' \
+    assert_match "--strict is shown in the plan" 'stop at the first failed or partial stage' \
         "$RC" scan "$t" --dry-run --strict
 }
 
@@ -1759,12 +1776,19 @@ test_m6() {
           is_uint() { [[ $1 =~ ^[0-9]+$ ]]; }
           # shellcheck source=/dev/null
           source "$ROOT/lib/sandbox.sh" || exit 99
+          # shellcheck source=/dev/null
+          source "$ROOT/lib/stage.sh" || exit 99
+          # shellcheck disable=SC2034  # consumed by sandbox ownership bookkeeping
+          RUN_OUTDIR=$o
+          sbx_register probe || exit 99
+          trap 'sbx_cleanup_all' EXIT
           local -a pre=()
-          sbx_wrap pre "$pscratch" "$t" "revctf-m6probe-$$" 512
-          timeout 25 "${pre[@]}" "$@" )
+          sbx_wrap pre "$pscratch" "$t" "$SBX_NAME" 512 || exit 99
+          timeout 25 "${pre[@]}" "$@" >/dev/null || exit 99
+          timeout 25 docker start --attach "$SBX_NAME" )
     }
 
-    if ! timeout 25 docker run --rm --network=bridge revctf-sandbox:1 \
+    if ! timeout 25 docker run --rm --network=bridge "$SBX_IMAGE" \
             bash -c "$probe" >/dev/null 2>&1; then
         skip "no network egress from the sandbox" \
             "this host cannot reach 1.1.1.1:53 even WITH networking, so the negative result would prove nothing"
@@ -1841,11 +1865,11 @@ test_m5enforce() {
     else
     out=$(REVCTF_RAM_MB=2048 "$RC" scan "$t" --verbose --output "$o/g" 2>&1)
     assert_match "Ghidra MAXMEM follows the tier (512M on Tier C, not the old 1024M)" \
-        '\[ghidra\] memory ceiling 512MB' printf '%s' "$out"
+        '\[ghidra\] memory ceiling 768MB' printf '%s' "$out"
     rm -rf "$o/g"
     out=$(REVCTF_RAM_MB=8192 "$RC" scan "$t" --verbose --maxmem-ghidra 2048M --output "$o/g2" 2>&1)
     assert_match "--maxmem-ghidra overrides the tier at the point of use" \
-        '\[ghidra\] memory ceiling 2048MB' printf '%s' "$out"
+        '\[ghidra\] memory ceiling 2560MB' printf '%s' "$out"
     rm -rf "$o/g2"
     fi
 
@@ -1885,6 +1909,10 @@ test_m5enforce() {
     # small target because MemoryMax reclaims page cache before it kills anything.
     local bst btgt bout brep
     for bst in "${bounded[@]}"; do
+        if [[ $bst == ltrace || $bst == strace ]]; then
+            skip "1MB breach for $bst" "Docker rejects limits below 6MB; test-lifecycle.py measures and breaches the container's 64MiB limit"
+            continue
+        fi
         btgt="${ceil_target[$bst]:-}"
         if [[ -z $btgt ]]; then
             no "no enforcement target for the bounded stage '$bst'" \
@@ -2090,7 +2118,7 @@ test_docs() {
         # to test is a flag nobody verified does anything.
         # $ROOT-anchored: setup_fixtures cd's into the fixture tree, so a relative $0
         # would not resolve and every flag would look untested.
-        grep -qF -- "$f" "$ROOT/tools/run-tests.sh" || untested+=("$f")
+        grep -qF -- "$f" "$ROOT/tools/run-tests.sh" "$ROOT/tools/test-resources.sh" || untested+=("$f")
     done
     if [[ ${#untested[@]} -eq 0 ]]; then
         ok "every unmarked flag is exercised by the harness"
@@ -2294,7 +2322,7 @@ test_docs() {
 # ======================================================================================
 main() {
     local -a want=("$@")
-    [[ ${#want[@]} -eq 0 ]] && want=(lint corpus m0 m1 m2 m3 m4 m5 m5enforce m6 qa docs ghidra)
+    [[ ${#want[@]} -eq 0 ]] && want=(lint reliability resources lifecycle corpus m0 m1 m2 m3 m4 m5 m5enforce m6 qa docs ghidra)
 
     printf '\033[1mrevctf verification harness\033[0m\n'
     printf 'repo: %s\n' "$ROOT"
@@ -2304,6 +2332,18 @@ main() {
     for s in "${want[@]}"; do
         case "$s" in
             lint)   test_lint   ;;
+            reliability)
+                if bash "$ROOT/tools/test-reliability.sh"; then
+                    ok "portable reliability regressions"
+                else
+                    no "portable reliability regressions" "see failed assertions above"
+                fi ;;
+            resources)
+                if bash "$ROOT/tools/test-resources.sh"; then ok "resource regressions";
+                else no "resource regressions" "see failed assertions above"; fi ;;
+            lifecycle)
+                if python3 "$ROOT/tools/test-lifecycle.py"; then ok "Docker lifecycle regressions";
+                else no "Docker lifecycle regressions" "see failed assertions above"; fi ;;
             corpus) test_corpus ;;
             m0)     test_m0     ;;
             m1)     test_m1     ;;

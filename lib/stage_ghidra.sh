@@ -48,7 +48,7 @@ stage_ghidra() {
     if [[ -n ${OPT[ghidra_script]} ]]; then
         script="${OPT[ghidra_script]}"
     elif [[ ${PF_GHIDRA_SCRIPT_KIND:-jython} == pyghidra ]]; then
-        script="$REVCTF_SCRIPTS/pyghidra_decompile.py"
+        script="$REVCTF_SCRIPTS/RevctfDecompile.java"
     else
         script="$REVCTF_SCRIPTS/jython_decompile.py"
     fi
@@ -68,7 +68,7 @@ stage_ghidra() {
     rc=$?
 
     # --- OOM self-heal (v4 §4 item 6) -------------------------------------------------
-    if [[ $rc -ne 0 ]] && _ghidra_saw_oom "$err"; then
+    if [[ $rc -ne 0 ]] && _ghidra_saw_oom "$RUN_OUTDIR/ghidra-attempt.0.stderr" "$RUN_OUTDIR/ghidra-attempt.0.stdout"; then
         if [[ ${OPT[force_full_decompile]:-0} -eq 1 ]]; then
             stage_set_status "$name" failed \
                 "Ghidra ran out of memory; --force-full-decompile disabled the automatic light retry"
@@ -76,7 +76,7 @@ stage_ghidra() {
         fi
         {
             printf '\n=== Ghidra ran out of memory — retrying with light decompilation ===\n'
-            printf 'The full decompile exceeded the JVM heap for this binary. revctf is\n'
+            printf 'Java reported a memory failure during full analysis. revctf is\n'
             printf 'retrying automatically with function listing only; radare2 above has\n'
             printf 'the disassembly.\n\n'
         } >> "$out"
@@ -84,7 +84,7 @@ stage_ghidra() {
         rc=$?
         if [[ $rc -eq 0 ]]; then
             stage_write "$name" ok
-            stage_set_status "$name" ok "full decompile hit an OOM; light retry succeeded"
+            stage_set_status "$name" partial "full decompile hit an OOM; light retry produced an inventory only"
             return 0
         fi
         stage_set_status "$name" failed "Ghidra ran out of memory and the light retry also failed"
@@ -101,25 +101,11 @@ stage_ghidra() {
         return 0
     fi
 
-    # analyzeHeadless EXITS 0 EVEN WHEN THE POST-SCRIPT FAILED TO LOAD OR THREW.
-    # Observed on Ghidra 12.1.3: the PyGhidra script died with
-    #   "Ghidra was not started with PyGhidra. Python is not available"
-    # and the stage was recorded as `empty / 0B / exit 0` — a clean-looking negative on a
-    # binary whose password Ghidra 11.2.1 recovers. docs/CONTRIBUTING.md §3 already warned that this
-    # class of failure "shows up only as an empty Ghidra stage, exit 0"; nothing was
-    # actually checking for it. An empty capture plus a script error in stderr is a
-    # FAILURE, and saying so is the difference between "no flag here" and "this tool never
-    # ran".
-    if [[ ! -s $out ]] && _ghidra_saw_script_error "$err"; then
-        # Quote whatever Ghidra actually said. The alternation has to match the same set as
-        # _ghidra_saw_script_error, or the stage reports a failure with a blank reason —
-        # which is barely better than the empty stage it replaced.
-        stage_set_status "$name" failed \
-            "the Ghidra post-script did not run — $(grep -aoiEm1 '(GhidraScriptLoadException|SCRIPT ERROR|SyntaxError|Unable to load script|not started with PyGhidra)[^\n]{0,120}' "$err" 2>/dev/null | head -c 160)"
-        return 0
-    fi
-
+    # _ghidra_attempt validates post-script completion as well as the launcher exit.
     stage_write "$name"
+    if grep -q '^REVCTF-PARTIAL:' "$out"; then
+        stage_set_status "$name" partial "some selected functions could not be analyzed; see preserved output"
+    fi
     return 0
 }
 
@@ -153,39 +139,76 @@ _ghidra_attempt() {
     # has already folded --maxmem-ghidra into TIER_MAXMEM_GHIDRA, so the override still
     # wins here without this file re-reading OPT.
     local maxmem="${TIER_MAXMEM_GHIDRA:-${OPT[maxmem_ghidra]:-1024M}}"
-    export MAXMEM="$maxmem"
-    # v4 §4 item 4: a second, percentage-based bound alongside MAXMEM, so the two agree
-    # rather than fight. Tier-driven for the same reason as MAXMEM.
-    export _JAVA_OPTIONS="-XX:MaxRAMPercentage=${TIER_JVM_RAM_PCT:-25}"
+    local heap_mb guard
+    heap_mb=$(tier_mb_of "$maxmem")
+    [[ $heap_mb -gt 0 ]] || { printf 'REVCTF-ERROR: invalid heap allowance\n' >> "$err"; return 1; }
+    guard="$RUN_OUTDIR/ghidra-memory.$light.txt"
+    # _JAVA_OPTIONS is applied after the launcher's -Xmx by HotSpot. The guard below
+    # verifies the actual runtime; unfamiliar launchers cannot silently bypass it.
+    # Scope the override to this child, preserving the caller's environment.
 
     local -a cmd=(
+        env "_JAVA_OPTIONS=${_JAVA_OPTIONS:+${_JAVA_OPTIONS} }-Xms16m -Xmx${heap_mb}m"
         "$PF_GHIDRA_HEADLESS" "$proj" revctf
         -import "$RUN_TARGET"
-        -scriptPath "$REVCTF_SCRIPTS"
+        -scriptPath "$REVCTF_SCRIPTS;$(cd -- "$(dirname -- "$script")" && pwd)"
+        -preScript RevctfMemoryGuard.java "$guard" "$heap_mb"
         -postScript "$(basename "$script")" "$light"
         -deleteProject
     )
 
-    st_run_bounded "$ST_T_GHIDRA" "$out.g" "$err.g" -- "${cmd[@]}" || rc=$?
+    local rawout="$RUN_OUTDIR/ghidra-attempt.$light.stdout" rawerr="$RUN_OUTDIR/ghidra-attempt.$light.stderr"
+    st_run_bounded "$ST_T_GHIDRA" "$rawout" "$rawerr" -- "${cmd[@]}" || rc=$?
+    # Preserve each attempt, including startup failures and memory verification.
+    if [[ $rc -eq 0 ]] && ! grep -qx 'verified=1' "$guard" 2>/dev/null; then
+        printf 'REVCTF-ERROR: actual Ghidra heap could not be verified within its allowance.\n' >> "$rawerr"
+        rc=1
+    fi
+    {
+        printf '\nGhidra attempt %s: requested heap %s MiB; process limit %s MiB; enforcement %s\n' "$light" "$heap_mb" "$ST_MEM_CEIL_MB" "$(st_mem_mode)"
+        [[ -f $guard ]] && cat -- "$guard"
+        [[ $(st_mem_mode) != systemd ]] && printf 'Whole-process memory enforcement is unavailable; only the Java heap and watchdog are bounded.\n'
+    } >> "$out"
+
+    # A successful launcher exit does not prove the post-script completed. Check this
+    # attempt's files, not accumulated diagnostics from a failed first attempt.
+    # Decompiled strings may themselves contain words such as SyntaxError; search the
+    # launcher's diagnostics outside the result block for those broad error patterns.
+    sed '/^=== REVCTF-GHIDRA-BEGIN ===$/,/^=== REVCTF-GHIDRA-END ===$/d' "$rawout" > "$out.log"
+    if [[ $rc -eq 0 ]]; then
+        if _ghidra_saw_script_error "$rawerr" || _ghidra_saw_script_error "$out.log" ||
+                grep -qa '^REVCTF-ERROR:' "$rawout"; then
+            printf 'REVCTF-ERROR: Ghidra post-script failed; partial output kept.\n' >> "$rawerr"
+            rc=1
+        elif ! awk '
+            /^=== REVCTF-GHIDRA-BEGIN ===$/ { if (state != 0) bad=1; state=1 }
+            /^=== REVCTF-GHIDRA-END ===$/ { if (state != 1) bad=1; state=2 }
+            END { exit (bad || state != 2) }
+        ' "$rawout"; then
+            printf 'REVCTF-ERROR: Ghidra post-script completion markers missing; analysis incomplete.\n' >> "$rawerr"
+            rc=1
+        fi
+    fi
 
     # analyzeHeadless is extremely chatty on stdout. Only the post-script's own output is
     # worth putting in the report; the rest goes to stderr capture for diagnostics.
     {
-        sed -n '/^=== REVCTF-GHIDRA-BEGIN/,/^=== REVCTF-GHIDRA-END/p' "$out.g" 2>/dev/null \
+        sed -n '/^=== REVCTF-GHIDRA-BEGIN/,/^=== REVCTF-GHIDRA-END/p' "$rawout" 2>/dev/null \
             | grep -v '^=== REVCTF-GHIDRA-' \
             | st_strip_ansi
     } >> "$out"
-    cat "$err.g" >> "$err" 2>/dev/null
+    cat "$rawerr" >> "$err" 2>/dev/null
     # Ghidra writes INFO lines to stdout too; keep them out of the report but available.
-    cat "$out.g" >> "$err" 2>/dev/null
-    rm -f "$out.g" "$err.g"
+    cat "$rawout" >> "$err" 2>/dev/null
+    rm -f "$out.log"
 
     stage_record_exec "$name" "${cmd[*]}" "$rc"
-    unset MAXMEM _JAVA_OPTIONS
     return "$rc"
 }
 
 # Ghidra reports heap exhaustion in several shapes depending on where it happened.
 _ghidra_saw_oom() {
-    grep -qaiE 'java\.lang\.OutOfMemoryError|GC overhead limit|unable to create.*native thread|Java heap space' "$1" 2>/dev/null
+    # Ignore decompiled challenge text that merely mentions a Java error.
+    sed '/^=== REVCTF-GHIDRA-BEGIN ===$/,/^=== REVCTF-GHIDRA-END ===$/d' "$@" 2>/dev/null |
+        grep -iE 'java\.lang\.OutOfMemoryError|GC overhead limit|unable to create.*native thread|Java heap space' >/dev/null
 }

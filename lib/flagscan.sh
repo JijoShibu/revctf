@@ -14,12 +14,12 @@
 # `--flag-format` takes a regex FROM THE USER, and the scan runs it across every stage
 # capture — which for a large target is multiple megabytes of `strings` output. A
 # backtracking engine turns a pattern like `(a+)+$` into a self-inflicted denial of
-# service. GNU grep -E is DFA-based and has no catastrophic-backtracking failure mode, so
-# choosing the right engine removes the whole class of problem rather than trying to
-# validate patterns for safety, which is not reliably possible.
+# service. GNU grep -E avoids that common failure mode for ordinary expressions, but
+# backreferences can still be costly. A bounded scanning worker remains necessary
+# before arbitrary user patterns can be described as resource-safe.
 #
 # The entry script already validates that `--flag-format` is a syntactically valid ERE. It
-# deliberately does NOT try to judge whether a pattern is "safe" — that is the engine's job.
+# deliberately does NOT try to judge whether a pattern is "safe".
 #
 # tools/run-tests.sh asserts that no PCRE flag appears anywhere in lib/.
 # ======================================================================================
@@ -28,6 +28,7 @@
 #     <confidence>\t<stage>\t<encoding>\t<value>
 # confidence: high | medium | low     encoding: plain | base64 | base32 | hex | rot13
 
+FLAGSCAN_LIBRARY="${BASH_SOURCE[0]}"
 declare -ga FLAG_HITS=()
 declare -g  FLAG_HIGH=0 FLAG_MED=0 FLAG_LOW=0
 
@@ -54,6 +55,10 @@ _FLAG_GENERIC='[A-Za-z0-9_]{2,}\{[^}]{4,200}\}'
 _fs_add() {   # <confidence> <stage> <encoding> <value>
     local conf="$1" stage="$2" enc="$3" val="$4"
     [[ ${#val} -le $FLAG_MAX_LEN ]] || return 0
+    if [[ ${FS_WORKER:-0} -eq 1 ]]; then
+        printf '%s\t%s\t%s\t%s\n' "$conf" "$stage" "$enc" "$val"
+        return 0
+    fi
     FLAG_HITS+=("$conf	$stage	$enc	$val")
     case "$conf" in
         high)   FLAG_HIGH=$(( FLAG_HIGH + 1 )) ;;
@@ -62,43 +67,43 @@ _fs_add() {   # <confidence> <stage> <encoding> <value>
     esac
 }
 
-# _fs_scan_stream <stage> <encoding> — read stdin, emit matches at each tier.
-# _fs_scan_stream <stage> <encoding> — read stdin, emit matches at each tier.
+# _fs_scan_file <stage> <encoding> — read stdin, emit matches at each tier.
+# _fs_scan_file <stage> <encoding> — read stdin, emit matches at each tier.
 #
 # For a DECODED stream (anything but `plain`) only known formats count. Decoding produces
 # a lot of text that coincidentally satisfies the generic `word{...}` shape: ROT13-ing a
 # capture that already contains `flag{cr4ckm3_s0lv3d}` yields `synt{pe4pxz3_f0yi3q}`,
 # which is not a finding — it is the same flag, mirrored. Requiring a known wrapper on
 # decoded text keeps the sweep's real wins (base64-in-.rodata) without the mirror noise.
-_fs_scan_stream() {
-    local stage="$1" enc="$2" line
-    local tmp; tmp="$RUN_WORKDIR/fs.$$"
-    cat > "$tmp" 2>/dev/null || return 0
+# Save grep's status: no matches is valid, read/regex/resource errors are not.
+_fs_matches() {
+    local pattern="$1" src="$2" dest="$3" rc=0
+    grep -aoE -- "$pattern" "$src" > "$dest.raw" || rc=$?
+    [[ $rc -le 1 ]] || return "$rc"
+    LC_ALL=C sort -u "$dest.raw" > "$dest" || return $?
+    rm -f -- "$dest.raw"
+}
 
-    # User pattern first: an explicit --flag-format is the most reliable signal there is.
-    if [[ -n ${OPT[flag_format]:-} ]]; then
-        while IFS= read -r line; do
-            _fs_add high "$stage" "$enc" "$line"
-        done < <(grep -aoE -- "${OPT[flag_format]}" "$tmp" 2>/dev/null | sort -u | head -50)
-    fi
-
-    while IFS= read -r line; do
-        _fs_add high "$stage" "$enc" "$line"
-    done < <(grep -aoE -- "$_FLAG_BRACED" "$tmp" 2>/dev/null | sort -u | head -50)
-
+_fs_scan_file() {
+    local stage="$1" enc="$2" line pattern conf
+    # Read the existing capture directly. Copying a file at its size limit can
+    # fail before matching, and doubles disk work without adding evidence.
+    local src="$3"
+    local -a patterns=("${OPT[flag_format]:-}" "$_FLAG_BRACED") levels=(high high)
     if [[ $enc == plain ]]; then
-        while IFS= read -r line; do
-            _fs_add medium "$stage" "$enc" "$line"
-        done < <(grep -aoE -- "$_FLAG_HASHLIKE" "$tmp" 2>/dev/null | sort -u | head -20)
-
-        # Generic braced matches the known-format pass did not already claim.
-        while IFS= read -r line; do
-            grep -qaE -- "$_FLAG_BRACED" <<< "$line" && continue
-            _fs_add low "$stage" "$enc" "$line"
-        done < <(grep -aoE -- "$_FLAG_GENERIC" "$tmp" 2>/dev/null | sort -u | head -30)
+        patterns+=("$_FLAG_HASHLIKE" "$_FLAG_GENERIC"); levels+=(medium low)
     fi
-
-    rm -f "$tmp"
+    local i
+    for i in "${!patterns[@]}"; do
+        pattern=${patterns[$i]}; conf=${levels[$i]}
+        [[ -n $pattern ]] || continue
+        grep --line-buffered -aoE -- "$pattern" "$src" | while IFS= read -r line; do
+            if [[ $conf == low ]] && grep -qaE -- "$_FLAG_BRACED" <<< "$line"; then continue; fi
+            _fs_add "$conf" "$stage" "$enc" "$line" || return $?
+        done
+        local -a results=("${PIPESTATUS[@]}")
+        [[ ${results[0]} -le 1 && ${results[1]} -eq 0 ]] || return 2
+    done
     return 0
 }
 
@@ -106,27 +111,37 @@ _fs_scan_stream() {
 # Base64-in-.rodata is among the most common CTF hiding tricks and is completely invisible
 # to a plain regex pass. Candidates are filtered on length and charset first so the sweep
 # decodes plausible tokens rather than every line of a multi-megabyte capture.
+_fs_decode_tokens() {
+    local codec="$1" pattern="$2" src="$4" dec="$5" tok
+    local tokens="$RUN_WORKDIR/fs.tokens"
+    _fs_matches "$pattern" "$src" "$tokens" || return $?
+    local one="$RUN_WORKDIR/fs.token.$$"
+    : > "$dec"
+    while IFS= read -r tok; do
+        # Keep padding and reject partial decoder output on invalid input. Deleting NUL
+        # bytes can join unrelated fragments into a flag that never existed.
+        if printf '%s' "$tok" | "$codec" -d > "$one" 2>/dev/null; then
+            tr '\000' '\n' < "$one" >> "$dec"
+            printf '\n' >> "$dec"
+        fi
+    done < "$tokens"
+    rm -f "$one"
+}
+
 _fs_sweep_encodings() {
-    local stage="$1" src="$2"
+    local stage="$1" src="$2" tok
+    local tokens="$RUN_WORKDIR/fs.tokens"
     [[ -s $src ]] || return 0
 
     local dec="$RUN_WORKDIR/fs.dec.$$"
 
     # base64 — length a multiple of 4, base64 alphabet, long enough to hold a flag.
-    : > "$dec"
-    while IFS= read -r tok; do
-        printf '%s' "$tok" | base64 -d 2>/dev/null | tr -d '\0' >> "$dec" 2>/dev/null
-        printf '\n' >> "$dec"
-    done < <(grep -aoE '\b[A-Za-z0-9+/]{16,}={0,2}\b' "$src" 2>/dev/null | sort -u | head -400)
-    [[ -s $dec ]] && _fs_scan_stream "$stage" base64 < "$dec"
+    _fs_decode_tokens base64 '[A-Za-z0-9+/=]{16,}' 400 "$src" "$dec" || return $?
+    if [[ -s $dec ]]; then _fs_scan_file "$stage" base64 "$dec" || return $?; fi
 
     # base32
-    : > "$dec"
-    while IFS= read -r tok; do
-        printf '%s' "$tok" | base32 -d 2>/dev/null | tr -d '\0' >> "$dec" 2>/dev/null
-        printf '\n' >> "$dec"
-    done < <(grep -aoE '\b[A-Z2-7]{16,}={0,6}\b' "$src" 2>/dev/null | sort -u | head -200)
-    [[ -s $dec ]] && _fs_scan_stream "$stage" base32 < "$dec"
+    _fs_decode_tokens base32 '[A-Z2-7=]{16,}' 200 "$src" "$dec" || return $?
+    if [[ -s $dec ]]; then _fs_scan_file "$stage" base32 "$dec" || return $?; fi
 
     # hex — even length, hex alphabet, long enough to be a string rather than an address.
     #
@@ -136,27 +151,28 @@ _fs_sweep_encodings() {
     # reason, and it looked identical to "no flag here". Rewriting each byte pair as \xNN
     # and letting printf %b expand it depends on nothing beyond the shell itself.
     : > "$dec"
+    _fs_matches '\b([0-9a-fA-F]{2}){12,}\b' "$src" "$tokens" || return $?
     while IFS= read -r tok; do
         # SC2059: the constructed \xNN string IS the format string here, deliberately.
         # SC2001: ${var//from/to} cannot express "insert before every second character",
         # which is exactly what this substitution does.
         # shellcheck disable=SC2059,SC2001
-        printf "$(sed 's/../\\x&/g' <<< "$tok")" 2>/dev/null | tr -d '\0' >> "$dec" 2>/dev/null
+        printf "$(sed 's/../\\x&/g' <<< "$tok")" 2>/dev/null | tr '\000' '\n' >> "$dec" 2>/dev/null
         printf '\n' >> "$dec"
-    done < <(grep -aoE '\b([0-9a-fA-F]{2}){12,}\b' "$src" 2>/dev/null | sort -u | head -200)
-    [[ -s $dec ]] && _fs_scan_stream "$stage" hex < "$dec"
+    done < "$tokens"
+    if [[ -s $dec ]]; then _fs_scan_file "$stage" hex "$dec" || return $?; fi
 
     # ROT13 — cheap enough to apply to the whole capture rather than picking candidates.
-    tr 'A-Za-z' 'N-ZA-Mn-za-m' < "$src" 2>/dev/null | head -c 4194304 > "$dec"
-    [[ -s $dec ]] && _fs_scan_stream "$stage" rot13 < "$dec"
+    tr 'A-Za-z' 'N-ZA-Mn-za-m' < "$src" 2>/dev/null > "$dec" || return $?
+    if [[ -s $dec ]]; then _fs_scan_file "$stage" rot13 "$dec" || return $?; fi
 
     # ROT47 — ROT13's printable-ASCII cousin, and one `tr` for the same reason.
     # Rotates the 94 printable characters by 47, so punctuation and digits move too. That
     # matters here: a flag wrapper is `picoCTF{...}`, and ROT13 leaves the braces and digits
     # untouched while ROT47 is what actually reverses the transform used by both real
     # challenges this was measured against.
-    tr '!-~' 'P-~!-O' < "$src" 2>/dev/null | head -c 4194304 > "$dec"
-    [[ -s $dec ]] && _fs_scan_stream "$stage" rot47 < "$dec"
+    tr '!-~' 'P-~!-O' < "$src" 2>/dev/null > "$dec" || return $?
+    if [[ -s $dec ]]; then _fs_scan_file "$stage" rot47 "$dec" || return $?; fi
 
     # Stack strings, from immediates the disassembly and pseudo-C already print.
     #
@@ -173,11 +189,11 @@ _fs_sweep_encodings() {
     # before printing, which the pseudo-C names outright as `rotate_encrypt`.
     if [[ -r ${REVCTF_SCRIPTS:-}/le_decode.py ]]; then
         python3 "$REVCTF_SCRIPTS/le_decode.py" < "$src" 2>/dev/null \
-            | head -c 1048576 > "$dec"
+            > "$dec" || return $?
         if [[ -s $dec ]]; then
-            _fs_scan_stream "$stage" stack-string < "$dec"
+            _fs_scan_file "$stage" stack-string "$dec" || return $?
             tr '!-~' 'P-~!-O' < "$dec" 2>/dev/null > "$dec.r47"
-            [[ -s $dec.r47 ]] && _fs_scan_stream "$stage" "stack-string+ROT47" < "$dec.r47"
+            if [[ -s $dec.r47 ]]; then _fs_scan_file "$stage" "stack-string+ROT47" "$dec.r47" || return $?; fi
             rm -f "$dec.r47"
         fi
     fi
@@ -201,13 +217,67 @@ flagscan_run() {
         return 0
     fi
 
-    local s cap
-    for s in "${STAGE_ORDER[@]}"; do
-        cap="${STAGE_OUT[$s]:-}"
-        [[ -n $cap && -s $cap ]] || continue
-        _fs_scan_stream "$s" plain < "$cap"
-        _fs_sweep_encodings "$s" "$cap"
-    done
+    local s cap rc=0 started=$SECONDS worker="$RUN_WORKDIR/flag-worker.sh"
+    local saved_mem=$ST_MEM_CEIL_MB saved_jvm=$ST_MEM_IS_JVM
+    local out="$RUN_OUTDIR/flagscan.txt" err="$RUN_OUTDIR/flagscan.stderr"
+    # Bash declarations quote paths and patterns safely; this script contains no input text.
+    {
+        printf 'set -o pipefail\n'
+        printf 'source %q\n' "$FLAGSCAN_LIBRARY"
+        declare -p OPT RUN_WORKDIR FLAG_MAX_LEN
+        printf 'REVCTF_SCRIPTS=%q\nFS_WORKER=1\n' "${REVCTF_SCRIPTS:-}"
+        for s in "${STAGE_ORDER[@]}"; do
+            case "$s" in
+                managed) [[ -f $RUN_OUTDIR/managed-full.txt ]] && continue ;;
+                radare2) [[ -f $RUN_OUTDIR/radare2-analysis.txt ]] && continue ;;
+                pydecomp) [[ -f $RUN_OUTDIR/pydecomp-1.txt ]] && continue ;;
+            esac
+            cap="${STAGE_OUT[$s]:-}"
+            [[ -n $cap && -s $cap ]] || continue
+            printf '_fs_scan_file %q plain %q || exit $?\n' "$s" "$cap"
+            printf '_fs_sweep_encodings %q %q || exit $?\n' "$s" "$cap"
+        done
+        # Full captures are retained separately from readable report previews.
+        for cap in "$RUN_OUTDIR/managed-full.txt" "$RUN_OUTDIR/radare2-analysis.txt" \
+                   "$RUN_OUTDIR/radare2-disassembly.txt" "$RUN_OUTDIR"/pydecomp-[0-9]*.txt; do
+            [[ -s $cap ]] || continue
+            s=$(basename "$cap" .txt)
+            printf '_fs_scan_file %q plain %q || exit $?\n' "$s" "$cap"
+            printf '_fs_sweep_encodings %q %q || exit $?\n' "$s" "$cap"
+        done
+    } > "$worker"
+    ST_MEM_CEIL_MB=384; ST_MEM_IS_JVM=0; ST_LIMIT_NOTE=""
+    ST_ACTIVE_STAGE=flagscan
+    stage_set_status flagscan pending
+    stage_record_exec flagscan 'bounded candidate search (384 MiB, 300 seconds by default)' 0
+    : > "$out"; : > "$err"
+    st_run_bounded "${ST_T_FLAGSCAN:-300}" "$out" "$err" -- bash "$worker" || rc=$?
+    # read only newline-terminated records: a killed write cannot invent a complete hit.
+    local conf stage enc val records=0
+    while IFS=$'\t' read -r conf stage enc val; do
+        records=$((records + 1))
+        if [[ $records -gt 10000 ]]; then
+            ST_LIMIT_NOTE="report candidate limit reached (10000 records); full worker capture retained"
+            break
+        fi
+        case "$conf" in high|medium|low) _fs_add "$conf" "$stage" "$enc" "$val" ;; esac
+    done < "$out"
+    stage_record_exec flagscan 'bounded candidate search (384 MiB, 300 seconds by default)' "$rc"
+    # Stage framework reads these shared result fields.
+    # shellcheck disable=SC2034,SC2154
+    STAGE_SECS[flagscan]=$((SECONDS - started))
+    if [[ $rc -ne 0 || -n $ST_LIMIT_NOTE ]]; then
+        mkdir -p "$RUN_OUTDIR/search-evidence"
+        for cap in "$RUN_WORKDIR"/fs.*; do
+            [[ -f $cap ]] && mv -- "$cap" "$RUN_OUTDIR/search-evidence/"
+        done
+        stage_set_status flagscan partial "candidate search incomplete (exit $rc); ${ST_LIMIT_NOTE:-see saved diagnostics}; evidence: $out"
+    else
+        stage_set_status flagscan ok "searched available captures; candidates remain UNVERIFIED"
+    fi
+    ST_MEM_CEIL_MB=$saved_mem; ST_MEM_IS_JVM=$saved_jvm
+    # shellcheck disable=SC2034
+    ST_ACTIVE_STAGE=""
 
     # Deduplicate on value, keeping the highest confidence seen for it. Without this the
     # same flag appears once per stage that saw it, and a real find is buried in repeats.
@@ -251,7 +321,14 @@ flagscan_report() {
         printf 'Flag detection was disabled (--no-flag-scan).\n'
         return 0
     fi
+    printf 'All candidates are UNVERIFIED. Confidence describes the text pattern,\n'
+    printf 'not proof that the challenge accepts the answer. Decoys can rank high.\n'
+    printf 'Search limits apply; this is not an exhaustive search (see README).\n\n'
     if [[ ${#FLAG_HITS[@]} -eq 0 ]]; then
+        if declare -F stage_incomplete >/dev/null && stage_incomplete; then
+            printf 'No candidate found in the available results; analysis was incomplete.\n'
+            return 0
+        fi
         printf 'No flag candidates were found.\n\n'
         printf 'That is not the same as "there is no flag". Check any stage marked\n'
         printf 'skipped or failed above, and consider --flag-format if this event uses\n'

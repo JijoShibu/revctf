@@ -29,9 +29,6 @@ _TIER_ROW_A="4 640 2 1024M full"
 _TIER_ROW_B="2 450 1 768M full"
 _TIER_ROW_C="1 400 1 512M light"
 
-# Every tier also carries this second, percentage-based JVM bound (v6 §5).
-TIER_JVM_RAM_PCT="${TIER_JVM_RAM_PCT:-25}"
-
 # The RSS fraction at which the M5 watchdog kills the job tree (v4 §3).
 TIER_WATCHDOG_PCT="${TIER_WATCHDOG_PCT:-90}"
 
@@ -125,6 +122,9 @@ tier_detect_ram_mb() {
 
     # v6 §5 specifies `free -m`. /proc/meminfo is the fallback for a container or a
     # stripped image where procps is absent.
+    if [[ ${RAM_MEASURED:-0} -eq 1 ]]; then
+        TIER_RAM_MB=$RAM_TOTAL_MIB; TIER_RAM_SOURCE="Linux total RAM"; return 0
+    fi
     if command -v free >/dev/null 2>&1; then
         mb="$(free -m 2>/dev/null | awk '/^Mem:/{print $2; exit}')"
         if [[ -n $mb ]] && is_uint "$mb"; then
@@ -281,7 +281,7 @@ tier_resolve() {
     tier_apply_override jobs_ghidra  TIER_JOBS_GHIDRA
     if [[ -n ${OPT[maxmem_ghidra]:-} ]]; then
         TIER_MAXMEM_GHIDRA="${OPT[maxmem_ghidra]}"
-        TIER_NOTES+=("Ghidra MAXMEM overridden to ${TIER_MAXMEM_GHIDRA} by --maxmem-ghidra.")
+        TIER_NOTES+=("Ghidra heap allowance overridden to ${TIER_MAXMEM_GHIDRA} by --maxmem-ghidra.")
     fi
     return 0
 }
@@ -298,7 +298,7 @@ tier_resolve() {
 #
 #   radare2                          the tier's radare2 ceiling
 #   strace/floss/managed/pydecomp    the Phase-2 ceiling (§7.2 Phase 2)
-#   ghidra                           the tier's Ghidra MAXMEM (§7.2 Phase 3)
+#   ghidra                           heap plus supporting memory (D14)
 #
 # The remaining Phase-1 stages (file, strings, binwalk, hexdump, checksec, objdump, ltrace,
 # triage) are deliberately left unbounded. v6 §5 gives Phase 1 a concurrency but no
@@ -317,7 +317,11 @@ tier_ceiling_for_stage() {
     case "${1:-}" in
         radare2)                                printf -v mb '%s' "$TIER_R2_CEIL_MB" ;;
         ltrace|strace|floss|managed|pydecomp)   printf -v mb '%s' "$TIER_PHASE2_CEIL_MB" ;;
-        ghidra)                                 mb="$(tier_mb_of "$TIER_MAXMEM_GHIDRA")" ;;
+        ghidra)
+            mb="$(tier_mb_of "$TIER_MAXMEM_GHIDRA")"
+            local extra=$(( (mb + 3) / 4 ))
+            [[ $extra -lt 256 ]] && extra=256
+            mb=$((mb + extra)) ;;
         *)                                      mb=0 ;;
     esac
 
@@ -371,8 +375,7 @@ tier_mb_of() {
 # therefore make Ghidra fail 100% of the time on every host WITHOUT systemd — silently
 # converting a memory bound into a total loss of the decompile stage.
 #
-# So on the ulimit fallback path a JVM stage is bounded by MAXMEM and
-# -XX:MaxRAMPercentage only, which are heap bounds the JVM enforces itself, and the report
+# On the ulimit fallback path the JVM uses its explicit heap limit; the report
 # says the bound is weaker there. Under systemd-run the ceiling is a real RSS limit and
 # applies to Ghidra exactly like anything else.
 tier_stage_is_jvm() { [[ ${1:-} == ghidra || ${1:-} == managed ]]; }
@@ -411,8 +414,8 @@ tier_report() {
     printf '  Phase-1 jobs  : %s\n' "$TIER_JOBS_LIGHT"
     printf '  radare2 cap   : %sMB\n' "$TIER_R2_CEIL_MB"
     printf '  Phase-2/3 jobs: %s\n' "$TIER_JOBS_GHIDRA"
-    printf '  Ghidra MAXMEM : %s  (plus -XX:MaxRAMPercentage=%s)\n' \
-        "$TIER_MAXMEM_GHIDRA" "$TIER_JVM_RAM_PCT"
+    printf '  Ghidra heap   : %s (requested; checked when Java runs)\n' "$TIER_MAXMEM_GHIDRA"
+    printf '  Ghidra process: %s MiB (heap plus supporting memory)\n' "$(tier_ceiling_for_stage ghidra)"
     printf '  Phase-2 cap   : %sMB\n' "$TIER_PHASE2_CEIL_MB"
     printf '  Decompilation : %s\n' "$TIER_DECOMPILE"
 
@@ -428,7 +431,7 @@ tier_report() {
         ulimit)  printf '  Enforced by   : ulimit -v (bounds virtual size, not RSS — weaker)\n'
                  printf '                  Ghidra is exempt: a JVM needs 2-4GB of virtual size to\n'
                  printf '                  start at all, so ulimit -v at these ceilings would stop it\n'
-                 printf '                  running. It is held by MAXMEM + MaxRAMPercentage instead.\n' ;;
+                 printf '                  running. Its Java heap is bounded; whole-process enforcement is unavailable.\n' ;;
         *)       printf '  Enforced by   : nothing (memory bounding disabled)\n' ;;
     esac
     printf '  Watchdog      : kills the job tree above %s%% of RAM (%sMB)\n' \

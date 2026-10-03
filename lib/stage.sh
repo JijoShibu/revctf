@@ -27,7 +27,7 @@
 #   RUN_OUTDIR     per-file capture directory (one file per stage)
 #
 # Results, keyed by stage name:
-#   STAGE_STATUS   ok | empty | failed | skipped
+#   STAGE_STATUS   ok | empty | partial | failed | skipped
 #   STAGE_NOTE     one-line human explanation (why it was skipped, what failed)
 #   STAGE_OUT      path to the captured stdout
 #   STAGE_ERR      path to the captured stderr
@@ -42,6 +42,7 @@ declare -g  RUN_ORIGINAL="" RUN_TARGET="" RUN_FORMAT="other"
 declare -g  RUN_WORKDIR=""  RUN_OUTDIR=""
 # shellcheck disable=SC2034
 declare -g  ST_OUTDIR_PREEXISTING=0 ST_SAVED_UMASK=""
+declare -g ST_OUTDIR_LOCK="" ST_ACTIVE_STAGE="" ST_LIMIT_NOTE="" RUN_INTERRUPTED_NOTE=""
 # PID of the tool currently running under stage_capture(), or empty. The abort handler
 # needs this: see the comment in stage_capture().
 declare -g  ST_CHILD_PID=""
@@ -92,9 +93,6 @@ stage_begin_file() {
     RUN_FORMAT="other"
     RUN_OUTDIR="$2"
 
-    RUN_WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/revctf-work.XXXXXX")" || return 1
-    chmod 700 "$RUN_WORKDIR" 2>/dev/null
-
     # v4 §5 wants the output directory at 700 — but only for a directory revctf creates.
     # Silently tightening a directory the user already had is a destructive surprise: point
     # --output at a shared or published location and revctf would lock everyone else out of
@@ -115,6 +113,26 @@ stage_begin_file() {
         return 1
     fi
 
+    # Never reuse captures or follow pre-existing output symlinks/hard links. Requiring
+    # an empty directory also protects an input located inside the output directory.
+    # The atomic lock prevents two revctf runs from both passing the empty check.
+    RUN_OUTDIR="$(cd -- "$RUN_OUTDIR" && pwd -P)" || return 1
+    if ! ( umask 077; mkdir -- "$RUN_OUTDIR/.revctf-lock" ) 2>/dev/null; then
+        printf 'revctf: output directory is in use or has a stale .revctf-lock: %s\nChoose a new --output directory.\n' "$RUN_OUTDIR" >&2
+        return 1
+    fi
+    ST_OUTDIR_LOCK="$RUN_OUTDIR/.revctf-lock"
+    local existing
+    if ! existing=$(find "$RUN_OUTDIR" -mindepth 1 -maxdepth 1 ! -name .revctf-lock -print -quit) || [[ -n $existing ]]; then
+        printf 'revctf: output directory must be empty: %s\nChoose a new --output directory; existing files were preserved.\n' "$RUN_OUTDIR" >&2
+        stage_end_file
+        return 1
+    fi
+    RUN_WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/revctf-work.XXXXXX")" || {
+        stage_end_file; return 1;
+    }
+    chmod 700 "$RUN_WORKDIR" 2>/dev/null
+
     # Captures can quote strings, symbols and decompiled logic from the analysed binary, so
     # they are created 0600 rather than inheriting the invoking user's umask (v4 §5). The
     # umask is scoped to this run only.
@@ -127,8 +145,18 @@ stage_begin_file() {
 }
 
 stage_end_file() {
+    if declare -F sbx_cleanup_all >/dev/null; then sbx_cleanup_all || :; fi
+    # A live container may still reference scratch files. Preserve them for recovery.
+    if [[ ${SBX_CLEANUP_FAILED:-0} -eq 1 ]]; then
+        printf 'revctf: preserving work directory for recovery: %s\n' "$RUN_WORKDIR" >&2
+    else
     [[ -n $RUN_WORKDIR && -d $RUN_WORKDIR ]] && rm -rf "$RUN_WORKDIR"
+    fi
     RUN_WORKDIR=""
+    if [[ -n $ST_OUTDIR_LOCK ]]; then
+        rmdir -- "$ST_OUTDIR_LOCK" 2>/dev/null
+        ST_OUTDIR_LOCK=""
+    fi
     [[ -n $ST_SAVED_UMASK ]] && { umask "$ST_SAVED_UMASK"; ST_SAVED_UMASK=""; }
     return 0
 }
@@ -148,6 +176,14 @@ stage_set_status() {   # <name> <status> [note]
     STAGE_STATUS[$1]="$2"
     [[ -n ${3:-} ]] && STAGE_NOTE[$1]="$3"
     return 0
+}
+
+stage_incomplete() {
+    local s
+    for s in "${STAGE_ORDER[@]}"; do
+        case ${STAGE_STATUS[$s]:-} in partial|failed|pending) return 0 ;; esac
+    done
+    return 1
 }
 
 stage_skip() { stage_set_status "$1" skipped "${2:-skipped}"; return 0; }
@@ -222,7 +258,9 @@ st_mem_prefix() {
     [[ $(st_mem_mode) == systemd ]] || return 0
     is_uint "${ST_MEM_CEIL_MB:-0}" || return 0
     [[ ${ST_MEM_CEIL_MB:-0} -gt 0 ]] || return 0
-    _pre=(systemd-run --user --scope --quiet --collect
+    _pre=(systemd-run)
+    [[ ${PF_SYSTEMD_RUN_MODE:-user} == user ]] && _pre+=(--user)
+    _pre+=(--scope --quiet --collect
           -p "MemoryMax=${ST_MEM_CEIL_MB}M"
           -p "MemorySwapMax=0"
           --)
@@ -237,13 +275,16 @@ st_mem_prefix() {
 # reserve enough space for object heap" under less. Applying the tier's 1024M/768M/512M
 # Ghidra ceiling as `ulimit -v` would make Ghidra fail on EVERY host without systemd —
 # turning a memory bound into a silent, total loss of the decompile stage. So a JVM stage
-# is left to MAXMEM and -XX:MaxRAMPercentage, which are heap bounds the JVM enforces itself.
+# is left to the explicit Java heap limit, verified by the Ghidra pre-script.
 st_mem_apply_ulimit() {
     [[ $(st_mem_mode) == ulimit ]] || return 0
     is_uint "${ST_MEM_CEIL_MB:-0}" || return 0
     [[ ${ST_MEM_CEIL_MB:-0} -gt 0 ]] || return 0
     [[ ${ST_MEM_IS_JVM:-0} -eq 1 ]] && return 0
-    ulimit -v $(( ST_MEM_CEIL_MB * 1024 )) 2>/dev/null
+    ulimit -v $(( ST_MEM_CEIL_MB * 1024 )) 2>/dev/null || {
+        printf 'revctf: could not apply process memory limit\n' >&2
+        return 1
+    }
     return 0
 }
 
@@ -269,11 +310,42 @@ st_mem_apply_ulimit() {
 declare -g ST_OWN_SESSION=0
 declare -g ST_LAST_PGID=""
 
+# Validate before arithmetic, including values supplied through the environment.
+st_output_limit_valid() {
+    [[ $ST_MAX_OUT_KB =~ ^[1-9][0-9]{0,8}$ ]]
+}
+
+st_apply_output_limit() {
+    local units=$ST_MAX_OUT_KB
+    shopt -qo posix && units=$((units * 2))
+    ulimit -f "$units" 2>/dev/null || {
+        printf 'revctf: could not apply output file limit\n' >&2
+        return 1
+    }
+}
+
+st_check_output_limit() {
+    local rc=$1 file; shift
+    if [[ $rc -eq 153 ]]; then
+        ST_LIMIT_NOTE="output file limit reached (${ST_MAX_OUT_KB} KiB); partial capture kept"
+    fi
+    for file in "$@"; do
+        if [[ -f $file ]] && [[ $(st_file_size "$file") -ge $((ST_MAX_OUT_KB * 1024)) ]]; then
+            ST_LIMIT_NOTE="capture reached the ${ST_MAX_OUT_KB} KiB file limit; completeness unverified (partial capture kept)"
+        fi
+    done
+}
+
 # Sets ST_CHILD_PID for the duration. Returns the command's exit status; never exits.
 st_run_bounded() {
     local tmo="$1" out="$2" err="$3"; shift 3
     [[ ${1:-} == "--" ]] && shift
     local rc=0
+    if ! st_output_limit_valid; then
+        ST_LIMIT_NOTE="invalid ST_MAX_OUT_KB: expected a positive integer of at most nine digits"
+        printf '%s\n' "$ST_LIMIT_NOTE" > "$err"
+        return 125
+    fi
     local -a _mempre=() _sess=()
     st_mem_prefix _mempre
     ST_LAST_PGID=""
@@ -285,7 +357,7 @@ st_run_bounded() {
     # both the session leader and the PGID. Verified, not assumed — see the orphan-sweep and
     # ceiling-breach checks in tools/run-tests.sh.
     [[ ${ST_OWN_SESSION:-0} -eq 1 ]] && _sess=(setsid)
-    # `ulimit -f` takes 512-byte blocks and is inherited by the exec'd command. `exec`
+    # The mode-aware file limit is inherited by the executed command. `exec`
     # replaces the subshell, so ST_CHILD_PID is the timeout process itself and the existing
     # kill path still works.
     #
@@ -295,13 +367,13 @@ st_run_bounded() {
     if [[ ${ST_OWN_SESSION:-0} -eq 1 ]]; then
         # stdin closed: a target that reads input must not block forever waiting for a
         # terminal that will never answer (v3 §5 step 8).
-        ( ulimit -f $(( ST_MAX_OUT_KB * 2 )) 2>/dev/null
-          st_mem_apply_ulimit
+        ( st_apply_output_limit || exit 125
+          st_mem_apply_ulimit || exit 125
           exec ${_sess[@]+"${_sess[@]}"} ${_mempre[@]+"${_mempre[@]}"} \
                timeout -k 5 "$tmo" "$@" >"$out" 2>"$err" </dev/null ) &
     else
-        ( ulimit -f $(( ST_MAX_OUT_KB * 2 )) 2>/dev/null
-          st_mem_apply_ulimit
+        ( st_apply_output_limit || exit 125
+          st_mem_apply_ulimit || exit 125
           exec ${_mempre[@]+"${_mempre[@]}"} timeout -k 5 "$tmo" "$@" >"$out" 2>"$err" ) &
     fi
     ST_CHILD_PID=$!
@@ -314,6 +386,8 @@ st_run_bounded() {
     # verified — and stage_capture turns 137 into a sentence a beginner can act on.
     wait "$ST_CHILD_PID" 2>/dev/null || rc=$?
     ST_CHILD_PID=""
+    st_check_output_limit "$rc" "$out" "$err"
+    if [[ $rc -eq 125 ]]; then ST_LIMIT_NOTE="command could not start or its resource limit could not be applied"; fi
     return "$rc"
 }
 
@@ -394,10 +468,10 @@ st_explain_kill() {
         return 0
     fi
     if [[ ${ST_MEM_CEIL_MB:-0} -gt 0 ]]; then
-        printf 'killed (SIGKILL) — most likely the %sMB memory ceiling for this stage; a timeout escalation would look identical (partial output kept)' \
+        printf 'killed (SIGKILL) — cause unconfirmed: the %sMB memory ceiling, timeout escalation or another forced stop (partial output kept)' \
             "$ST_MEM_CEIL_MB"
     else
-        printf 'killed (SIGKILL) — out of memory, or a timeout escalation after %ss (partial output kept)' "$tmo"
+        printf 'killed (SIGKILL) — cause unconfirmed: out of memory, timeout escalation after %ss or another forced stop (partial output kept)' "$tmo"
     fi
     return 0
 }
@@ -459,6 +533,8 @@ stage_write() {
 stage_run() {
     local name="$1" label="$2" fn="$3"
     local rc=0 started=$SECONDS
+    ST_ACTIVE_STAGE=$name
+    ST_LIMIT_NOTE=""
 
     _st_register "$name"
     : "${STAGE_STATUS[$name]:=pending}"
@@ -485,6 +561,17 @@ stage_run() {
 
     # Local boundary. `|| rc=$?` keeps a non-zero return from propagating anywhere.
     "$fn" || rc=$?
+
+    if [[ -n $ST_LIMIT_NOTE ]]; then
+        if [[ -s $(stage_out_path "$name") ]]; then
+            stage_set_status "$name" partial "$ST_LIMIT_NOTE"
+        else
+            stage_set_status "$name" failed "$ST_LIMIT_NOTE"
+        fi
+    elif [[ ${STAGE_STATUS[$name]:-} == failed && -s $(stage_out_path "$name") ]]; then
+        stage_set_status "$name" partial "${STAGE_NOTE[$name]:-analysis failed}; partial capture kept"
+    fi
+    ST_ACTIVE_STAGE=""
 
     ST_MEM_CEIL_MB=0
     ST_MEM_IS_JVM=0

@@ -316,6 +316,12 @@ is plain text with no escape sequences in every mode.
 
 ## 11. Deviation Register
 
+September 2026 reliability amendments: reports require an empty, run-locked output
+directory; linkage uses bounded `readelf -d` rather than `ldd`; custom Ghidra scripts must
+emit the bundled scripts' completion/error markers. These amendments preserve the input
+and distinguish partial analysis from success. See `../implementation-notes.md` for
+scope, evidence, compatibility changes and remaining audit findings.
+
 Twelve documented departures from v3/v4/v5. D1–D9 were decided during the design session;
 D10 was decided after QA review #2, once the build existed to argue about; **D11 and D12 were
 forced by measurement during M5** — it is the only one that overturns a derivation this document
@@ -336,6 +342,29 @@ made for itself rather than one inherited from v3/v4/v5.
 | D10 | **Auto-swap removed entirely**, replaced by a diagnostic | v4 §3 and v5 §3.1 ("auto-creates a 1–2GB swap file when none exists and RAM is low"), and the `--no-auto-swap` flag in v4 §9's new-flag list | Creating a swap file and writing `/etc/fstab` is a system-administration action; revctf reads a binary and writes a report. It needs privilege, mutates the host persistently, and is not what a CTF player expects an analysis tool to do. v5 gated it behind a prompt, which concedes the discomfort without resolving it — and the prompt layer is M8, so every Tier C user before M8 would have got the mutation unprompted. The underlying risk (Ghidra OOM-killed on a small host) is real, so it is now **named rather than acted on**: on Tier B/C with no active swap, `tier_resolve` reports the risk, gives both remedies (`--skip-ghidra`, or add swap yourself) and states that revctf will not modify your system. Removed: `lib/swap.sh`, `--no-auto-swap`, the `auto_swap` config key. CLI surface 28 → 27 flags. Two harness tripwires fail the build if it reappears, because v4 and v5 both still specify it. |
 
 ---
+
+### D14 — reliability and minimum-memory correction (2026-10-02)
+
+This approved correction supersedes earlier conflicting memory, cleanup and status rules.
+A scan checks real Linux total RAM before dependency probes. Below 3891 MiB (the approximate
+4 GB allocation threshold), or when measurement fails, it refuses to scan unless the user
+passes `--allow-low-memory` on the command line. The override warns at startup and in the
+report; configuration and simulated tier settings cannot bypass the check.
+
+Ghidra's heap is set explicitly and checked inside Java before analysis. Its process limit
+is heap + max(256 MiB, ceil(heap/4)); a 1024 MiB heap therefore has a 1280 MiB process cap.
+The competing MaxRAMPercentage setting is removed. A reduced retry is partial, not complete.
+
+The shared runner applies the correct Bash-mode file-size units, and Docker receives the
+same raw-file limit. A boundary capture without completion evidence is incomplete. Docker
+containers are registered before creation, identified by a unique ownership label, and
+removed through shared cleanup with a ten-second deadline and an absence check. Unknown
+cleanup outcomes preserve recovery details and block further challenge execution.
+
+Partial captures remain available and are searched for UNVERIFIED candidates. Failed or
+partial requested stages return exit 2; strict mode stops on either. Catchable interruptions
+preserve evidence and retain signal-specific exit codes. SIGKILL and host failure remain
+limitations. Four gigabytes is the tested recommendation, not a guarantee for every input.
 
 ## 12. Repo Layout
 

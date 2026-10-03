@@ -14,8 +14,8 @@
 # 2. ANALYSE ONCE. radare2's `aaa` is the expensive part by orders of magnitude: measured
 #    at 195s on a 220MB target before being OOM-killed. An earlier version of this stage
 #    ran a separate `r2 -c 'aaa; ...'` per query and paid that cost SIX times over. Every
-#    command now runs in a single session, so `aaa` happens once and the stage is bounded
-#    by one timeout rather than six.
+#    metadata query runs in one session. A second session disassembles the chosen
+#    function; each session has its own timeout.
 #
 # Also note: no `--` before the filename. radare2 takes it AS the filename and silently
 # analyses nothing, so `afl` returns zero functions and every binary looks stripped.
@@ -63,25 +63,28 @@ iz
 ?e === REVCTF-SECTION Entry points ===
 ie"
 
-    local raw="$RUN_WORKDIR/r2.raw"
+    local raw="$RUN_OUTDIR/radare2-analysis.txt"
     st_run_bounded "$ST_T_RADARE2" "$raw" "$err" \
         -- r2 -N -q -e scr.color=0 -c "$script" "$RUN_TARGET" || rc=$?
 
-    if [[ $rc -eq 124 || $rc -eq 137 ]]; then
+    if [[ $rc -ne 0 ]]; then
         {
             printf '=== radare2 ===\n'
-            printf 'Analysis was stopped after %ss (or ran out of memory).\n' "$ST_T_RADARE2"
+            printf 'Analysis did not finish (exit %s); partial output follows.\n' "$rc"
             printf 'This target is %sMB; radare2 full analysis over a large non-code blob\n' "$size_mb"
             printf 'is expensive and rarely informative. objdump above has the raw\n'
             printf 'disassembly, and binwalk has the structural view.\n'
         } > "$out"
-        cat "$raw" >> "$out" 2>/dev/null; rm -f "$raw"
+        cat "$raw" >> "$out" 2>/dev/null
         stage_record_exec "$name" "r2 -N -q -c '$analysis; ...' $RUN_TARGET" "$rc"
         # Names the real cause rather than asserting the time bound: since M5 a 137 here is
         # most likely the tier's radare2 ceiling, and reporting that as a timeout sends the
         # reader to the wrong constant.
-        stage_set_status "$name" failed \
-            "$(st_explain_kill "$rc" "$ST_T_RADARE2") on a ${size_mb}MB target"
+        if [[ $rc -eq 124 || $rc -eq 137 ]]; then
+            stage_set_status "$name" failed "$(st_explain_kill "$rc" "$ST_T_RADARE2")"
+        else
+            stage_set_status "$name" failed "radare2 analysis exited $rc (partial output kept)"
+        fi
         return 0
     fi
 
@@ -96,11 +99,13 @@ ie"
 
     # Second session, only for the disassembly itself. Re-analysing is unavoidable here
     # (r2 sessions do not persist), but it is one extra pass rather than five.
-    local dis="$RUN_WORKDIR/r2.dis"
-    st_run_bounded "$ST_T_RADARE2" "$dis" "$err" \
+    local dis="$RUN_OUTDIR/radare2-disassembly.txt"
+    st_run_bounded "$ST_T_RADARE2" "$dis" "$err.dis" \
         -- r2 -N -q -e scr.color=0 \
              -c "$analysis; s $target_sym; axt; ?e === REVCTF-SECTION Disassembly ===; pdf" \
-             "$RUN_TARGET" || true
+             "$RUN_TARGET" || rc=$?
+    cat "$err.dis" >> "$err" 2>/dev/null
+    rm -f "$err.dis"
 
     {
         printf '=== Analysis summary ===\n'
@@ -112,11 +117,17 @@ ie"
         head -n "$R2_DISASM_MAX" "$dis" 2>/dev/null | st_strip_ansi
         printf '\n(disassembly capped at %s lines)\n' "$R2_DISASM_MAX"
     } > "$out"
-    rm -f "$raw" "$dis"
+    printf '\nFull captures: %s and %s\n' "$raw" "$dis" >> "$out"
 
-    stage_record_exec "$name" "r2 -N -q -c '$analysis; s $target_sym; pdf' $RUN_TARGET" 0
-    stage_write "$name"
-    [[ ${STAGE_STATUS[$name]} == ok ]] && \
+    stage_record_exec "$name" "r2 -N -q -c '$analysis; s $target_sym; pdf' $RUN_TARGET" "$rc"
+    if [[ $rc -eq 124 || $rc -eq 137 ]]; then
+        stage_set_status "$name" failed "$(st_explain_kill "$rc" "$ST_T_RADARE2")"
+    elif [[ $rc -ne 0 ]]; then
+        stage_set_status "$name" failed "radare2 disassembly exited $rc (partial output kept)"
+    elif [[ ! -s $out ]]; then
+        stage_set_status "$name" empty "produced no output"
+    else
         stage_set_status "$name" ok "disassembled $target_sym via $how"
+    fi
     return 0
 }

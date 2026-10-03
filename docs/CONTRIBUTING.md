@@ -4,6 +4,12 @@ Read this guide before changing the project. It records development conventions,
 verified tool behavior, and maintenance procedures. Historical environment notes are
 dated context; check the current code and `README.md` before relying on them.
 
+Project author and maintainer: **Jijo Shibu <jijoshibu@gmail.com>**.
+
+For the 2.0 preview, follow [RELEASING.md](RELEASING.md) and the current
+[validation record](reliability-validation.md). The older milestone notes below explain
+previous decisions; they are not evidence that the current release passed its checks.
+
 `revctf` is a Bash CLI for Kali Linux. It takes a reverse-engineering CTF challenge file,
 runs a staged toolchain against it, and produces a
 beginner-friendly plain-text report with flag candidates at the top.
@@ -13,7 +19,13 @@ Directory scanning is planned for M7 and is not available in the current build.
 
 ## 1. Which document is authoritative
 
-Five design documents exist. They do not all agree. Resolve conflicts in this order:
+For the 2.0 preview, the current README, command help, release notes and tested behavior
+take precedence over the older design documents, especially for RAM requirements,
+exit codes, partial results and container cleanup. Update those public descriptions
+alongside any behavior change.
+
+Five older design documents record the original milestones. For historical questions,
+their intended order was:
 
 | Rank | Document | Authority |
 |---|---|---|
@@ -35,16 +47,15 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
 ## 2. Non-negotiable conventions
 
 - **Never add `set -e`.** Not at the top level of `revctf`, not in any `lib/*.sh`. v5 §4.1
-  mandates stage-level isolate-and-continue: a failing stage is diagnosed and skipped, and
-  only the RSS watchdog or an explicit user abort stops a run. A blanket `set -e` breaks
+  mandates stage-level isolate-and-continue: a failing stage is recorded as failed, and
+  `--strict` also stops on a failed or partial stage. A blanket `set -e` breaks
   exactly the guarantee the design is built on. Every `lib/` file carries a comment saying
   so — do not "helpfully" remove it.
-- **`shellcheck -S style` must be clean** across `revctf`, `install.sh`, `lib/*.sh` and
+- **ShellCheck 0.11.0 with `-S style` must be clean** across `revctf`, `install.sh`, `lib/*.sh` and
   `tools/*.sh`. The harness asserts zero findings. Cross-file `SC2034` warnings on shared
   globals get a targeted `# shellcheck disable` with a reason, never a blanket suppression.
-- **Stream to disk, never buffer in a variable.** v3 §1. A 220MB firmware image is a normal
-  CTF target. `stage_capture()` in `lib/stage.sh` is the only place external tools get run;
-  use it.
+- **Stream large captures to disk.** Use `st_run_bounded()` directly or through
+  `stage_capture()` so command time, memory and output limits remain in force.
 - **Stages never `exit`.** They return a status and record it. `stage_run()` is the error
   boundary.
 - **Only `lib/stage.sh` writes the `STAGE_*` arrays.** A stage that runs its own tool calls
@@ -102,7 +113,7 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
   thing that catches the other failure modes: `verify-harness.sh` output is a hypothesis,
   not a verdict.
 - **Never report exit 124 and 137 as the same thing.** 124 is a `timeout`; 137 is a
-  SIGKILL, which since M5 is how a cgroup memory ceiling announces itself. Six stages once
+  SIGKILL and does not by itself prove memory exhaustion. Six stages once
   reported both as "timed out after Ns", so a FLOSS run killed at its ceiling after ONE
   second was reported as "timed out after 300s" — pointing the reader at the wrong
   constant. Use `st_explain_kill()`.
@@ -114,7 +125,8 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
 - **A bound applied outside a container does not reach inside it.** `systemd-run --scope
   -p MemoryMax` wraps the *docker client*; the container is forked by `dockerd` into another
   cgroup entirely. A sandboxed stage's ceiling must therefore be passed as
-  `docker run --memory`, and its teardown must be `docker rm -f <name>` — `ST_LAST_PGID` is
+  `docker create --memory`. Register ownership before creation and use the shared,
+  bounded cleanup routine to remove and verify only owned containers. `ST_LAST_PGID` is
   the client's process group and `timeout` firing kills the client while the container keeps
   running the target. Both failures are invisible: the scan succeeds, the trace arrives, the
   report is right, and only the guarantee is missing.
@@ -138,9 +150,9 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
 
 ---
 
-## 3. Environment facts — verified, do not re-derive
+## 3. Recorded tool behavior
 
-These cost real time to discover. Each one changed the design.
+These observations explain implementation choices. Recheck them when tool versions change.
 
 **Every fact carries the tool version it was verified against, and that is not decoration.**
 This section exists so facts are not re-derived — but a fact about a third-party tool is
@@ -372,14 +384,14 @@ must decouple from Phase-3.
 
 ---
 
-## 6. Open questions
+## 6. Historical open questions and later resolutions
 
 Carried in `implementation-notes.md`, repeated here because they affect design choices:
 
 - The 1800s Ghidra time bound (v6 §7.4) is a guess — no prior masterplan bounded Ghidra by
   time at all. Measure it against a slow-path binary before trusting it.
-- FLOSS's real peak RSS is assumed, not measured. Phase 2 inherits the tier's Ghidra ceiling
-  on the argument that it matches an already-tested profile.
+- FLOSS sizing was initially an estimate. D11 below records measurements and independent
+  Phase-2 limits; do not restore the earlier heap-derived limits.
 - The tier boundaries (3.8GB / 2.5GB) are estimates, flagged as such in v4 §10. The Jython
   boundary was an estimate too, and it was wrong — treat these the same way once M5 can
   measure them.
@@ -408,3 +420,27 @@ Carried in `implementation-notes.md`, repeated here because they affect design c
   SIGHUP check fail while revctf was behaving correctly. Launch long harness runs with
   `setsid`, not `nohup`. The check now detects the ignored disposition and skips itself
   with a reason.
+
+## 7. Current review and test workflow
+
+Keep functional changes separate from broad writing or formatting edits. Use clear names,
+plain explanations and comments about behavior or tradeoffs. Preserve historical facts,
+licences and contributor credits; do not manufacture a development narrative.
+
+Basic GitHub checks run shell syntax, ShellCheck, controlled reliability/resource tests,
+and release consistency. They use hosted runners with read-only permissions and no
+deployment credentials. They do not replace Kali, Docker or Ghidra testing.
+
+For resource changes, test actual output sizes, running container identities, measured
+heap/process limits and recovered answers. A printed setting is not enforcement evidence.
+Use known answers and inspect the candidate section, not arbitrary text in a report.
+A failed or partial requested stage must produce exit 2; reduced Ghidra recovery remains
+partial. Keep complete candidates from available evidence unverified until acceptance.
+
+Test RAM simulations must identify themselves. They must not bypass the real startup
+check. Do not change VM allocation, create swap or alter parent Java options from the
+application. Heavy real-tool tests run sequentially at 4 GB.
+
+Create an isolated temporary directory for each test run, stream large fixture creation,
+and clean up only processes and containers belonging to that run. Preserve diagnostic
+files when a test fails. Record skipped checks explicitly with their reasons.

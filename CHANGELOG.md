@@ -5,10 +5,67 @@ section references (v3 §8, v5 §4.1, v6 §11) point at the design documents.
 
 ---
 
-## [Unreleased] — preparing for a public release under MIT
+## [Unreleased]
 
-No behaviour change. Everything here is licensing, layout and removing things a public
-reader should not inherit.
+Changes after the 2.0 preview will be recorded here.
+
+## [2.0.0-rc.1] — preview preparation; not published
+
+### Upgrade notes
+
+- Scanning requires at least 3891 MiB of Linux-reported total RAM, an approximate check
+  for a 4 GB VM allocation. `--allow-low-memory` is the explicit, warned override.
+- Failed or partial requested stages return exit code 2. `--strict` stops on either.
+- `--maxmem-ghidra` remains the analysis heap allowance. The whole-process limit adds
+  the larger of 256 MiB or 25% of that allowance, rounded up.
+
+### Reliability
+
+- Preserve full managed and radare2 captures beyond the report preview. Report mixed
+  Python success/failure and unprocessed files as partial, retaining each file's output.
+- Bound the final candidate worker, preserve byte boundaries during hex decoding, and
+  stream stack-string input. Removed token and byte cutoffs no longer hide later answers.
+- Propose Ghidra 12.1.4 with verified downloads and a Java output script; final Kali
+  validation is required before publication. Pin the extractor, Python tool versions,
+  and sandbox base; use a separate preview sandbox image and bound container logs.
+- Add reviewed publication with evidence checks, a seven-day preview gate, an independent
+  test requirement, security guidance, and repository protection settings.
+
+- Install Java 21 explicitly for Ghidra, even when optional Java decompilers are unavailable.
+  Retry interrupted Ghidra downloads within a time limit and remove failed partial downloads.
+- Register uniquely labelled Docker containers before startup, remove them on completion
+  or interruption, and verify cleanup within a ten-second deadline. Unconfirmed removal
+  leaves a prominent warning and recovery instructions, and prevents further execution.
+- Enforce `ST_MAX_OUT_KB` in 1024-byte units in both Bash modes and inside Docker.
+  Keep captured evidence when an output limit is reached and mark unfinished work partial.
+- Verify the actual Java heap before Ghidra analysis, including custom scripts. Keep
+  per-attempt evidence and mark a successful reduced-analysis retry partial.
+- Retain candidates from incomplete captures as UNVERIFIED. Explain when an unsuccessful
+  search could not finish.
+- Add controlled Linux resource tests, real Docker lifecycle tests, basic GitHub checks,
+  release consistency checks, and a bug-report form.
+
+See [validation results](docs/reliability-validation.md) for measured outcomes, timing,
+and outstanding release gates. No general speed improvement or automatic solving of
+every challenge is claimed.
+
+### Earlier changes included in this preview
+
+Includes release preparation and the first reliability fixes from the September audit.
+
+### Fixed
+
+- Refuse nonempty or concurrently used output directories, preserving existing files.
+- Read ELF dependencies with bounded `readelf`, without invoking `ldd` on challenges.
+- Preserve radare2 and binutils failures and partial results instead of reporting success.
+- Detect incomplete or failed Ghidra post-scripts even with nonempty output; load custom
+  scripts from their own directories.
+- Retain Base32/Base64 padding, discard invalid decoder output, and avoid joining
+  NUL-separated fragments into invented candidates.
+- Use the systemd scope mode that actually passed the startup probe.
+- Label all flag candidates unverified and document remaining search limits.
+- Add portable reliability regression checks with simulated analysis tools and benign
+  real command failures/timeouts; these do not replace Kali and Docker integration tests.
 
 ### Added
 
@@ -61,7 +118,11 @@ reader should not inherit.
 
 ---
 
-## [1.0.1] — 2026-09-01 — the from-zero install, actually run
+## [1.0.1] — 2026-09-01 — historical change record, not a published release
+
+The heading below was recorded during development, while the program still reported
+1.0.0. GitHub tags and releases checked on 2026-10-02 contain only v1.0.0 for this
+series. These changes are included in the 2.0 preview; no retrospective 1.0.1 tag is made.
 
 `install.sh` had only ever run on machines that already had the toolchain, so it could not
 detect a dependency it was missing. A throwaway `kalilinux/kali-rolling` container gave a

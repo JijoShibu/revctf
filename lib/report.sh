@@ -93,6 +93,16 @@ report_build() {
 
 _rp_emit() {
     _rp_header
+    [[ -n ${RAM_GATE_NOTE:-} ]] && printf '\nWARNING: %s\n' "$RAM_GATE_NOTE"
+    if [[ -s $RUN_OUTDIR/cleanup-warning.txt ]]; then
+        printf '\nWARNING: container cleanup needs attention.\n'
+        cat -- "$RUN_OUTDIR/cleanup-warning.txt"
+    fi
+    if [[ -n ${RUN_INTERRUPTED_NOTE:-} ]]; then
+        printf '\nINCOMPLETE ANALYSIS: %s\n' "$RUN_INTERRUPTED_NOTE"
+    elif stage_incomplete; then
+        printf '\nINCOMPLETE ANALYSIS: useful results follow, but some requested work did not finish.\n'
+    fi
     _rp_flags
     _rp_table
     _rp_resources
@@ -112,7 +122,7 @@ _rp_header() {
     printf ' revctf %s — analysis report\n' "$REVCTF_VERSION"
     # Attribution lives HERE and nowhere else in the report. The report's job is flags
     # first; a beginner must not scroll past a byline to reach the answer.
-    printf ' created by %s — MIT licence\n' "${REVCTF_AUTHOR:-Jijo Shibu}"
+    printf ' created by %s — MIT licence\n' "${REVCTF_AUTHOR:-Jijo Shibu <jijoshibu@gmail.com>}"
     _rp_bar
     printf 'Target    : %s\n' "$RUN_ORIGINAL"
     printf 'Size      : %s\n' "$(st_human_size "$(st_file_size "$RUN_ORIGINAL")")"
@@ -200,7 +210,8 @@ _rp_table() {
         printf '%-10s  %-8s  %5ss  %10s  %s\n' "$s" "$status" "$secs" "$bytes" "$note"
     done
     printf '\n'
-    printf 'ok = produced output   none = ran, found nothing   failed = see DIAGNOSTICS\n'
+    printf 'ok = step completed   empty = ran, found nothing   failed = see DIAGNOSTICS\n'
+    printf 'partial = useful output, but analysis did not finish\n'
     printf 'skipped = not applicable to this file, or disabled by a flag\n'
     return 0
 }
@@ -221,9 +232,8 @@ _rp_detail() {
             skipped)
                 printf -- '-- skipped: %s\n' "${STAGE_NOTE[$s]:-not applicable}"
                 continue ;;
-            failed)
-                printf -- '-- this stage failed; see DIAGNOSTICS below\n'
-                continue ;;
+            failed|partial)
+                printf -- '-- incomplete: %s; see DIAGNOSTICS below\n' "${STAGE_NOTE[$s]:-unknown reason}" ;;
             empty)
                 printf -- '-- ran cleanly and found nothing. That is a result, not an error.\n'
                 continue ;;
@@ -251,18 +261,18 @@ _rp_detail() {
 _rp_failures() {
     local s any=0 err
     for s in "${STAGE_ORDER[@]}"; do
-        [[ ${STAGE_STATUS[$s]:-} == failed ]] && { any=1; break; }
+        [[ ${STAGE_STATUS[$s]:-} == failed || ${STAGE_STATUS[$s]:-} == partial ]] && { any=1; break; }
     done
     [[ $any -eq 0 ]] && return 0
 
     printf '\n'
     _rp_rule
-    printf ' DIAGNOSTICS — stages that failed\n'
+    printf ' DIAGNOSTICS — stages that failed or were partial\n'
     _rp_rule
-    printf 'One failed stage never stops a run (a failure is isolated and the rest\n'
-    printf 'continue), so the report below is complete apart from these.\n'
+    printf 'By default, other stages continue after incomplete work; --strict stops early.\n'
+    printf 'Preserved output does not prove a complete search.\n'
     for s in "${STAGE_ORDER[@]}"; do
-        [[ ${STAGE_STATUS[$s]:-} == failed ]] || continue
+        [[ ${STAGE_STATUS[$s]:-} == failed || ${STAGE_STATUS[$s]:-} == partial ]] || continue
         printf '\n%s\n' "$s"
         printf '  reason  : %s\n' "${STAGE_NOTE[$s]:-no detail recorded}"
         printf '  command : %s\n' "${STAGE_CMD[$s]:-<not recorded>}"
@@ -318,10 +328,10 @@ _rp_next() {
                 printf '%d. Stage "%s" did not run (%s). If the flag is hiding there,\n' \
                     $(( ++n )) "$s" "$reason"
                 printf '   that is the gap in this report.\n' ;;
-            failed)
-                printf '%d. Stage "%s" FAILED — see DIAGNOSTICS above. That is a real gap:\n' \
+            failed|partial)
+                printf '%d. Stage "%s" was incomplete — see DIAGNOSTICS above. That is a real gap:\n' \
                     $(( ++n )) "$s"
-                printf '   the analysis it would have contributed is simply missing.\n' ;;
+                printf '   use the saved evidence, but the unfinished work remains a gap.\n' ;;
         esac
     done
 

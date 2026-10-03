@@ -1,5 +1,55 @@
 # Implementation Notes
 
+## September 2026 audit: first reliability fixes
+
+This patch addresses output collisions (F01), host-side `ldd` execution (F02), selected
+false-success paths (F05), Base32/Base64 decoding defects (F10), the systemd scope mismatch
+(F13), and custom Ghidra script lookup (part of F15). It clarifies candidate status (F08)
+and documents the existing search limits (F09); it does not remove those limits or add
+automatic answer validation.
+
+- Output directories must be empty and are locked during a run. This intentionally
+  rejects reuse of a directory from a previous scan; it avoids overwriting the original,
+  earlier reports, and pre-existing links without maintaining a fragile list of filenames.
+  The lock coordinates revctf runs, not arbitrary writers with access to the same folder.
+- `readelf -d` reads direct dependencies without the execution risk of `ldd`. It does not
+  resolve their installed paths or recursively list dependency trees.
+- Binutils commands now use `st_run_bounded`, retain partial output, and preserve failure
+  codes across later successful subcommands. Disassembly is limited after command exit,
+  avoiding a `head` pipeline that masks parser failures. Time and capture-size limits still
+  apply; this can use more temporary disk than stopping at the first 4,000 lines.
+- Both radare2 sessions now propagate nonzero exit codes. The documentation acknowledges
+  the two sessions; eliminating repeated analysis remains future work.
+- Ghidra validates the current attempt's completion markers and errors before recording
+  success. An out-of-memory retry is checked independently of the earlier diagnostics.
+  Custom scripts must implement the documented marker contract. This does not make the
+  unresolved Ghidra 12/PyGhidra launcher work, or detect every per-function decompile failure.
+- Decoders retain padding and discard partial output from invalid tokens. NUL bytes become
+  separators rather than joining unrelated text. Token budgets remain unchanged.
+- Memory-scope startup probes use the same options as the stage wrapper and retain which
+  scope succeeded. This is control-flow coverage, not measured Linux memory enforcement.
+
+Run `bash tools/test-reliability.sh` for the portable regressions, or
+`bash tools/run-tests.sh reliability` through the main harness. Set `REVCTF_TEST_ROOT` to
+another checkout to run the same assertions against old library code. Test artifacts are
+retained under the printed temporary directory for inspection. The suite checks exact
+candidate values, recorded stage status/exit codes, unchanged input contents, completion
+markers and command arguments. Analysis tools are simulated; the bounded runner also
+executes benign real failing and sleeping shell commands.
+
+Validation on the available Windows/Git Bash host: shell syntax and ShellCheck 0.11.0
+checks; portable regressions and existing documentation checks. Real symbolic-link checks
+skip where Git Bash only creates a copy. Native Kali tools, Docker teardown/isolation,
+Linux permissions, and actual 2–4 GB memory enforcement still require integration tests.
+This patch adds no runtime dependencies and does not change the tier memory budgets.
+
+Remaining priorities: interrupted-container cleanup (F03), disk/extraction/scanner resource
+budgets (F04/F12), archive member analysis (F06), broader flag coverage with per-run
+truncation notices (F09), and input-driven solving with challenge-specific acceptance
+checks (F07/F08). Installer and other tool-compatibility issues also remain in the audit.
+
+---
+
 Per execution masterplan §4: deviations from design, open questions, and conservative
 choices made when a small unknown surfaced mid-build. This is the memory a solo, unpaced
 project otherwise loses between sessions.
@@ -1510,3 +1560,24 @@ longer existed, so every docker call failed while `systemctl status docker` said
 `usermod` either — which is the part that makes people conclude the install failed). revctf
 does not unset `DOCKER_HOST` itself: that is the user's environment, and overriding it
 silently would hide the same problem again.
+
+
+## 2026-10-02 — resource reliability and accurate partial results
+
+The Kali audit reproduced a container surviving SIGTERM, a 16 KiB output setting allowing
+32 KiB, and Ghidra 11.2.1 replacing the requested heap with 2 GiB. The fixes share cleanup
+across completion and interruption, convert Bash file-limit units according to POSIX mode,
+and verify an explicit Java heap inside the running Ghidra instance. Heap and process
+memory are distinct: supporting memory must fit outside the heap, so the process limit
+adds max(256 MiB, ceil(heap/4)). No installed Ghidra files are edited.
+
+A startup check uses real total RAM independently of the existing tier simulation hook.
+The approved 3891 MiB threshold allows a VM configured with 4096 MB to pass despite Linux
+reservations. `--allow-low-memory` is command-line only. Partial results now remain visibly
+incomplete and retain their evidence; callers receive exit 2 rather than a false success.
+
+New resource and lifecycle suites exercise exact byte limits, RAM boundaries, Docker
+ownership, interruption during creation, concurrent scans, and unreachable Docker cleanup.
+The lifecycle test explicitly restores INT/HUP dispositions before launching Bash: a test
+started through nohup otherwise inherits ignored signals and cannot model a foreground scan.
+The legacy harness's emergency process cleanup is narrowed to its own generated executable.

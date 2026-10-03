@@ -21,10 +21,21 @@
 # machine and not another — with the user believing they were isolated either way — is
 # exactly that. --no-sandbox is the deliberate, stated override.
 
-declare -g SBX_IMAGE="${REVCTF_SBX_IMAGE:-revctf-sandbox:1}"
+declare -g SBX_IMAGE="${REVCTF_SBX_IMAGE:-revctf-sandbox:2.0.0-rc.1}"
 # shellcheck disable=SC2034  # read by lib/stage_dynamic.sh and the entry script, separate files
 declare -g SBX_WHY=""
 declare -g SBX_OK=-1          # -1 = not yet probed, 0 = unavailable, 1 = available
+declare -g SBX_OWNER="" SBX_CLEANUP_FAILED=0 SBX_CLEANING=0
+declare -gA SBX_OWNED=()
+
+sbx_register() {
+    if [[ -z $SBX_OWNER ]]; then
+        read -r SBX_OWNER < /proc/sys/kernel/random/uuid || return 1
+    fi
+    SBX_NAME="revctf-$SBX_OWNER-$1"
+    SBX_OWNED[$SBX_NAME]=reserved
+    printf '%s\t%s\n' "$SBX_OWNER" "$SBX_NAME" >> "$RUN_OUTDIR/container-ownership.txt"
+}
 
 # sbx_available — is the sandbox usable? Sets SBX_WHY when it is not.
 #
@@ -81,7 +92,7 @@ sbx_scratch() {
 
 # sbx_wrap <array-name> <scratch-dir> <target> <container-name> <mem-mb>
 #
-# Fills the named array with the `docker run` argv prefix. The caller appends the tracer
+# Fills the named array with the `docker create` argv prefix. The caller appends the tracer
 # command; the target is at /target (read-only) and the scratch dir is at /work.
 #
 # THE MEMORY CEILING MUST BE PASSED HERE, NOT LEFT TO systemd-run.
@@ -96,9 +107,15 @@ sbx_scratch() {
 sbx_wrap() {
     local -n _w="$1"
     local scratch="$2" target="$3" cname="$4" mem="$5"
+    # Docker -v otherwise creates a missing host path as a root-owned directory.
+    [[ -d $scratch && -f $target ]] || return 1
 
-    _w=(docker run --rm --name "$cname"
+    st_output_limit_valid || return 1
+    _w=(docker create --name "$cname"
+        --label "revctf.owner=$SBX_OWNER"
+        --ulimit "fsize=$((ST_MAX_OUT_KB * 1024)):$((ST_MAX_OUT_KB * 1024))"
         --network=none
+        --log-driver local --log-opt max-size=1m --log-opt max-file=2
         --read-only
         --cap-drop=ALL
         --security-opt no-new-privileges
@@ -123,11 +140,57 @@ sbx_wrap() {
 # dyn_sweep_orphans signals a PROCESS GROUP, and under the sandbox there is no process group
 # to signal: ST_LAST_PGID belongs to the docker client, not to anything inside the container.
 # Worse, killing the client does not stop the container — `timeout` firing on `docker run`
-# leaves the traced target running indefinitely. So teardown is unconditional and by name.
-# --rm covers the normal exit; this covers every other one.
+# leaves the traced target running indefinitely. Cleanup checks the unique ownership
+# label and verifies absence; it never removes an unregistered name.
 sbx_teardown() {
     local cname="$1"
     [[ -n $cname ]] || return 0
-    docker rm -f "$cname" >/dev/null 2>&1
-    return 0
+    [[ -n ${SBX_OWNED[$cname]:-} ]] || return 0
+    sbx_cleanup_all
+}
+
+# One deadline covers all Docker calls, including an unresponsive daemon. Pending
+# create requests are watched to the deadline, since killing the client does not
+# cancel a request already accepted by dockerd.
+sbx_cleanup_all() {
+    [[ $SBX_CLEANUP_FAILED -eq 0 ]] || return 1
+    [[ ${#SBX_OWNED[@]} -gt 0 ]] || return 0
+    [[ $SBX_CLEANING -eq 0 ]] || return 1
+    SBX_CLEANING=1
+    local deadline=$((SECONDS + 10)) left ids id cname rc=0 pending=0
+    for cname in "${!SBX_OWNED[@]}"; do
+        [[ ${SBX_OWNED[$cname]} == pending ]] && pending=1
+    done
+    while [[ $SECONDS -lt $deadline ]]; do
+        left=$((deadline - SECONDS))
+        ids=$(timeout -s KILL "${left}s" docker ps -aq --filter "label=revctf.owner=$SBX_OWNER") || { rc=1; break; }
+        if [[ -z $ids ]]; then
+            if [[ $pending -eq 0 ]]; then SBX_OWNED=(); break; fi
+            sleep 0.1
+            continue
+        fi
+        for id in $ids; do
+            left=$((deadline - SECONDS))
+            [[ $left -gt 0 ]] || { rc=1; break; }
+            timeout -s KILL "${left}s" docker rm -f "$id" >/dev/null 2>&1 || { rc=1; break; }
+        done
+        # This run issues only one creation at a time. Once its labelled container
+        # has been observed and removed, the next empty listing confirms cleanup.
+        pending=0
+        [[ $rc -eq 0 ]] || break
+    done
+    # A pending creation cannot be confirmed cancelled merely from an absent container.
+    [[ ${#SBX_OWNED[@]} -eq 0 ]] || rc=1
+    if [[ $rc -ne 0 ]]; then
+        SBX_CLEANUP_FAILED=1
+        {
+            printf 'The challenge may still be running. Docker cleanup could not be confirmed.\n'
+            printf 'Owned label: revctf.owner=%s\n' "$SBX_OWNER"
+            for cname in "${!SBX_OWNED[@]}"; do
+                printf 'Container: %s\nRecovery after checking its ownership: docker rm -f %s\n' "$cname" "$cname"
+            done
+        } | tee -a "$RUN_OUTDIR/cleanup-warning.txt" >&2
+    fi
+    SBX_CLEANING=0
+    return "$rc"
 }

@@ -10,10 +10,10 @@
 # challenges — has no library calls for ltrace to see at all, and strace is the only
 # dynamic view that works on it.
 #
-# `ldd` does not execute anything; it is folded in here because linkage is what tells you
-# whether ltrace had a chance of producing output.
+# Read linkage from ELF metadata. Never use ldd on an untrusted challenge: some
+# implementations can execute the target or its interpreter outside the sandbox.
 stage_strace() {
-    local name="strace" out err rc=0
+    local name="strace" out err rc=0 linkage_rc=0
     out="$(stage_out_path "$name")"
     err="$(stage_err_path "$name")"
 
@@ -25,10 +25,14 @@ stage_strace() {
     # Linkage first: it is cheap, it does not execute the target, and it is worth having
     # even when the trace itself is skipped.
     {
-        printf '=== Dynamic linkage (ldd) ===\n'
+        printf '=== Direct library dependencies (readelf -d; does not run the target) ===\n'
         if [[ $RUN_FORMAT == elf ]]; then
-            timeout -k 2 "$ST_T_LIGHT" ldd "$RUN_TARGET" 2>&1 \
-                || printf '(not a dynamic executable — likely statically linked)\n'
+            st_run_bounded "$ST_T_LIGHT" "$out.linkage" "$err.linkage" \
+                -- readelf -d -- "$RUN_TARGET" || linkage_rc=$?
+            cat "$out.linkage"
+            cat "$err.linkage" >> "$err"
+            rm -f "$out.linkage" "$err.linkage"
+            [[ $linkage_rc -eq 0 ]] || printf '(library metadata could not be read; exit %s)\n' "$linkage_rc"
         else
             printf '(not applicable to a %s target)\n' "$RUN_FORMAT"
         fi
@@ -36,9 +40,15 @@ stage_strace() {
     } > "$out" 2>>"$err"
 
     if ! dyn_guard "$name" strace; then
-        # Keep the ldd section: a skipped trace should not discard useful output.
+        # Keep the metadata section even when execution is unavailable.
+        local guard_status="${STAGE_STATUS[$name]:-skipped}"
+        local guard_note="${STAGE_NOTE[$name]:-not applicable}"
         stage_write "$name" ok
-        stage_set_status "$name" skipped "${STAGE_NOTE[$name]:-not applicable}; linkage still captured"
+        stage_set_status "$name" "$guard_status" "$guard_note; linkage still captured"
+        if [[ $linkage_rc -ne 0 ]]; then
+            stage_record_exec "$name" "readelf -d -- $RUN_TARGET" "$linkage_rc"
+            stage_set_status "$name" failed "library metadata failed (exit $linkage_rc); trace skipped"
+        fi
         return 0
     fi
 
@@ -51,5 +61,9 @@ stage_strace() {
 
     stage_record_exec "$name" "$(dyn_cmdline strace "$ST_T_STRACE" "-f -tt -T -o $DYN_TRACE_ARG $DYN_EXEC_ARG")" "$rc"
     dyn_finish "$name" strace "$ST_T_STRACE" "$rc"
+    if [[ $linkage_rc -ne 0 && $rc -eq 0 ]]; then
+        stage_record_exec "$name" "readelf -d -- $RUN_TARGET" "$linkage_rc"
+        stage_set_status "$name" failed "trace captured, but library metadata failed (exit $linkage_rc)"
+    fi
     return 0
 }
