@@ -61,10 +61,18 @@ partial_flag() {
     RUN_OUTDIR=$WORK RUN_WORKDIR=$WORK ST_MAX_OUT_KB=1 ST_MEM_MODE=none REVCTF_SCRIPTS=''
     produce() { stage_capture strings 5 -- bash -c 'printf "flag{early_known_answer}\n"; head -c 2048 /dev/zero; printf "flag{late_known_answer}\n"'; }
     stage_run strings strings produce
-    [[ ${STAGE_STATUS[strings]} == partial ]] || return 1
+    [[ ${STAGE_STATUS[strings]} == partial ]] || {
+        declare -p STAGE_STATUS STAGE_NOTE STAGE_RC
+        cat "$WORK/strings.stderr"
+        return 1
+    }
     flagscan_run
     flagscan_report > "$WORK/flags"
-    grep -q 'flag{early_known_answer}' "$WORK/flags" && ! grep -q 'flag{late_known_answer}' "$WORK/flags" && grep -q UNVERIFIED "$WORK/flags"
+    if ! { grep -q 'flag{early_known_answer}' "$WORK/flags" && ! grep -q 'flag{late_known_answer}' "$WORK/flags" && grep -q UNVERIFIED "$WORK/flags"; }; then
+        declare -p STAGE_STATUS STAGE_NOTE STAGE_RC FLAG_HITS
+        cat "$WORK/flagscan.stderr" "$WORK/flags" "$WORK/flag-worker.sh"
+        return 1
+    fi
 }
 check 'partial capture preserves early answer without inventing the missing one' partial_flag
 heap_budget() {

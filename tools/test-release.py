@@ -57,6 +57,12 @@ class PublicationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             release.check_stable(self.record, [], dt.datetime.now(dt.timezone.utc))
 
+    def test_null_independent_report(self):
+        self.record['independent_test'] = None
+        previews = [dict(prerelease=True, draft=False, tag_name='v2.0.0-rc.1', published_at='2026-10-03T00:00:00Z')]
+        with self.assertRaisesRegex(ValueError, 'independent Kali report'):
+            release.check_stable(self.record, previews, dt.datetime(2026, 10, 11, tzinfo=dt.timezone.utc))
+
 
 if __name__ == '__main__':
     unittest.main()
