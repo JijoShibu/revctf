@@ -281,7 +281,10 @@ st_mem_apply_ulimit() {
     is_uint "${ST_MEM_CEIL_MB:-0}" || return 0
     [[ ${ST_MEM_CEIL_MB:-0} -gt 0 ]] || return 0
     [[ ${ST_MEM_IS_JVM:-0} -eq 1 ]] && return 0
-    ulimit -v $(( ST_MEM_CEIL_MB * 1024 )) 2>/dev/null
+    ulimit -v $(( ST_MEM_CEIL_MB * 1024 )) 2>/dev/null || {
+        printf 'revctf: could not apply process memory limit\n' >&2
+        return 1
+    }
     return 0
 }
 
@@ -365,12 +368,12 @@ st_run_bounded() {
         # stdin closed: a target that reads input must not block forever waiting for a
         # terminal that will never answer (v3 §5 step 8).
         ( st_apply_output_limit || exit 125
-          st_mem_apply_ulimit
+          st_mem_apply_ulimit || exit 125
           exec ${_sess[@]+"${_sess[@]}"} ${_mempre[@]+"${_mempre[@]}"} \
                timeout -k 5 "$tmo" "$@" >"$out" 2>"$err" </dev/null ) &
     else
         ( st_apply_output_limit || exit 125
-          st_mem_apply_ulimit
+          st_mem_apply_ulimit || exit 125
           exec ${_mempre[@]+"${_mempre[@]}"} timeout -k 5 "$tmo" "$@" >"$out" 2>"$err" ) &
     fi
     ST_CHILD_PID=$!

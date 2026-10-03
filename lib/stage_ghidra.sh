@@ -48,7 +48,7 @@ stage_ghidra() {
     if [[ -n ${OPT[ghidra_script]} ]]; then
         script="${OPT[ghidra_script]}"
     elif [[ ${PF_GHIDRA_SCRIPT_KIND:-jython} == pyghidra ]]; then
-        script="$REVCTF_SCRIPTS/pyghidra_decompile.py"
+        script="$REVCTF_SCRIPTS/RevctfDecompile.java"
     else
         script="$REVCTF_SCRIPTS/jython_decompile.py"
     fi
@@ -103,6 +103,9 @@ stage_ghidra() {
 
     # _ghidra_attempt validates post-script completion as well as the launcher exit.
     stage_write "$name"
+    if grep -q '^REVCTF-PARTIAL:' "$out"; then
+        stage_set_status "$name" partial "some selected functions could not be analyzed; see preserved output"
+    fi
     return 0
 }
 

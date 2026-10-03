@@ -43,6 +43,13 @@ has_flag() {
     printf '%s\n' "${FLAG_HITS[@]}" | cut -f4- | grep -Fxq -- "$1"
 }
 scan() {
+    if [[ $(uname -s) != Linux ]]; then
+        # Windows tests exercise matching only. Linux checks use real resource limits.
+        st_run_bounded() {
+            local seconds="$1" out="$2" err="$3"; shift 4
+            timeout "$seconds" "$@" > "$out" 2> "$err"
+        }
+    fi
     setup_stage "scan-$1"
     REVCTF_SCRIPTS='' # The separate Python reconstruction heuristic is outside this suite.
     cat > "$RUN_WORKDIR/capture"
@@ -50,6 +57,7 @@ scan() {
     # shellcheck disable=SC2154  # STAGE_OUT is associative, declared by lib/stage.sh.
     STAGE_OUT=([strings]="$RUN_WORKDIR/capture")
     flagscan_run
+    [[ ${STAGE_STATUS[flagscan]} == ok ]]
 }
 test_collision() {
     local dir="$WORK/collision"
@@ -102,34 +110,34 @@ test_runner() {
     [[ $rc -eq $expected && ${STAGE_RC[probe]} -eq $expected && ${STAGE_STATUS[probe]} == failed ]] &&
         grep -qx 'partial output' "${STAGE_OUT[probe]}"
 }
-test_plain() { scan plain <<< 'flag{plain_positive}'; has_flag 'flag{plain_positive}'; }
-test_noise() { scan noise <<< 'ordinary words'; [[ ${#FLAG_HITS[@]} -eq 0 ]]; }
+test_plain() { scan plain <<< 'flag{plain_positive}' || return; has_flag 'flag{plain_positive}'; }
+test_noise() { scan noise <<< 'ordinary words' || return; [[ ${#FLAG_HITS[@]} -eq 0 ]]; }
 test_base32() {
     local n val
     for n in a ab abc abcd abcde; do
         val="flag{$n}"
         printf '%s' "$val" | base32 -w0 > "$WORK/b32"
-        scan "b32-$n" < "$WORK/b32"
+        scan "b32-$n" < "$WORK/b32" || return
         has_flag "$val" || return 1
     done
 }
 test_base64() {
     printf 'flag{base64_positive}' | base64 -w0 > "$WORK/b64"
-    scan base64 < "$WORK/b64"
+    scan base64 < "$WORK/b64" || return
     has_flag 'flag{base64_positive}'
 }
 test_bad_encoding() {
     { printf 'flag{invalid_encoding}' | base64 -w0; printf '=A'; } > "$WORK/bad64"
-    scan bad64 < "$WORK/bad64"
+    scan bad64 < "$WORK/bad64" || return
     ! has_flag 'flag{invalid_encoding}'
 }
 test_nul_encoding() {
     printf 'flag{abc\000cd}' | base64 -w0 > "$WORK/nul64"
-    scan nul64 < "$WORK/nul64"
+    scan nul64 < "$WORK/nul64" || return
     ! has_flag 'flag{abccd}'
 }
 test_unverified() {
-    scan decoy <<< 'flag{decoy}'
+    scan decoy <<< 'flag{decoy}' || return
     has_flag 'flag{decoy}' || return 1
     flagscan_report > "$WORK/flag-report"
     grep -q 'UNVERIFIED' "$WORK/flag-report" && grep -q 'Search limits' "$WORK/flag-report"
@@ -291,8 +299,13 @@ test_install_java() {
         printf '%s\n' "$*" > "$requested"
         [[ $mode != fail ]]
     }
-    analyzeHeadless() { :; }
-    _ghidra_install_root() { printf '/simulated/ghidra'; }
+    GHIDRA_DIR="$WORK/java-install-$mode"
+    local existing="$GHIDRA_DIR/ghidra_${GHIDRA_RELEASE%%_PUBLIC_*}_PUBLIC"
+    mkdir -p "$existing/support"
+    printf '#!/bin/bash\nexit 0\n' > "$existing/support/analyzeHeadless"
+    chmod +x "$existing/support/analyzeHeadless"
+    printf '%s\n' "$GHIDRA_SHA256" > "$existing/.revctf-archive.sha256"
+    link_into_prefix() { :; }
     _sync_ghidra_home() { :; }
     local rc=0
     step_ghidra > "$WORK/java-$mode.log" 2>&1 || rc=$?
