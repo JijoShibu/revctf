@@ -67,8 +67,8 @@ _fs_add() {   # <confidence> <stage> <encoding> <value>
     esac
 }
 
-# _fs_scan_stream <stage> <encoding> — read stdin, emit matches at each tier.
-# _fs_scan_stream <stage> <encoding> — read stdin, emit matches at each tier.
+# _fs_scan_file <stage> <encoding> — read stdin, emit matches at each tier.
+# _fs_scan_file <stage> <encoding> — read stdin, emit matches at each tier.
 #
 # For a DECODED stream (anything but `plain`) only known formats count. Decoding produces
 # a lot of text that coincidentally satisfies the generic `word{...}` shape: ROT13-ing a
@@ -84,10 +84,11 @@ _fs_matches() {
     rm -f -- "$dest.raw"
 }
 
-_fs_scan_stream() {
+_fs_scan_file() {
     local stage="$1" enc="$2" line pattern conf
-    local tmp="$RUN_WORKDIR/fs.input" matches="$RUN_WORKDIR/fs.matches"
-    cat > "$tmp" || return $?
+    # Read the existing capture directly. Copying a file at its size limit can
+    # fail before matching, and doubles disk work without adding evidence.
+    local src="$3"
     local -a patterns=("${OPT[flag_format]:-}" "$_FLAG_BRACED") levels=(high high)
     if [[ $enc == plain ]]; then
         patterns+=("$_FLAG_HASHLIKE" "$_FLAG_GENERIC"); levels+=(medium low)
@@ -96,14 +97,14 @@ _fs_scan_stream() {
     for i in "${!patterns[@]}"; do
         pattern=${patterns[$i]}; conf=${levels[$i]}
         [[ -n $pattern ]] || continue
-        grep --line-buffered -aoE -- "$pattern" "$tmp" | while IFS= read -r line; do
+        grep --line-buffered -aoE -- "$pattern" "$src" | while IFS= read -r line; do
             if [[ $conf == low ]] && grep -qaE -- "$_FLAG_BRACED" <<< "$line"; then continue; fi
             _fs_add "$conf" "$stage" "$enc" "$line" || return $?
         done
         local -a results=("${PIPESTATUS[@]}")
         [[ ${results[0]} -le 1 && ${results[1]} -eq 0 ]] || return 2
     done
-    rm -f -- "$tmp" "$matches"
+    return 0
 }
 
 # --- encoding sweep (v6 §6.2) ---------------------------------------------------------
@@ -136,11 +137,11 @@ _fs_sweep_encodings() {
 
     # base64 — length a multiple of 4, base64 alphabet, long enough to hold a flag.
     _fs_decode_tokens base64 '[A-Za-z0-9+/=]{16,}' 400 "$src" "$dec" || return $?
-    if [[ -s $dec ]]; then _fs_scan_stream "$stage" base64 < "$dec" || return $?; fi
+    if [[ -s $dec ]]; then _fs_scan_file "$stage" base64 "$dec" || return $?; fi
 
     # base32
     _fs_decode_tokens base32 '[A-Z2-7=]{16,}' 200 "$src" "$dec" || return $?
-    if [[ -s $dec ]]; then _fs_scan_stream "$stage" base32 < "$dec" || return $?; fi
+    if [[ -s $dec ]]; then _fs_scan_file "$stage" base32 "$dec" || return $?; fi
 
     # hex — even length, hex alphabet, long enough to be a string rather than an address.
     #
@@ -159,11 +160,11 @@ _fs_sweep_encodings() {
         printf "$(sed 's/../\\x&/g' <<< "$tok")" 2>/dev/null | tr '\000' '\n' >> "$dec" 2>/dev/null
         printf '\n' >> "$dec"
     done < "$tokens"
-    if [[ -s $dec ]]; then _fs_scan_stream "$stage" hex < "$dec" || return $?; fi
+    if [[ -s $dec ]]; then _fs_scan_file "$stage" hex "$dec" || return $?; fi
 
     # ROT13 — cheap enough to apply to the whole capture rather than picking candidates.
     tr 'A-Za-z' 'N-ZA-Mn-za-m' < "$src" 2>/dev/null > "$dec" || return $?
-    if [[ -s $dec ]]; then _fs_scan_stream "$stage" rot13 < "$dec" || return $?; fi
+    if [[ -s $dec ]]; then _fs_scan_file "$stage" rot13 "$dec" || return $?; fi
 
     # ROT47 — ROT13's printable-ASCII cousin, and one `tr` for the same reason.
     # Rotates the 94 printable characters by 47, so punctuation and digits move too. That
@@ -171,7 +172,7 @@ _fs_sweep_encodings() {
     # untouched while ROT47 is what actually reverses the transform used by both real
     # challenges this was measured against.
     tr '!-~' 'P-~!-O' < "$src" 2>/dev/null > "$dec" || return $?
-    if [[ -s $dec ]]; then _fs_scan_stream "$stage" rot47 < "$dec" || return $?; fi
+    if [[ -s $dec ]]; then _fs_scan_file "$stage" rot47 "$dec" || return $?; fi
 
     # Stack strings, from immediates the disassembly and pseudo-C already print.
     #
@@ -190,9 +191,9 @@ _fs_sweep_encodings() {
         python3 "$REVCTF_SCRIPTS/le_decode.py" < "$src" 2>/dev/null \
             > "$dec" || return $?
         if [[ -s $dec ]]; then
-            _fs_scan_stream "$stage" stack-string < "$dec" || return $?
+            _fs_scan_file "$stage" stack-string "$dec" || return $?
             tr '!-~' 'P-~!-O' < "$dec" 2>/dev/null > "$dec.r47"
-            if [[ -s $dec.r47 ]]; then _fs_scan_stream "$stage" "stack-string+ROT47" < "$dec.r47" || return $?; fi
+            if [[ -s $dec.r47 ]]; then _fs_scan_file "$stage" "stack-string+ROT47" "$dec.r47" || return $?; fi
             rm -f "$dec.r47"
         fi
     fi
@@ -233,7 +234,7 @@ flagscan_run() {
             esac
             cap="${STAGE_OUT[$s]:-}"
             [[ -n $cap && -s $cap ]] || continue
-            printf '_fs_scan_stream %q plain < %q || exit $?\n' "$s" "$cap"
+            printf '_fs_scan_file %q plain %q || exit $?\n' "$s" "$cap"
             printf '_fs_sweep_encodings %q %q || exit $?\n' "$s" "$cap"
         done
         # Full captures are retained separately from readable report previews.
@@ -241,7 +242,7 @@ flagscan_run() {
                    "$RUN_OUTDIR/radare2-disassembly.txt" "$RUN_OUTDIR"/pydecomp-[0-9]*.txt; do
             [[ -s $cap ]] || continue
             s=$(basename "$cap" .txt)
-            printf '_fs_scan_stream %q plain < %q || exit $?\n' "$s" "$cap"
+            printf '_fs_scan_file %q plain %q || exit $?\n' "$s" "$cap"
             printf '_fs_sweep_encodings %q %q || exit $?\n' "$s" "$cap"
         done
     } > "$worker"
