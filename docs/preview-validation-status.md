@@ -36,16 +36,20 @@ prove that arbitrary challenges can be solved automatically.
 The local Windows run passed 35 reliability checks and skipped three: one required
 real symbolic links and two required Linux limits. Those skips are not Kali passes.
 
-## Maintainer's manual test
+## Feedback from an outside tester
 
-On 4 October 2026, the maintainer reported testing the latest fixes branch from
-pull request #2 on Kali with 4 GB allocated. One challenge's recovered answer was
-checked as correct. This is a user-reported success; the challenge identity, saved
-report and exact tested commit have not yet been recorded or inspected.
+On 4 October 2026, the maintainer relayed successful Kali feedback, describing the
+latest fixes branch, 4 GB allocated and one challenge with its answer checked.
+The maintainer then clarified that a friend received the whole folder, performed
+the testing and said everything worked. The maintainer was not the tester.
+The friend's own test details, challenge identity, saved report and exact tested
+commit have not yet been recorded or inspected.
 
-This result adds a useful real-use example. It does not establish that the full
-resource, installation or cleanup tests passed, and it is not the separate tester's
-report required for stable 2.0.0. The publication requirements below remain open.
+This is useful outside feedback, relayed through the maintainer. It does not
+establish that the full resource, installation or cleanup tests passed. The friend
+can provide the independent report for stable 2.0.0 by testing the actual published
+preview and following the independent-test instructions. The publication
+requirements below remain open.
 
 ## Still required before the preview
 

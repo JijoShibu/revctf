@@ -9,12 +9,13 @@
     "Python transitive dependency lock and clean installation rehearsal pending"
   ],
   "independent_test": null,
-  "maintainer_manual_test": {
+  "relayed_external_test": {
     "reported_on": "2026-10-04",
     "source_reported": "Latest fixes branch / pull request #2",
     "configured_ram_mib_reported": 4096,
     "challenge_count": 1,
-    "answer_checked_correct_by_maintainer": true,
-    "evidence_status": "User-reported; saved report and exact tested commit pending inspection"
+    "tester": "Maintainer's friend; identity not recorded",
+    "feedback_reported": "Everything works fine",
+    "evidence_status": "Second-hand feedback; tester's details, saved report and exact tested commit pending inspection"
   }
 }
