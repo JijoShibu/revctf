@@ -1,6 +1,6 @@
 # Preview validation status
 
-Updated: 3 October 2026. The preview is not ready to publish.
+Updated: 4 October 2026. The preview is not ready to publish.
 
 The proposed Ghidra dependency is now 12.1.4. Earlier Kali measurements used
 11.2.1, so they are historical evidence rather than approval of the current code.
@@ -9,8 +9,8 @@ dependencies and the exact code being released.
 
 ## Completed on a temporary GitHub Linux runner
 
-[Run 37113436084](https://github.com/JijoShibu/revctf/actions/runs/37113436084)
-checked commit `b835cea74e250241b8ca34eb600226a2763e8a92`:
+[Run 37113699536](https://github.com/JijoShibu/revctf/actions/runs/37113699536)
+checked commit `d309a91d8850ccb668652d1776bd18212591c970`:
 
 | Check | Result |
 | --- | --- |
@@ -20,6 +20,7 @@ checked commit `b835cea74e250241b8ca34eb600226a2763e8a92`:
 | Linux resource tests | 33 passed, no failures |
 | Candidate accuracy and preserved evidence | 7 passed, no failures or skips |
 | Publication prerequisite tests | 8 passed |
+| Mocked publication failure and recovery tests | 8 passed |
 
 An earlier run failed the early-answer cutoff test. The search copied a saved
 capture before matching; that copy failed under the file-size limit, losing the
@@ -34,6 +35,17 @@ prove that arbitrary challenges can be solved automatically.
 
 The local Windows run passed 35 reliability checks and skipped three: one required
 real symbolic links and two required Linux limits. Those skips are not Kali passes.
+
+## Maintainer's manual test
+
+On 4 October 2026, the maintainer reported testing the latest fixes branch from
+pull request #2 on Kali with 4 GB allocated. One challenge's recovered answer was
+checked as correct. This is a user-reported success; the challenge identity, saved
+report and exact tested commit have not yet been recorded or inspected.
+
+This result adds a useful real-use example. It does not establish that the full
+resource, installation or cleanup tests passed, and it is not the separate tester's
+report required for stable 2.0.0. The publication requirements below remain open.
 
 ## Still required before the preview
 
