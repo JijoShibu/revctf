@@ -42,6 +42,14 @@ for name in ('SECURITY.md', '.github/CODEOWNERS', '.github/workflows/release.yml
              'dependencies/profile.sh', 'docs/release-evidence.json', 'docs/INDEPENDENT-TEST.md'):
     require((ROOT / name).is_file(), 'required release file missing: ' + name)
 
+installer = (ROOT / 'install.sh').read_text(encoding='utf-8')
+require('FLOSS_VENV="${FLOSS_VENV:-/opt/revctf-tools-' + version + '}"' in installer,
+        'Default Python environment name differs from the release version')
+for name in ('install.sh', 'lib/sandbox.sh'):
+    require('SBX_IMAGE="${REVCTF_SBX_IMAGE:-revctf-sandbox:' + version + '}"' in
+            (ROOT / name).read_text(encoding='utf-8'),
+            'Default sandbox tag differs from the release version: ' + name)
+
 profile = (ROOT / 'dependencies/profile.sh').read_text(encoding='utf-8')
 locked = {}
 for name in ('python-runtime-3.14-amd64.txt', 'python-build-3.14-amd64.txt'):
