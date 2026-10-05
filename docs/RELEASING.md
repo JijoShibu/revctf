@@ -117,5 +117,6 @@ needs retesting. Keep the original evidence and release history.
 
 Substantive fixes produce `rc.2`, `rc.3`, and so on, with affected checks repeated. Keep
 the stable gate open until the revised behavior has adequate review. For stable 2.0.0,
-update the program version, README, changelog, release notes and consistency checks;
+update the program version, README, changelog, release notes, installer Python-environment
+name and both default sandbox tags. The consistency check refuses mismatched defaults;
 verify the final commit and obtain a separate publication instruction.
