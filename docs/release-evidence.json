@@ -1,12 +1,35 @@
 {
   "version": "2.0.0-rc.1",
-  "runtime_sha256": null,
+  "runtime_sha256": "31c076a48c9bccd3b9a84bba5e3a29b604727a494ce957efa46f93bbaa0f356b",
   "configured_ram_mib": 4096,
   "vm_restored_16gb": false,
-  "checks": {},
+  "checks": {
+    "kali_4gb": {
+      "result": "passed",
+      "evidence": "docs/preview-validation-status.md#current-focused-kali-results"
+    },
+    "ram": {
+      "result": "passed",
+      "evidence": "33 Linux resource checks; logs/resources.log in preserved Kali validation folder"
+    },
+    "container_cleanup": {
+      "result": "passed",
+      "evidence": "9 real Docker lifecycle checks; logs/lifecycle-current.log"
+    },
+    "output_limits": {
+      "result": "passed",
+      "evidence": "Both command paths and Bash modes in logs/resources.log; Docker exact-byte check in logs/lifecycle-current.log"
+    },
+    "known_answers": {
+      "result": "passed",
+      "evidence": "ghidra-current/results.json: recovered password accepted; wrong answer rejected; 7 accuracy checks passed"
+    }
+  },
   "open_blockers": [
-    "Final Kali access and validation pending after dependency and accuracy changes",
-    "Python transitive dependency lock and clean installation rehearsal pending"
+    "Corrected full Kali regression and Ghidra overriding-launcher check pending",
+    "Clean installation, repeat installation, offline scan and upgrade/rollback checks pending",
+    "Current timing comparisons and test-verification checks pending",
+    "Preserve final evidence, verify cleanup, shut down Kali and restore 16 GB before publication"
   ],
   "independent_test": null,
   "relayed_external_test": {
@@ -17,5 +40,7 @@
     "tester": "Maintainer's friend; identity not recorded",
     "feedback_reported": "Everything works fine",
     "evidence_status": "Second-hand feedback; tester's details, saved report and exact tested commit pending inspection"
-  }
+  },
+  "validation_source_commit": "8e3dc56f846cc0000bdd6ca94f0d88ff171c66c5",
+  "linux_total_ram_mib": 3915
 }
