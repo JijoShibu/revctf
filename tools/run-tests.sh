@@ -162,9 +162,10 @@ setup_fixtures() {
     mk_fake_ghidra "$FIXTURES/ghidra_both_PUBLIC"   11.2.1 Jython PyGhidra   # both installed
     mk_fake_ghidra "$FIXTURES/ghidra_bare11_PUBLIC" 11.1.2                   # neither -> version
     mk_fake_ghidra "$FIXTURES/ghidra_bare113_PUBLIC" 11.3                    # neither -> version
-    # A separate root holding two generations, for the install-root scan and newest-wins.
+    mk_fake_ghidra "$FIXTURES/ghidra_12.1.4_PUBLIC" 12.1.4 PyGhidra
+    # Keep an older install alongside the supported release to test selection.
     mk_fake_ghidra "$FIXTURES/optroot/ghidra_10.4_PUBLIC"   10.4   Jython
-    mk_fake_ghidra "$FIXTURES/optroot/ghidra_11.2.1_PUBLIC" 11.2.1 Jython
+    mk_fake_ghidra "$FIXTURES/optroot/ghidra_12.1.4_PUBLIC" 12.1.4 PyGhidra
     # Point discovery away from the real /opt so a Ghidra installed on the build box
     # cannot make the "Ghidra absent" tests silently pass.
     export PF_OPT_ROOT="$FIXTURES/empty-opt"
@@ -256,42 +257,45 @@ EOF
     assert_exit "runs correctly through a symlink" 0 "$linkdir/revctf" scan /bin/true --skip-ghidra
 }
 
+probe_fixture_runtime() (
+    source "$ROOT/lib/preflight.sh"
+    PF_GHIDRA_HEADLESS="$1/support/analyzeHeadless"
+    pf_detect_ghidra_version || return 1
+    printf 'runtime=%s\n%s\n' "$PF_GHIDRA_SCRIPT_KIND" "$PF_NOTICES"
+)
+
 test_m1() {
     section "M1 — preflight & dependency detection"
 
-    # --- Ghidra discovery: all three documented paths ---
-    assert_match "Ghidra via GHIDRA_HOME" 'ghidra +: 11\.1\.2' \
-        env GHIDRA_HOME="$FIXTURES/ghidra_11.1.2_PUBLIC" \
+    # Discovery uses the supported release. Older layouts are tested directly below,
+    # without asking the command line to accept an unsupported dependency.
+    assert_match "Ghidra via GHIDRA_HOME" 'ghidra +: 12\.1\.4' \
+        env GHIDRA_HOME="$FIXTURES/ghidra_12.1.4_PUBLIC" \
+        "$RC" scan "$ROOT/README.md" --dry-run --verbose
+    assert_match "Ghidra via PATH" 'ghidra +: 12\.1\.4' \
+        env -u GHIDRA_HOME PATH="$FIXTURES/ghidra_12.1.4_PUBLIC/support:$PATH" \
+        "$RC" scan "$ROOT/README.md" --dry-run --verbose
+    assert_exit "unsupported Ghidra rejected" 1 \
+        env GHIDRA_HOME="$FIXTURES/ghidra_both_PUBLIC" \
         "$RC" scan "$ROOT/README.md" --verbose
-    assert_match "Ghidra via PATH" 'ghidra +: 11\.1\.2' \
-        env PATH="$FIXTURES/ghidra_11.1.2_PUBLIC/support:$PATH" \
+    assert_match "unsupported Ghidra explains required version" 'requires Ghidra 12\.1\.4' \
+        env GHIDRA_HOME="$FIXTURES/ghidra_both_PUBLIC" \
         "$RC" scan "$ROOT/README.md" --verbose
 
-    # --- post-script runtime selection ---
-    # Regression guard for a real bug: v3 §1's "11.x+ -> PyGhidra" boundary would hand a
-    # Python-3 script to Jython 2.7 on Ghidra 11.0-11.2. Selection now probes the shipped
-    # feature directory, with a corrected 11.3 version fallback.
-    assert_match "11.x shipping Jython -> jython script" 'ghidra script +: jython' \
-        env GHIDRA_HOME="$FIXTURES/ghidra_11.1.2_PUBLIC" \
-        "$RC" scan "$ROOT/README.md" --verbose
-    assert_match "10.x shipping Jython -> jython script" 'ghidra script +: jython' \
-        env GHIDRA_HOME="$FIXTURES/ghidra_10.3_PUBLIC" \
-        "$RC" scan "$ROOT/README.md" --verbose
-    assert_match "11.3 shipping PyGhidra -> pyghidra script" 'ghidra script +: pyghidra' \
-        env GHIDRA_HOME="$FIXTURES/ghidra_11.3_PUBLIC" \
-        "$RC" scan "$ROOT/README.md" --verbose
-    assert_match "both runtimes -> pyghidra" 'ghidra script +: pyghidra' \
-        env GHIDRA_HOME="$FIXTURES/ghidra_both_PUBLIC" \
-        "$RC" scan "$ROOT/README.md" --verbose
+    assert_match "11.x shipping Jython -> jython script" 'runtime=jython' \
+        probe_fixture_runtime "$FIXTURES/ghidra_11.1.2_PUBLIC"
+    assert_match "10.x shipping Jython -> jython script" 'runtime=jython' \
+        probe_fixture_runtime "$FIXTURES/ghidra_10.3_PUBLIC"
+    assert_match "11.3 shipping PyGhidra -> pyghidra script" 'runtime=pyghidra' \
+        probe_fixture_runtime "$FIXTURES/ghidra_11.3_PUBLIC"
+    assert_match "both runtimes -> pyghidra" 'runtime=pyghidra' \
+        probe_fixture_runtime "$FIXTURES/ghidra_both_PUBLIC"
     assert_match "both runtimes -> notice explains the choice" 'ships both PyGhidra and Jython' \
-        env GHIDRA_HOME="$FIXTURES/ghidra_both_PUBLIC" \
-        "$RC" scan "$ROOT/README.md" --verbose
-    assert_match "no feature dir, 11.1.2 -> version fallback picks jython" 'ghidra script +: jython' \
-        env GHIDRA_HOME="$FIXTURES/ghidra_bare11_PUBLIC" \
-        "$RC" scan "$ROOT/README.md" --verbose
-    assert_match "no feature dir, 11.3 -> version fallback picks pyghidra" 'ghidra script +: pyghidra' \
-        env GHIDRA_HOME="$FIXTURES/ghidra_bare113_PUBLIC" \
-        "$RC" scan "$ROOT/README.md" --verbose
+        probe_fixture_runtime "$FIXTURES/ghidra_both_PUBLIC"
+    assert_match "no feature dir, 11.1.2 -> version fallback picks jython" 'runtime=jython' \
+        probe_fixture_runtime "$FIXTURES/ghidra_bare11_PUBLIC"
+    assert_match "no feature dir, 11.3 -> version fallback picks pyghidra" 'runtime=pyghidra' \
+        probe_fixture_runtime "$FIXTURES/ghidra_bare113_PUBLIC"
 
     # --- discovery under $PF_OPT_ROOT, newest generation winning ---
     # This is the THIRD discovery branch, so the two ahead of it must both be absent:
@@ -300,12 +304,12 @@ test_m1() {
     # satisfied discovery before the /opt scan was ever reached, and these checks passed
     # or failed depending on whether the machine happened to have Ghidra installed.
     local noghpath; noghpath=$(mk_masked_path "analyzeHeadless" noghpath)
-    assert_match "Ghidra found by scanning the install root" 'ghidra +: 11\.2\.1' \
+    assert_match "Ghidra found by scanning the install root" 'ghidra +: 12\.1\.4' \
         env -u GHIDRA_HOME PATH="$noghpath" PF_OPT_ROOT="$FIXTURES/optroot" \
-        "$RC" scan "$ROOT/README.md" --verbose
+        "$RC" scan "$ROOT/README.md" --dry-run --verbose
     assert_match "newest of several installs is chosen" 'Multiple Ghidra installs' \
         env -u GHIDRA_HOME PATH="$noghpath" PF_OPT_ROOT="$FIXTURES/optroot" \
-        "$RC" scan "$ROOT/README.md" --verbose
+        "$RC" scan "$ROOT/README.md" --dry-run --verbose
 
     # --- Ghidra genuinely absent ---
     local nog; nog=$(mk_masked_path "analyzeHeadless" nog)
@@ -1752,7 +1756,7 @@ test_m6() {
         no "isolation contract not visible" "$c of 5 flags missing from the ltrace capture"
     fi
     assert_match "the tier's Phase-2 ceiling is passed to docker, not left to systemd" \
-        -- '--memory [0-9]+m' cat "$sb/ltrace.txt"
+        '--memory [0-9]+m' cat "$sb/ltrace.txt"
 
     assert_match "the sandboxed report still reaches the flag" \
         'flag\{cr4ckm3_s0lv3d\}' flag_section "$sb/report.txt"
@@ -1788,7 +1792,9 @@ test_m6() {
           timeout 25 docker start --attach "$SBX_NAME" )
     }
 
-    if ! timeout 25 docker run --rm --network=bridge "$SBX_IMAGE" \
+    local image
+    image=$(bash -c 'source "$1"; printf "%s" "$SBX_IMAGE"' _ "$ROOT/lib/sandbox.sh")
+    if ! timeout 25 docker run --rm --network=bridge "$image" \
             bash -c "$probe" >/dev/null 2>&1; then
         skip "no network egress from the sandbox" \
             "this host cannot reach 1.1.1.1:53 even WITH networking, so the negative result would prove nothing"
