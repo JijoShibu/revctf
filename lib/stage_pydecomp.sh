@@ -45,7 +45,7 @@ stage_pydecomp() {
         fi
     } > "$out"
 
-    local f n=0 any=0 rc=0 last_rc=0 incomplete=0 capture errors
+    local f n=0 any=0 rc=0 last_rc=0 incomplete=0 capture errors last_reason=""
     for f in "${targets[@]}"; do
         [[ -n $f && -f $f ]] || { incomplete=1; continue; }
         n=$(( n + 1 ))
@@ -80,7 +80,14 @@ stage_pydecomp() {
                 -- python3 "$REVCTF_SCRIPTS/pyc_disasm.py" "$f" || rc=$?
         fi
         [[ $rc -eq 0 ]] && any=1
-        [[ $rc -ne 0 ]] && { last_rc=$rc; incomplete=1; }
+        if [[ $rc -ne 0 ]]; then
+            last_rc=$rc; incomplete=1
+            case "$rc" in
+                124|137) last_reason="$(st_explain_kill "$rc" "$ST_T_DECOMP")" ;;
+                *)       last_reason="command exited with status $rc" ;;
+            esac
+            printf 'Stopped: %s\n' "$last_reason" >> "$errors"
+        fi
         [[ -n $ST_LIMIT_NOTE ]] && incomplete=1
         printf 'File %s: exit %s; capture %s\n' "$f" "$rc" "$capture" >> "$err"
         cat -- "$errors" >> "$err"
@@ -90,7 +97,7 @@ stage_pydecomp() {
 
     stage_record_exec "$name" "${tool:-pyc_disasm.py} <${n} bytecode file(s)>" "$last_rc"
     if [[ $incomplete -eq 1 ]]; then
-        stage_set_status "$name" partial "some bytecode files failed, were missing or exceeded a limit; individual captures preserved"
+        stage_set_status "$name" partial "some bytecode files failed, were missing or exceeded a limit; individual captures preserved${last_reason:+; last failure: $last_reason}"
     elif [[ $any -eq 1 ]]; then
         stage_write "$name" ok
         stage_set_status "$name" ok "${tool:-bytecode listing} over $n file(s)"

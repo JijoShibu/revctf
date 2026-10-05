@@ -1932,6 +1932,7 @@ test_m5enforce() {
         REVCTF_CEIL_MB=1 REVCTF_RAM_MB=8192 "$RC" scan "$CORPUS/$btgt" \
             --output "$bout" >/dev/null 2>&1
         brep="$bout/report.txt"
+        local prior_fail=$FAIL
         local bline; bline=$(grep -E "^$bst " "$brep" 2>/dev/null | head -1)
         if grep -qE "^$bst +[a-z]+ .*killed \(SIGKILL\).*1MB memory ceiling" "$brep" 2>/dev/null; then
             ok "  $bst is actually bounded (SIGKILLed at a 1MB ceiling)"
@@ -1947,7 +1948,11 @@ test_m5enforce() {
             no "$bst reports a ceiling but is not bound by it" \
                "at REVCTF_CEIL_MB=1 the stage was: ${bline:0:140}"
         fi
-        rm -rf "$bout"
+        if [[ $FAIL -eq $prior_fail ]]; then
+            rm -rf "$bout"
+        else
+            printf '         failed enforcement evidence retained: %s\n' "$bout"
+        fi
     done
 
     # --- an injected ceiling must ANNOUNCE ITSELF, in the report ----------------------
