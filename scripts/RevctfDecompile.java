@@ -16,7 +16,8 @@ public class RevctfDecompile extends GhidraScript {
     protected void run() throws Exception {
         boolean light = getScriptArgs().length > 0 && "1".equals(getScriptArgs()[0]);
         DecompInterface decompiler = new DecompInterface();
-        println("=== REVCTF-GHIDRA-BEGIN ===");
+        // Keep result markers separate from Ghidra's prefixed diagnostic logger.
+        System.out.println("=== REVCTF-GHIDRA-BEGIN ===");
         try {
             List<Function> first = new ArrayList<>();
             List<Function> rest = new ArrayList<>();
@@ -34,8 +35,8 @@ public class RevctfDecompile extends GhidraScript {
                 }
             }
             first.addAll(rest);
-            println("Program: " + currentProgram.getName());
-            println("Coverage: " + first.size() + " functions selected; " + excluded +
+            System.out.println("Program: " + currentProgram.getName());
+            System.out.println("Coverage: " + first.size() + " functions selected; " + excluded +
                     " runtime/helper functions excluded");
             if (!light && !decompiler.openProgram(currentProgram)) {
                 throw new IllegalStateException("Decompiler could not open program");
@@ -45,37 +46,37 @@ public class RevctfDecompile extends GhidraScript {
             for (Function function : first) {
                 monitor.checkCancelled();
                 if (attempted >= MAX_FUNCTIONS) {
-                    println("REVCTF-PARTIAL: function limit reached; " +
+                    System.out.println("REVCTF-PARTIAL: function limit reached; " +
                             (first.size() - attempted) + " selected functions not analyzed");
                     break;
                 }
                 attempted++;
-                println("/* ---- " + function.getName() + " @ " + function.getEntryPoint() + " ---- */");
+                System.out.println("/* ---- " + function.getName() + " @ " + function.getEntryPoint() + " ---- */");
                 if (light) {
                     continue;
                 }
                 try {
                     DecompileResults result = decompiler.decompileFunction(function, 60, monitor);
                     if (result == null || !result.decompileCompleted() || result.getDecompiledFunction() == null) {
-                        println("REVCTF-PARTIAL: function decompilation failed");
+                        System.out.println("REVCTF-PARTIAL: function decompilation failed");
                         continue;
                     }
                     // The bounded launcher limits capture size. Do not discard later lines.
-                    println(result.getDecompiledFunction().getC());
+                    System.out.println(result.getDecompiledFunction().getC());
                     recovered++;
                 } catch (Exception error) {
-                    println("REVCTF-PARTIAL: " + function.getName() + ": " + error);
+                    System.out.println("REVCTF-PARTIAL: " + function.getName() + ": " + error);
                 }
             }
-            println("Coverage: " + attempted + " attempted; " + recovered + " decompiled");
+            System.out.println("Coverage: " + attempted + " attempted; " + recovered + " decompiled");
             if (light) {
-                println("REVCTF-PARTIAL: inventory only; decompilation was not completed");
+                System.out.println("REVCTF-PARTIAL: inventory only; decompilation was not completed");
             }
         } catch (Exception error) {
-            println("REVCTF-ERROR: " + error);
+            System.out.println("REVCTF-ERROR: " + error);
         } finally {
             decompiler.dispose();
-            println("=== REVCTF-GHIDRA-END ===");
+            System.out.println("=== REVCTF-GHIDRA-END ===");
         }
     }
 }

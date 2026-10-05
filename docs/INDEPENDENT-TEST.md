@@ -26,11 +26,12 @@ For a full controlled Linux scan, install the test compiler, build the samples, 
 sudo apt install build-essential
 bash tools/build-test-corpus.sh
 revctf scan test-corpus/crackme --no-tui --output "$HOME/revctf-preview-check"
-printf '%s\n' sw0rdf1sh | test-corpus/crackme
-printf '%s\n' deliberately-wrong | test-corpus/crackme
+test-corpus/crackme sw0rdf1sh
+test-corpus/crackme deliberately-wrong
 ```
 
 The known correct password must be accepted and the deliberately wrong one rejected.
+This sample takes its password after the program name, rather than through keyboard input.
 Look for `sw0rdf1sh` in the saved Ghidra output. A possible flag marked UNVERIFIED is a
 lead; it is not proof of acceptance. Exit code 2 means at least one requested step was
 incomplete. Report that result even if another step found the answer.

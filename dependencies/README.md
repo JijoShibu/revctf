@@ -14,10 +14,14 @@ tag is specific to the preview, so an older `revctf-sandbox:1` image is not sile
 | Sandbox | Debian stable-slim digest in Dockerfile | Official Docker library image; tracers installed inside |
 
 **Final validation is pending.** Earlier Kali results used Ghidra 11.2.1. They do not
-validate 12.1.4, the Java output script, or the revised installer. The remaining Python
-dependency lock and exact installed package inventory must be completed in the final
-Kali rehearsal. `installed-versions.txt` records the environment actually installed;
-it is not by itself a dependency lock.
+validate 12.1.4, the Java output script, or the revised installer. The Python lock files
+include selected packages, their required packages and build tools, with SHA-256
+hashes. They target Kali 2026.3 with CPython 3.14 on Intel/AMD 64-bit Linux.
+Installation refuses a different Python minor version or processor architecture
+rather than silently choosing untested packages. Source packages build with the
+pinned tools, without downloading a separate build environment.
+`installed-versions.txt` records what was actually installed. Final installation and
+scan checks for this profile remain pending.
 
 Ghidra 12.1.4 was selected after reviewing the upstream security notices available on
 3 October 2026, including Windows executable import, database parsing, XML loader,

@@ -36,7 +36,9 @@ missing analysis tool reports the problem rather than claiming that step succeed
 The proposed 2.0 profile uses Ghidra 12.1.4 and verifies downloaded Ghidra and extractor
 files before installing them. Existing unrelated tools are preserved. See the
 [dependency profile](dependencies/README.md) for versions and remaining validation.
-The supported host is Kali Linux on Intel/AMD 64-bit computers; it analyzes Linux and
+The tested installation profile is Kali 2026.3 with Python 3.14 on Intel/AMD 64-bit
+computers. Python tool and build dependencies are pinned with download hashes;
+another Python version needs a separately validated profile. RevCTF analyzes Linux and
 Windows executables. A Windows host or automatic execution of Windows programs is not
 part of this release's support promise.
 

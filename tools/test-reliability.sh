@@ -318,6 +318,20 @@ test_install_java() {
     esac
 }
 
+test_python_profile_refusal() {
+    local mode="$1" attempted="$WORK/python-attempt-$1" rc=0
+    source "$ROOT/install.sh"
+    python3() { [[ $mode != missing ]] || return 127; printf '3.13\n'; }
+    if [[ $mode == architecture ]]; then python3() { printf '3.14\n'; }; fi
+    uname() { if [[ $mode == architecture ]]; then printf 'aarch64\n'; else printf 'x86_64\n'; fi; }
+    run_owner() { touch "$attempted"; return 1; }
+    step_floss > "$WORK/python-$mode.log" 2>&1 || rc=$?
+    [[ $rc -ne 0 && ${#FAILED[@]} -eq 1 && ! -e $attempted ]]
+}
+
+check 'untested Python version refuses installation before changing tools' test_python_profile_refusal version
+check 'unsupported processor refuses Python tool installation' test_python_profile_refusal architecture
+check 'missing Python records an installation failure' test_python_profile_refusal missing
 check 'installer explicitly installs the Ghidra JDK even with an existing launcher' test_install_java success
 check 'failed Ghidra JDK installation remains a failed step' test_install_java fail
 check 'explicit Ghidra installation skip does not install its JDK' test_install_java skip
