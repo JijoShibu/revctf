@@ -7,7 +7,7 @@ dated context; check the current code and `README.md` before relying on them.
 Project author and maintainer: **Jijo Shibu <jijoshibu@gmail.com>**.
 
 For the 2.0 preview, follow [RELEASING.md](RELEASING.md) and the current
-[validation record](reliability-validation.md). The older milestone notes below explain
+[current validation record](preview-validation-status.md). The older milestone notes below explain
 previous decisions; they are not evidence that the current release passed its checks.
 
 `revctf` is a Bash CLI for Kali Linux. It takes a reverse-engineering CTF challenge file,
@@ -52,7 +52,7 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
   exactly the guarantee the design is built on. Every `lib/` file carries a comment saying
   so — do not "helpfully" remove it.
 - **ShellCheck 0.11.0 with `-S style` must be clean** across `revctf`, `install.sh`, `lib/*.sh` and
-  `tools/*.sh`. The harness asserts zero findings. Cross-file `SC2034` warnings on shared
+  `tools/*.sh` and `dependencies/*.sh`. The harness asserts zero findings. Cross-file `SC2034` warnings on shared
   globals get a targeted `# shellcheck disable` with a reason, never a blanket suppression.
 - **Stream large captures to disk.** Use `st_run_bounded()` directly or through
   `stage_capture()` so command time, memory and output limits remain in force.
@@ -245,9 +245,13 @@ checked recently. Current reference host: Kali rolling, verified 2026-08-20.
 
 ---
 
-## 3b. The Kali target environment
+## 3b. Historical Kali environment notes
 
-Development moves to Kali at M5. **The chosen host is a VirtualBox Kali VM**, not WSL, for
+These notes describe the original milestone setup. For the current release, use
+[REHEARSAL.md](REHEARSAL.md): 4096 MB allocated, the tested dependency profile, and
+16384 MB restored after testing. A real 2 GB configuration has not been validated.
+
+Development moved to Kali at M5. **The chosen host is a VirtualBox Kali VM**, not WSL, for
 one decisive reason: v3 §8's memory derivation is
 `4096MB − 800MB (XFCE) − 50MB (bash) − 300MB (Docker) ≈ 2946MB`. That 800MB desktop is a
 load-bearing term. WSL has no desktop, so tier numbers measured there would show ~800MB of
@@ -288,7 +292,7 @@ The WSL notes below are kept in case the host changes:
 - **Run the development toolchain inside a Linux shell**, never in PowerShell. Native Windows has no
   `ltrace`, no `strace`, no `radare2` against ELF, no `setsid`, no process groups, no
   `ulimit -f`/`SIGXFSZ` and no POSIX permission bits — which is most of what `lib/` relies on.
-- **`install.sh` is still a stub.** Its whole dependency block is commented out while
+- **Earlier handoff: `install.sh` was still a stub.** Its dependency block was commented out while
   README calls it mandatory and preflight tells users to "re-run it (while online)" when a
   tool is missing. **Completing it is the first task after this handoff.**
   `tools/bootstrap-kali.sh` is the stopgap; note it installs FLOSS via a venv, because
@@ -315,12 +319,15 @@ lib/report.sh             report assembly                          (M4)
 lib/tui.sh                stage table / line / heartbeat, stderr   (M4)
 lib/tier.sh               RAM tiers, ceilings, per-stage limits     (M5)
 lib/watchdog.sh           global RSS watchdog; kills the job tree   (M5)
-scripts/*.py              the two Ghidra headless post-scripts     (M3)
+scripts/RevctfDecompile.java  default Ghidra output script
+scripts/*.py              legacy/custom Python Ghidra scripts
+scripts/flagscan_stream.py bounded candidate search helper
+dependencies/             tested download versions and Python hash locks
 tools/build-test-corpus.sh  regenerates the 18-artifact corpus (binaries are gitignored)
 tools/run-tests.sh        milestone-gate verification harness
 tools/tui-selftest.sh     interactive checks needing a real terminal (M4)
 tools/measure-host.sh     capture the numbers M5's constants are derived from
-tools/bootstrap-kali.sh   one-shot Kali/WSL setup — stopgap until install.sh works
+tools/bootstrap-kali.sh   optional developer setup and corpus-build tools
 ```
 
 `lib/stage.sh` is an addition to v6 §12's layout — deliberate, and recorded in
@@ -444,3 +451,15 @@ application. Heavy real-tool tests run sequentially at 4 GB.
 Create an isolated temporary directory for each test run, stream large fixture creation,
 and clean up only processes and containers belonging to that run. Preserve diagnostic
 files when a test fails. Record skipped checks explicitly with their reasons.
+
+
+When updating dependencies, keep `dependencies/profile.sh` and the Python lock files
+in agreement. Generate and test locks on the supported Python minor version and
+processor type. Install with hash verification, run `pip check`, and verify real tool
+output. A successful download is only the first check. Leave installed Ghidra files
+unchanged; use a separate installation to test an upgrade.
+
+Ghidra Java scripts must emit result markers and recovered text with
+`System.out.println`. Ghidra's `println` logger adds prefixes, so it cannot produce the
+plain completion markers expected by the result reader. Test the actual saved capture,
+including a failed custom script, whenever changing that interface.
