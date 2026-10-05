@@ -2207,7 +2207,7 @@ test_docs() {
         ok "install.sh does not use the pip method known to fail"
     fi
     if grep -q 'python3 -m venv' "$ROOT/install.sh" &&
-       grep -q 'FLOSS_VENV/bin/pip' "$ROOT/install.sh"; then
+       grep -Fq '"$FLOSS_VENV/bin/python" -m pip install' "$ROOT/install.sh"; then
         ok "install.sh installs FLOSS via a venv"
     else
         no "install.sh FLOSS method" "no venv-based FLOSS install found"
