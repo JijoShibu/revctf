@@ -72,7 +72,7 @@ vinfo() { printf '  ..    %s\n' "$1"; }
 # rules out the failure mode this script exists to catch: a check that is skipped, or
 # absent, cannot be credited with detecting anything.
 
-MUTATIONS=(ghidra_script flag_tiers tier_ceiling dyn_bypass kill_conflation sandbox_bypass)
+MUTATIONS=(ghidra_script flag_tiers tier_ceiling dyn_startup kill_conflation sandbox_bypass)
 
 mutation_meta() {
     M_DESC=""; M_FILES=(); M_SECTIONS=(); M_GREEN=(); M_EXPECT=()
@@ -125,12 +125,13 @@ mutation_meta() {
             "Tier C: Phase-2 ceiling drops with the tier"
         )
         ;;
-    dyn_bypass)
-        M_DESC="dyn_run bypasses the shared bounded runner"
+    dyn_startup)
+        M_DESC="the owned challenge container is created but never started"
         M_FILES=(lib/stage_dynamic.sh)
         M_SECTIONS=(lifecycle)
-        # The old 1 MiB tracer probe cannot run inside Docker (minimum 6 MiB).
-        # Observe the real lifecycle instead: startup, signals, timeout and ownership.
+        # Observe real challenge startup. A banner or created container cannot
+        # stand in for a running challenge. The lifecycle tests require a live
+        # container before sending signals or testing timeouts.
         M_EXPECT=("Docker lifecycle regressions")
         ;;
     sandbox_bypass)
@@ -200,23 +201,11 @@ mutation_apply() {
         perl -0pi -e 's/^tier_ceiling_for_stage\(\) \{\n.*?\n\}\n/tier_ceiling_for_stage() {\n    printf %s "0"\n    return 0\n}\n/ms' \
             "$ROOT/lib/tier.sh"
         ;;
-    dyn_bypass)
-        # A faithful revert of the bypass and nothing else: `-o` stays, so the trace is
-        # still captured and only the BOUNDING is removed. A mutation that broke two things
-        # at once could not tell us which check caught which.
-        awk '
-            /^    # shellcheck disable=SC2034  # read by st_run_bounded/ { skip=1 }
-            skip && /^    pgid="\$ST_LAST_PGID"$/ {
-                print "    setsid timeout -k 5 \"$tmo\" \"$@\" >\"$out\" 2>\"$err\" </dev/null &"
-                print "    ST_CHILD_PID=$!"
-                print "    pgid=$ST_CHILD_PID"
-                print "    wait \"$ST_CHILD_PID\" || rc=$?"
-                print "    ST_CHILD_PID=\"\""
-                skip=0; next
-            }
-            !skip
-        ' "$ROOT/lib/stage_dynamic.sh" > "$WORK/dyn.mut" \
-          && mv -f "$WORK/dyn.mut" "$ROOT/lib/stage_dynamic.sh"
+    dyn_startup)
+        # Keep ownership and cleanup intact, but prevent challenge execution.
+        # This mutation never redirects a sandboxed target onto the host.
+        # shellcheck disable=SC2016  # literal source replacement
+        sed -i 's/-- docker start --attach "$cname"/-- \/bin\/false/' "$ROOT/lib/stage_dynamic.sh"
         ;;
     sandbox_bypass)
         # One flag removed and nothing else. Docker then falls back to its default bridge
