@@ -41,4 +41,19 @@ require(len(index.splitlines()) == 2 and all(line.startswith('100755 ') for line
 for name in ('SECURITY.md', '.github/CODEOWNERS', '.github/workflows/release.yml',
              'dependencies/profile.sh', 'docs/release-evidence.json', 'docs/INDEPENDENT-TEST.md'):
     require((ROOT / name).is_file(), 'required release file missing: ' + name)
+
+profile = (ROOT / 'dependencies/profile.sh').read_text(encoding='utf-8')
+locked = {}
+for name in ('python-runtime-3.14-amd64.txt', 'python-build-3.14-amd64.txt'):
+    for line in (ROOT / 'dependencies' / name).read_text(encoding='utf-8').splitlines():
+        if not line or line.startswith('#'):
+            continue
+        entry = re.fullmatch(r'([A-Za-z0-9_.-]+)==([^ ]+) --hash=sha256:([0-9a-f]{64})', line)
+        require(entry, 'Unpinned or unhashed dependency in ' + name)
+        package = entry[1].lower().replace('_', '-')
+        require(package not in locked, 'Duplicate locked dependency: ' + package)
+        locked[package] = entry[2]
+for field, package in (('FLOSS_VERSION', 'flare-floss'), ('UNCOMPYLE6_VERSION', 'uncompyle6')):
+    expected = re.search(r'^' + field + r'=(.+)$', profile, re.M)
+    require(expected and locked.get(package) == expected[1], 'Profile and dependency lock differ: ' + package)
 print(f"Release consistency passed: v{version}; author and documentation agree")

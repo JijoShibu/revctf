@@ -260,9 +260,23 @@ step_apt() {
 
 step_floss() {
     say "FLOSS and Python bytecode tools (isolated, pinned versions)"
+    local python_version architecture
+    if ! python_version=$(python3 -c 'import sys; print("%s.%s" % sys.version_info[:2])'); then
+        FAILED+=("Python version could not be measured"); return 1
+    fi
+    architecture=$(uname -m)
+    if [[ $python_version != 3.14 || $architecture != x86_64 ]]; then
+        warn "The tested Python tools require Python 3.14 on Intel/AMD 64-bit Kali; found Python $python_version on $architecture."
+        warn "Use the tested Kali environment or review and validate another dependency profile."
+        FAILED+=("Python dependency profile does not match this environment"); return 1
+    fi
     if ! run_owner "$FLOSS_VENV" python3 -m venv "$FLOSS_VENV" ||
        ! run_owner "$FLOSS_VENV" "$FLOSS_VENV/bin/python" -m pip install \
-           --disable-pip-version-check "flare-floss==$FLOSS_VERSION" "uncompyle6==$UNCOMPYLE6_VERSION" ||
+            --disable-pip-version-check --require-hashes --only-binary=:all: \
+            -r "$REVCTF_ROOT/dependencies/python-build-3.14-amd64.txt" ||
+       ! run_owner "$FLOSS_VENV" "$FLOSS_VENV/bin/python" -m pip install \
+            --disable-pip-version-check --require-hashes --no-build-isolation \
+            -r "$REVCTF_ROOT/dependencies/python-runtime-3.14-amd64.txt" ||
        ! run_owner "$FLOSS_VENV" "$FLOSS_VENV/bin/python" -m pip check; then
         FAILED+=("isolated Python tool installation"); return 1
     fi
@@ -275,7 +289,9 @@ step_floss() {
         fi
     done
     # shellcheck disable=SC2016  # $1 is the child shell's argument.
-    run_owner "$FLOSS_VENV" bash -c '"$1/bin/python" -m pip freeze > "$1/installed-versions.txt"' bash "$FLOSS_VENV"
+    if ! run_owner "$FLOSS_VENV" bash -c '"$1/bin/python" -m pip freeze > "$1/installed-versions.txt"' bash "$FLOSS_VENV"; then
+        FAILED+=("Python installed-version record"); return 1
+    fi
 }
 
 _install_ghidra_archive() (
