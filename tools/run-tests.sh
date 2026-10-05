@@ -1180,7 +1180,7 @@ test_ghidra() {
     # revctf's own resolution is the only answer that matters, and it already prints it
     # under --verbose. Asking it also means the D12 precedence is exercised here for free.
     local gh="" root=""
-    gh=$("$RC" scan "$ROOT/README.md" --verbose 2>&1 \
+    gh=$("$RC" scan "$ROOT/README.md" --dry-run --verbose 2>&1 \
          | sed -n 's/^  ghidra  *: [^(]*(\(.*\))$/\1/p' | head -1)
     if [[ -n $gh && -x $gh ]]; then
         gh="$(readlink -f -- "$gh" 2>/dev/null || printf '%s' "$gh")"
@@ -1198,7 +1198,7 @@ test_ghidra() {
     if [[ -n $shipped ]]; then
         assert_match "detected runtime matches the shipped feature dir" \
             "ghidra script +: $shipped" \
-            env GHIDRA_HOME="$root" "$RC" scan "$ROOT/README.md" --verbose
+            env GHIDRA_HOME="$root" "$RC" scan "$ROOT/README.md" --dry-run --verbose
     else
         skip "runtime agreement" "install ships neither feature dir"
     fi
@@ -2206,7 +2206,8 @@ test_docs() {
     else
         ok "install.sh does not use the pip method known to fail"
     fi
-    if grep -qE 'venv .*floss|floss-venv' "$ROOT/install.sh"; then
+    if grep -q 'python3 -m venv' "$ROOT/install.sh" &&
+       grep -q 'FLOSS_VENV/bin/pip' "$ROOT/install.sh"; then
         ok "install.sh installs FLOSS via a venv"
     else
         no "install.sh FLOSS method" "no venv-based FLOSS install found"
