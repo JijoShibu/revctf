@@ -85,6 +85,27 @@ SH
     flagscan_run
     has 'flag{python_known_answer}' && grep -q 'preserved error' "$RUN_OUTDIR/pydecomp.stderr"
 }
+test_python_kill() {
+    setup python-kill || return
+    RUN_FORMAT=pyinstaller
+    touch "$RUN_WORKDIR/good.pyc" "$RUN_WORKDIR/killed.pyc"
+    TRIAGE_MEMBERS=("$RUN_WORKDIR/good.pyc" "$RUN_WORKDIR/killed.pyc")
+    mkdir "$RUN_WORKDIR/bin"
+    cat > "$RUN_WORKDIR/bin/pycdc" <<'SH'
+#!/bin/bash
+if [[ $1 == *killed.pyc ]]; then kill -KILL "$$"; fi
+printf 'flag{preserved_before_kill}\n'
+SH
+    chmod +x "$RUN_WORKDIR/bin/pycdc"; PATH="$RUN_WORKDIR/bin:$PATH"
+    stage_run pydecomp 'forced stop test' stage_pydecomp
+    [[ ${STAGE_STATUS[pydecomp]} == partial && ${STAGE_RC[pydecomp]} == 137 &&
+       ${STAGE_NOTE[pydecomp]} == *'killed (SIGKILL)'* &&
+       ${STAGE_NOTE[pydecomp]} == *'cause unconfirmed'* ]] || return 1
+    grep -q 'Stopped: killed (SIGKILL)' "$RUN_OUTDIR/pydecomp-2.stderr" || return 1
+    flagscan_run
+    has 'flag{preserved_before_kill}' && stage_incomplete
+}
+
 test_file_cap() {
     setup cap || return
     RUN_FORMAT=pyinstaller; PYDECOMP_MAX_FILES=1
@@ -117,6 +138,7 @@ check 'encoded answers beyond old token and byte caps survive' test_late
 check 'search timeout retains early candidates and reports partial' test_timeout
 check 'Python success followed by failure remains partial' test_mixed good
 check 'Python failure followed by success remains partial' test_mixed bad
+check 'Python forced stop preserves early results and reports an unconfirmed cause' test_python_kill
 check 'Python file cap reports incomplete work' test_file_cap
 check 'managed preview cutoff preserves the actual later answer' test_managed
 printf '\n%d passed; %d failed; %d skipped. Artifacts: %s\n' "$PASS" "$FAIL" "$SKIP" "$WORK"
