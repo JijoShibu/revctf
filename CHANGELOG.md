@@ -21,6 +21,13 @@ Changes after the 2.0 preview will be recorded here.
 
 ### Reliability
 
+- Emit Java decompiler results as plain output so Ghidra's logger does not hide the
+  completion markers or recovered text from the report reader.
+- Lock every Python runtime package and build tool by version and download hash for
+  Kali 2026.3 / Python 3.14 / Intel/AMD 64-bit. Reject unsupported profiles explicitly.
+- Update discovery tests for the supported Ghidra version and use the actual sandbox
+  image setting in Docker tests. Check the real memory argument in captured commands.
+
 - Preserve full managed and radare2 captures beyond the report preview. Report mixed
   Python success/failure and unprocessed files as partial, retaining each file's output.
 - Bound the final candidate worker, preserve byte boundaries during hex decoding, and

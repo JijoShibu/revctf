@@ -80,16 +80,24 @@ scripts must handle exit code 2; `--yes` and saved configuration cannot bypass t
 check. `--allow-low-memory` accepts the risk explicitly and leaves warnings in the report.
 
 For rollback, keep the prior checkout and record its commit before installing the preview.
-Call its executable by absolute path to avoid changing shared dependencies or PATH:
+Use its executable by absolute path and select the tools that were verified with that
+copy. An absolute executable path alone does not undo changes to `GHIDRA_HOME` or tool
+links made by installation. Record those paths before upgrading and keep the old Ghidra,
+Python environment and sandbox image available.
 
 ```bash
 /absolute/path/to/previous-revctf/revctf --version
+GHIDRA_HOME=/absolute/path/to/previous-ghidra \
+PATH="/absolute/path/to/previous-python-tools/bin:$PATH" \
+REVCTF_SBX_IMAGE=previous-verified-sandbox-tag \
 /absolute/path/to/previous-revctf/revctf scan ./challenge --output ./new-rollback-report
 ```
 
 If that checkout is unavailable, clone the previously verified tag into another directory
 and use its executable there. `v1.0.0` was the last published release when this plan was
 prepared, but contains older reliability behavior. Rollback does not repair those defects.
+If the older tools were removed, restore them in a separate environment before scanning;
+do not point an older release at the preview tools and assume compatibility.
 Do not reset a working checkout, delete reports, remove shared tools, or retag history.
 
 ## Preview feedback and stable 2.0
