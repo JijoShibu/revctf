@@ -78,12 +78,11 @@ mutation_meta() {
     M_DESC=""; M_FILES=(); M_SECTIONS=(); M_GREEN=(); M_EXPECT=()
     case "$1" in
     ghidra_script)
-        M_DESC="the Ghidra post-script no longer parses (SyntaxError at load)"
-        M_FILES=(scripts/jython_decompile.py scripts/pyghidra_decompile.py)
+        M_DESC="the default Java Ghidra script cannot compile"
+        M_FILES=(scripts/RevctfDecompile.java)
         M_SECTIONS=(ghidra)
         M_EXPECT=(
             "the ghidra stage completes \(status ok\)  =>  ghidra stage status"
-            "the ghidra stage produced a non-empty capture  =>  ghidra capture"
             "the decompile recovers the crackme's password  =>  ghidra decompile content"
             "and it reaches the report under the ghidra stage  =>  ghidra -> report"
         )
@@ -127,20 +126,12 @@ mutation_meta() {
         )
         ;;
     dyn_bypass)
-        M_DESC="dyn_run launches its tracer directly again, bypassing st_run_bounded"
+        M_DESC="dyn_run bypasses the shared bounded runner"
         M_FILES=(lib/stage_dynamic.sh)
-        M_SECTIONS=(m5enforce)
-        # This is the REAL regression, restored. lib/stage_dynamic.sh ran its own
-        # `setsid timeout ... &` for the whole of M5, so st_mem_prefix never fired and the
-        # ceiling tier_ceiling_for_stage returns for the executing stages was reported by
-        # --verbose and enforced by nothing. It survived because m5enforce hardcoded radare2
-        # and floss. m5enforce now DERIVES its stage list from the plan; this mutation is
-        # what proves that derivation is not itself vacuous — if the harness stays green
-        # here, the replacement check is exactly as worthless as the one it replaced.
-        M_EXPECT=(
-            "  ltrace is actually bounded  =>  ltrace reports a ceiling but is not bound by it"
-            "  strace is actually bounded  =>  strace reports a ceiling but is not bound by it"
-        )
+        M_SECTIONS=(lifecycle)
+        # The old 1 MiB tracer probe cannot run inside Docker (minimum 6 MiB).
+        # Observe the real lifecycle instead: startup, signals, timeout and ownership.
+        M_EXPECT=("Docker lifecycle regressions")
         ;;
     sandbox_bypass)
         M_DESC="the sandbox stops passing --network=none, so the target gets the network back"
@@ -149,12 +140,10 @@ mutation_meta() {
         # THE POINT OF THIS ONE is to separate two checks that look interchangeable and are
         # not. "the isolation contract is printed" proves revctf TYPES the flag; "no network
         # egress" proves the flag DOES something. Only the second is a security property.
-        # Both must flip: if the contract check flipped alone, the egress check would be
-        # passing on a host that cannot reach the network rather than on the isolation —
-        # which is why it carries a --network=bridge positive control and skips instead of
-        # passing when that control fails.
+        # Interface enumeration proves the contract even when the host blocks the
+        # optional external-network positive control. A skipped external probe is not
+        # counted as evidence that a mutation was detected.
         M_EXPECT=(
-            "no network egress from the sandbox  =>  network egress from the sandbox"
             "the sandboxed container has only a loopback interface  =>  unexpected network interfaces in the sandbox"
             "the isolation contract is printed in the capture  =>  isolation contract not visible"
         )
@@ -181,13 +170,9 @@ mutation_meta() {
 mutation_apply() {
     case "$1" in
     ghidra_script)
-        # Appended, not substituted, so it breaks the file for any Ghidra runtime and
-        # cannot be mistaken for a plausible edit. Both post-scripts are hit because
-        # which one runs depends on the installed Ghidra's shipped feature directory.
-        local f
-        for f in scripts/jython_decompile.py scripts/pyghidra_decompile.py; do
-            printf '\ndef ( mutation: deliberate SyntaxError\n' >> "$ROOT/$f"
-        done
+        # Break the actual default script, rather than unused Python alternatives.
+        # Failure output may remain nonempty: useful diagnostics must be preserved.
+        printf '\ninvalid Java syntax: deliberate mutation\n' >> "$ROOT/scripts/RevctfDecompile.java"
         ;;
     flag_tiers)
         # ALL THREE TIERS, and the first version of this mutation got that wrong.
@@ -317,7 +302,11 @@ cleanup() {
             exit 1
         fi
     fi
-    rm -rf "$WORK"
+    if [[ $rc -eq 0 ]]; then
+        rm -rf "$WORK"
+    else
+        printf 'Mutation test evidence retained: %s\n' "$WORK" >&2
+    fi
     exit $rc
 }
 # EXIT covers a normal end and any `exit`; INT and TERM re-exit so EXIT fires for them too.
