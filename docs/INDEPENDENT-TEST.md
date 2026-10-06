@@ -1,11 +1,12 @@
-# Testing the preview on another Kali computer
+# Testing a release on another Kali computer
 
-The preview needs one report from someone other than its maintainer, using a separate
-Kali installation. No specialist knowledge is required. Use Kali on an Intel/AMD 64-bit
+Outside test reports help us find problems on a separate Kali installation. The
+maintainer waived this requirement for 2.0.0; reports remain welcome. No specialist
+knowledge is required. Use Kali on an Intel/AMD 64-bit
 computer, with at least 4096 MB allocated memory. Make a VM snapshot before installation.
 
-Wait until the preview is actually published. Replace the tag below only if the maintainer
-asks you to test a newer preview. Keep the installation folder for rollback.
+Wait until the named release is actually published. Replace the tag below only if the
+maintainer asks you to test another version. Keep the installation folder for rollback.
 
 ```bash
 sudo apt update
@@ -41,7 +42,7 @@ folder. It should use the installed tools without downloading anything.
 
 Open a GitHub issue using the bug-report form. Include:
 
-- The exact preview version and source commit (`git rev-parse HEAD`).
+- The exact release version and source commit (`git rev-parse HEAD`).
 - Kali version (`cat /etc/os-release`), allocated RAM, and `free -m` output.
 - Installation result, test totals, every failure or skip, and commands used.
 - Whether the correct password was found and independently accepted.
@@ -49,4 +50,4 @@ Open a GitHub issue using the bug-report form. Include:
 
 Remove passwords, account tokens, personal paths, and private challenge material.
 Only the known public test password above belongs in this report. The maintainer will
-review the issue and record the result before promoting a preview to stable 2.0.0.
+review the issue and record its findings for fixes and future release decisions.

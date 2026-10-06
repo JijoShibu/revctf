@@ -4,10 +4,10 @@ Report vulnerabilities through [GitHub's private reporting form](https://github.
 Include the version, command, environment, and a small example that we may share with other maintainers.
 Remove passwords, personal information, and private challenge material. Do not publish an exploit against another person's service.
 
-The 2.0 preview is under validation. Stable 2.0 support begins when it is published;
+Version 2.0.0 is under final validation. Stable 2.0 support begins when it is published;
 1.x does not provide the same resource and incomplete-result safeguards.
 Confirmed problems affecting answers, installation, saved files, isolation, or resource limits
-block promotion of a preview. Security fixes use a new release; published tags are never moved.
+block publication. Security fixes use a new release; published tags are never moved.
 Response times depend on maintainer availability.
 
 Use a disposable Kali amd64 VM for untrusted files. Keep personal files, shared folders,

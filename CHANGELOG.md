@@ -21,6 +21,8 @@ Changes after 2.0.0 will be recorded here.
 
 ### Reliability
 
+- Reject the unimplemented `stages_disabled` configuration key with a warning, and
+  remove the dry-run claim that it disables steps which actually still run.
 - Emit Java decompiler results as plain output so Ghidra's logger does not hide the
   completion markers or recovered text from the report reader.
 - Lock every Python runtime package and build tool by version and download hash for
