@@ -13,17 +13,19 @@ tag is specific to the release, so an older `revctf-sandbox:1` image is not sile
 | PyInstaller extractor | Commit in `profile.sh` | Upstream source at that commit; SHA-256 verified before use |
 | Sandbox | Debian stable-slim digest in Dockerfile | Official Docker library image; tracers installed inside |
 
-**Final stable validation is pending.** Focused Kali checks have measured Ghidra 12.1.4
-heaps, recovered a known password and checked its acceptance. The earlier 11.2.1
-measurements remain historical. Final checks must cover the 2.0.0 defaults too. The Python lock files
+The 2.0.0 profile was checked on a real 4 GB Kali VM. Ghidra 12.1.4 heaps and
+process limits were measured, a known password was recovered and accepted, and
+an overriding launcher was rejected. The earlier 11.2.1 results remain historical. The Python lock files
 include selected packages, their required packages and build tools, with SHA-256
 hashes. They target Kali 2026.3 with CPython 3.14 on Intel/AMD 64-bit Linux.
 Installation refuses a different Python minor version or processor architecture
 rather than silently choosing untested packages. Source packages build with the
 pinned tools, without downloading a separate build environment.
-`installed-versions.txt` records what was actually installed. Clean installation, repeat
-installation and an offline scan passed before the final version change; the final
-2.0.0 installation rehearsal remains required.
+`installed-versions.txt` records the Python packages actually installed. System package
+versions are recorded separately during rehearsal. Clean installation, repeat installation
+and an offline known-answer scan passed with the 2.0.0 defaults. Optional
+`procyon-decompiler` and `jd-cli` were unavailable and are outside the core native-file
+support promise. See [validation results](../docs/stable-validation-status.md).
 
 Ghidra 12.1.4 was selected after reviewing the upstream security notices available on
 3 October 2026, including Windows executable import, database parsing, XML loader,

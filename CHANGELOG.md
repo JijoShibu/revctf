@@ -9,7 +9,7 @@ section references (v3 §8, v5 §4.1, v6 §11) point at the design documents.
 
 Changes after 2.0.0 will be recorded here.
 
-## [2.0.0] — release preparation
+## [2.0.0] — 2026-10-06
 
 ### Upgrade notes
 
@@ -56,8 +56,8 @@ Changes after 2.0.0 will be recorded here.
 - Add controlled Linux resource tests, real Docker lifecycle tests, basic GitHub checks,
   release consistency checks, and a bug-report form.
 
-See [validation results](docs/reliability-validation.md) for measured outcomes, timing,
-and outstanding release gates. No general speed improvement or automatic solving of
+See [current validation results](docs/stable-validation-status.md) for measured outcomes,
+timing, failures and skips. Earlier records remain available for comparison. No general speed improvement or automatic solving of
 every challenge is claimed.
 
 ### Earlier changes included in 2.0.0
