@@ -132,7 +132,12 @@ def build(destination, expected_version):
                     raise ValueError('Possible credential in archive: ' + member.name)
     destination.mkdir(parents=True, exist_ok=True)
     name = 'revctf-' + expected_version + '.tar.gz'
-    packed = gzip.compress(archive, mtime=0)
+    # Python 3.11/3.12's compress() can put the host OS in the header.
+    # Keep the package header identical on the review machine and hosted runner.
+    buffer = io.BytesIO()
+    with gzip.GzipFile(fileobj=buffer, mode='wb', filename='', mtime=0) as stream:
+        stream.write(archive)
+    packed = buffer.getvalue()
     checksum = hashlib.sha256(packed).hexdigest()
     (destination / name).write_bytes(packed)
     (destination / (name + '.sha256')).write_text(checksum + '  ' + name + '\n')
