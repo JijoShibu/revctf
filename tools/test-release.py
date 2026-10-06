@@ -3,8 +3,15 @@
 import copy
 import datetime as dt
 import importlib.util
+import gzip
+import hashlib
+import io
+import json
 from pathlib import Path
+import tarfile
+import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('release', Path(__file__).with_name('release.py'))
 release = importlib.util.module_from_spec(spec)
@@ -19,6 +26,44 @@ class PublicationTests(unittest.TestCase):
 
     def test_complete_evidence(self):
         release.validate_evidence(self.record, '2.0.0-rc.1', 'a' * 64)
+
+    def build_sample(self, destination, name='revctf'):
+        tar = io.BytesIO()
+        payload = b'controlled source bytes\n'
+        with tarfile.open(fileobj=tar, mode='w') as archive:
+            member = tarfile.TarInfo('revctf-2.0.0/' + name)
+            member.size = len(payload)
+            member.mode = 0o755
+            archive.addfile(member, io.BytesIO(payload))
+        with patch.object(release, 'version', return_value='2.0.0'), \
+             patch.object(release, 'git', side_effect=['b' * 40, '']), \
+             patch.object(release, 'runtime_digest', return_value='a' * 64), \
+             patch.object(release.subprocess, 'check_output', return_value=tar.getvalue()):
+            return release.build(destination, '2.0.0')
+
+    def test_source_package_identity_and_repeatability(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            first, second = Path(temporary) / 'first', Path(temporary) / 'second'
+            digest = self.build_sample(first)
+            self.assertEqual(digest, self.build_sample(second))
+            data = (first / 'revctf-2.0.0.tar.gz').read_bytes()
+            self.assertEqual(data, (second / 'revctf-2.0.0.tar.gz').read_bytes())
+            self.assertEqual(data[4:8], b'\0' * 4)  # no build timestamp
+            self.assertEqual(data[9], 255)  # no platform-specific OS byte
+            self.assertEqual(digest, hashlib.sha256(data).hexdigest())
+            manifest = json.loads((first / 'manifest.json').read_text())
+            self.assertEqual(manifest['source_commit'], 'b' * 40)
+            self.assertEqual(manifest['sha256'], digest)
+            with tarfile.open(fileobj=io.BytesIO(gzip.decompress(data))) as archive:
+                member = archive.getmember('revctf-2.0.0/revctf')
+                self.assertEqual(member.mode, 0o755)
+                self.assertEqual(archive.extractfile(member).read(), b'controlled source bytes\n')
+
+    def test_source_package_excludes_private_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(ValueError, 'Private or local artifact'):
+                self.build_sample(Path(temporary) / 'package', '.env')
+            self.assertFalse((Path(temporary) / 'package').exists())
 
     def test_every_missing_check_rejected(self):
         for name in release.REQUIRED:
