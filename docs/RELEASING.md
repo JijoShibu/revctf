@@ -41,7 +41,7 @@ published tags and assets must never be replaced. The workflow downloads the pub
 archive without sign-in and verifies its checksum. The Kali installation and controlled
 scan from that public download are a separate final check.
 
-The evidence file is deliberately incomplete while final tests are pending. Do not mark
+Complete the evidence file from actual results before publication. Do not mark
 checks passed merely to enable publication. Generate its runtime identity with
 `python3 tools/release.py digest` after committing runtime changes; record actual logs,
 failed attempts, and skips alongside successful final checks.
@@ -93,6 +93,12 @@ PATH="/absolute/path/to/previous-python-tools/bin:$PATH" \
 REVCTF_SBX_IMAGE=previous-verified-sandbox-tag \
 /absolute/path/to/previous-revctf/revctf scan ./challenge --output ./new-rollback-report
 ```
+
+The 2.0.0 rollback rehearsal used the retained verified snapshot
+`2270dc290b5d2394aa3fcade67bcadf53042e22f` (version 2.0.0-rc.1) with Ghidra 11.2.1
+and its original Python environment. Its source and an existing report were unchanged.
+That snapshot was not published as a preview. Rollback to the older published v1.0.0
+tag was not validated by this rehearsal.
 
 If that checkout is unavailable, clone the previously verified tag into another directory
 and use its executable there. `v1.0.0` was the last published release when this plan was

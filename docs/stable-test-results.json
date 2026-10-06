@@ -1,0 +1,280 @@
+{
+  "recorded_at": "2026-10-06T11:13:38.217475+00:00",
+  "version": "2.0.0",
+  "functional_source_commit": "55302d625cda6eb6600269cc92e34ae97c6aef6c",
+  "functional_snapshot_digest": "e6e9cba526f461b8101fca04a49ef8dcc1df57d373a89e7ffa2f422e27f90edb",
+  "environment": {
+    "configured_ram_mib": 4096,
+    "linux_total_ram_kib": 4009288,
+    "swap_total_kib": 5170856,
+    "swap_changed": false,
+    "heavy_analysis_sequential": true,
+    "kali": "PRETTY_NAME=\"Kali GNU/Linux Rolling\"\nNAME=\"Kali GNU/Linux\"\nVERSION_ID=\"2026.3\"\nVERSION=\"2026.3\"\nVERSION_CODENAME=kali-rolling\nID=kali\nID_LIKE=debian\nHOME_URL=\"https://www.kali.org/\"\nSUPPORT_URL=\"https://forums.kali.org/\"\nBUG_REPORT_URL=\"https://bugs.kali.org/\"\nANSI_COLOR=\"1;31\"\n",
+    "kernel": "7.1.5+kali-amd64"
+  },
+  "regression": {
+    "counts": {
+      "PASS": 346,
+      "FAIL": 0,
+      "SKIP": 2
+    },
+    "interrupted_run_retained": true,
+    "completion": "All sections covered across original completed sections and resumed tail"
+  },
+  "fault_detection": {
+    "assertions_passed": 36,
+    "assertions_failed": 0,
+    "mutations": [
+      "ghidra_script",
+      "flag_tiers",
+      "tier_ceiling",
+      "dyn_startup",
+      "kill_conflation",
+      "sandbox_bypass"
+    ],
+    "original_files_restored": true,
+    "original_reader_false_failures": 1,
+    "confirmation": "Actual captured executions rechecked after a reader-only correction; application inputs unchanged",
+    "large_tests_skipped_here": "Already covered in the separate regression"
+  },
+  "initial_checks": [
+    {
+      "check": "version",
+      "exit": 0,
+      "seconds": 0.125
+    },
+    {
+      "check": "release-tests",
+      "exit": 0,
+      "seconds": 0.366
+    },
+    {
+      "check": "publish-tests",
+      "exit": 0,
+      "seconds": 0.334
+    },
+    {
+      "check": "accuracy",
+      "exit": 0,
+      "seconds": 9.246
+    },
+    {
+      "check": "ram-resources",
+      "exit": 0,
+      "seconds": 10.953
+    },
+    {
+      "check": "reliability",
+      "exit": 0,
+      "seconds": 4.419
+    },
+    {
+      "check": "sandbox-build",
+      "exit": 0,
+      "seconds": 1.72
+    },
+    {
+      "check": "ghidra",
+      "exit": 0,
+      "seconds": 167.055
+    },
+    {
+      "check": "native",
+      "exit": 0,
+      "seconds": 159.419
+    },
+    {
+      "check": "installation",
+      "exit": 0,
+      "seconds": 333.247
+    },
+    {
+      "check": "timing-repeat",
+      "exit": 0,
+      "seconds": 220.383
+    }
+  ],
+  "continued_checks": [
+    {
+      "check": "regression-tail",
+      "exit": 0,
+      "seconds": 541.338
+    },
+    {
+      "check": "verify-tests",
+      "exit": 1,
+      "seconds": 4793.666
+    }
+  ],
+  "corrected_reader_checks": [
+    {
+      "check": "reader-self-test",
+      "exit": 0
+    },
+    {
+      "check": "recorded-mutations",
+      "exit": 0
+    }
+  ],
+  "ghidra": [
+    {
+      "case": "heap-512",
+      "exit": 0,
+      "seconds": 42.043,
+      "memory": {
+        "requested_heap_bytes": "536870912",
+        "measured_heap_bytes": "518979584",
+        "verified": "1",
+        "measured_process_limit_bytes": "805306368"
+      },
+      "pass": true
+    },
+    {
+      "case": "heap-768",
+      "exit": 0,
+      "seconds": 26.175,
+      "memory": {
+        "requested_heap_bytes": "805306368",
+        "measured_heap_bytes": "778502144",
+        "verified": "1",
+        "measured_process_limit_bytes": "1073741824"
+      },
+      "pass": true
+    },
+    {
+      "case": "heap-1024",
+      "exit": 0,
+      "seconds": 33.728,
+      "memory": {
+        "requested_heap_bytes": "1073741824",
+        "measured_heap_bytes": "1037959168",
+        "verified": "1",
+        "measured_process_limit_bytes": "1342177280"
+      },
+      "pass": true
+    },
+    {
+      "case": "custom-path",
+      "exit": 0,
+      "seconds": 35.559,
+      "memory": {
+        "requested_heap_bytes": "1073741824",
+        "measured_heap_bytes": "1037959168",
+        "verified": "1",
+        "measured_process_limit_bytes": "1342177280"
+      },
+      "pass": true
+    },
+    {
+      "case": "custom-failure",
+      "exit": 2,
+      "seconds": 29.405,
+      "memory": {
+        "requested_heap_bytes": "1073741824",
+        "measured_heap_bytes": "1037959168",
+        "verified": "1",
+        "measured_process_limit_bytes": "1342177280"
+      },
+      "pass": true,
+      "expected_exit": 2
+    },
+    {
+      "case": "independent-acceptance",
+      "pass": true
+    },
+    {
+      "case": "wrong-answer-rejected",
+      "pass": true
+    }
+  ],
+  "native": [
+    {
+      "case": "windows-ghidra",
+      "exit": 0,
+      "pass_check": true,
+      "seconds": 114.502
+    },
+    {
+      "case": "malformed-elf",
+      "exit": 2,
+      "pass_check": true,
+      "seconds": 20.446,
+      "expected_exit": 2
+    },
+    {
+      "case": "oversized-launcher-recheck",
+      "exit": 0,
+      "pass_check": true
+    }
+  ],
+  "installation": {
+    "installation_exit": 0,
+    "repeat_install_exit": 0,
+    "offline_scan_exit": 0,
+    "candidate_recovered": true,
+    "password_recovered": true,
+    "acceptance": true,
+    "wrong_answer_rejected": true,
+    "container_removed": true
+  },
+  "upgrade_rollback": [
+    {
+      "case": "upgrade",
+      "version": "revctf 2.0.0\nCreated by Jijo Shibu <jijoshibu@gmail.com>\nhttps://github.com/JijoShibu/revctf\nMIT licence \u2014 see LICENSE",
+      "exit": 0,
+      "seconds": 31.954,
+      "known_answer": true,
+      "accepted": true,
+      "old_source_unchanged": true,
+      "old_report_unchanged": true,
+      "source_commit": "55302d625cda6eb6600269cc92e34ae97c6aef6c"
+    },
+    {
+      "case": "rollback",
+      "version": "revctf 2.0.0-rc.1\nCreated by Jijo Shibu <jijoshibu@gmail.com>\nhttps://github.com/JijoShibu/revctf\nMIT licence \u2014 see LICENSE",
+      "exit": 0,
+      "seconds": 44.591,
+      "known_answer": true,
+      "accepted": true,
+      "old_source_unchanged": true,
+      "old_report_unchanged": true,
+      "source_commit": "2270dc290b5d2394aa3fcade67bcadf53042e22f"
+    }
+  ],
+  "timings": [
+    {
+      "case": "plain",
+      "before_median_seconds": 12.114,
+      "after_median_seconds": 11.866,
+      "change_percent": -2.0
+    },
+    {
+      "case": "packed",
+      "before_median_seconds": 15.623,
+      "after_median_seconds": 10.772,
+      "change_percent": -31.1
+    },
+    {
+      "case": "ghidra",
+      "before_median_seconds": 34.59,
+      "after_median_seconds": 35.227,
+      "change_percent": 1.8
+    }
+  ],
+  "timing_repeat": [
+    {
+      "case": "ghidra",
+      "before_median_seconds": 41.081,
+      "after_median_seconds": 32.52,
+      "change_percent": -20.8
+    }
+  ],
+  "limitations": [
+    "Two optional 1 MiB Docker trace-memory breach checks skipped: Docker minimum is about 6 MiB; real 64 MiB breach passed",
+    "Optional procyon-decompiler and jd-cli were unavailable in the clean Kali environment",
+    "Actual 2 GB operation unverified",
+    "Windows executable execution outside support",
+    "SIGKILL and host crashes can prevent cleanup",
+    "A candidate remains UNVERIFIED without challenge-specific acceptance"
+  ]
+}

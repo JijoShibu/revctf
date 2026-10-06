@@ -12,7 +12,7 @@ Docker they skip rather than running the binary on your machine.
 
 Directory targets are M7 and are not in this build — a directory exits 1 with a message.
 
-> **Status: v2.0.0 — prepared for final release checks.** This version improves
+> **Status: v2.0.0 — reliability and reporting improvements.** This version improves
 > resource limits, cleanup, and the handling of incomplete results. It requires an
 > approximate 4 GB RAM check before scanning. All recovered candidates remain unverified.
 > Read the [release notes](docs/releases/2.0.0.md) and
@@ -24,7 +24,8 @@ Directory targets are M7 and are not in this build — a directory exits 1 with 
 ## Install
 
 ```bash
-git clone https://github.com/JijoShibu/revctf.git && cd revctf
+git clone --branch v2.0.0 --depth 1 https://github.com/JijoShibu/revctf.git revctf-2.0.0
+cd revctf-2.0.0
 sudo ./install.sh
 ```
 
@@ -35,7 +36,7 @@ missing analysis tool reports the problem rather than claiming that step succeed
 
 The 2.0 dependency profile uses Ghidra 12.1.4 and verifies downloaded Ghidra and extractor
 files before installing them. Existing unrelated tools are preserved. See the
-[dependency profile](dependencies/README.md) for versions and remaining validation.
+[dependency profile](dependencies/README.md) for the tested versions and limitations.
 The tested installation profile is Kali 2026.3 with Python 3.14 on Intel/AMD 64-bit
 computers. Python tool and build dependencies are pinned with download hashes;
 another Python version needs a separately validated profile. RevCTF analyzes Linux and
@@ -51,8 +52,8 @@ install that placed every other tool correctly has not failed. Run
 This is the whole deployment path: clone, install, done. `docs/REHEARSAL.md` is the
 procedure for proving it from zero.
 
-For a published release, use its exact tag instead of following the development branch.
-The `v2.0.0` tag becomes available when the reviewed release is published. See
+The installation command uses the exact release tag so development changes cannot
+silently change your installed copy. See
 [installation, upgrade and rollback](docs/RELEASING.md#install-upgrade-and-rollback)
 for the commands and the release checks.
 

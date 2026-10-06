@@ -6,30 +6,51 @@
   "checks": {
     "kali_4gb": {
       "result": "passed",
-      "evidence": "docs/preview-validation-status.md#current-focused-kali-results"
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
     },
     "ram": {
       "result": "passed",
-      "evidence": "33 Linux resource checks; logs/resources.log in preserved Kali validation folder"
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
     },
     "container_cleanup": {
       "result": "passed",
-      "evidence": "9 real Docker lifecycle checks; logs/lifecycle-current.log"
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
     },
     "output_limits": {
       "result": "passed",
-      "evidence": "Both command paths and Bash modes in logs/resources.log; Docker exact-byte check in logs/lifecycle-current.log"
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
     },
     "known_answers": {
       "result": "passed",
-      "evidence": "ghidra-current/results.json: recovered password accepted; wrong answer rejected; 7 accuracy checks passed"
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "ghidra": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "regression": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "installation": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "offline": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "upgrade_rollback": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "timing": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
     }
   },
   "open_blockers": [
-    "Corrected full Kali regression and Ghidra overriding-launcher check pending",
-    "Clean installation, repeat installation, offline scan and upgrade/rollback checks pending",
-    "Current timing comparisons and test-verification checks pending",
-    "Preserve final evidence, verify cleanup, shut down Kali and restore 16 GB before publication"
+    "Final documentation verification, evidence preservation, cleanup and normal VM shutdown/restoration pending"
   ],
   "independent_test": null,
   "relayed_external_test": {
@@ -41,7 +62,7 @@
     "feedback_reported": "Everything works fine",
     "evidence_status": "Second-hand feedback; tester's details, saved report and exact tested commit pending inspection"
   },
-  "validation_source_commit": "8e3dc56f846cc0000bdd6ca94f0d88ff171c66c5",
+  "validation_source_commit": "55302d625cda6eb6600269cc92e34ae97c6aef6c",
   "linux_total_ram_mib": 3915,
   "stable_release_decision": {
     "version": "2.0.0",
@@ -51,5 +72,6 @@
     "independent_report_waived": true,
     "required_controlled_checks": true,
     "reason": "Maintainer authorized direct stable publication after the controlled checks pass. The earlier preview wait and independent report requirement were explicitly withdrawn."
-  }
+  },
+  "functional_validation_snapshot_sha256": "e6e9cba526f461b8101fca04a49ef8dcc1df57d373a89e7ffa2f422e27f90edb"
 }
