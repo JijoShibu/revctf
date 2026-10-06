@@ -75,10 +75,13 @@ def direct_stable_approved(record, expected_version):
 
 
 def check_stable(record, releases, now):
+    target = str(record.get('version', '')).split('-rc.', 1)[0]
+    if not re.fullmatch(r'\d+\.\d+\.\d+', target):
+        raise ValueError('Stable evidence must identify a release version')
     previews = [r for r in releases if r.get('prerelease') and not r.get('draft') and
-                re.fullmatch(r'v2\.0\.0-rc\.[1-9]\d*', r.get('tag_name', ''))]
+                re.fullmatch(r'v' + re.escape(target) + r'-rc\.[1-9]\d*', r.get('tag_name', ''))]
     if not previews:
-        raise ValueError('Publish and verify a preview before stable 2.0.0')
+        raise ValueError('Publish and verify a matching preview before stable ' + target)
     preview = max(previews, key=lambda r: r['published_at'])
     published = dt.datetime.fromisoformat(preview['published_at'].replace('Z', '+00:00'))
     if now - published < dt.timedelta(days=7):

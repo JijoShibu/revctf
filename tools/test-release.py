@@ -84,6 +84,21 @@ class PublicationTests(unittest.TestCase):
     def test_missing_direct_stable_decision(self):
         self.assertFalse(release.direct_stable_approved(self.record, '2.0.0'))
 
+    def test_future_release_cannot_use_an_old_preview(self):
+        self.record['version'] = '2.0.1'
+        previews = [dict(prerelease=True, draft=False, tag_name='v2.0.0-rc.1',
+                         published_at='2026-10-03T00:00:00Z')]
+        with self.assertRaisesRegex(ValueError, 'matching preview'):
+            release.check_stable(self.record, previews, dt.datetime(2026, 10, 11, tzinfo=dt.timezone.utc))
+
+    def test_future_release_uses_its_own_preview_and_report(self):
+        self.record['version'] = '2.0.1'
+        self.record['independent_test'] = dict(version='2.0.1-rc.1', result='passed',
+            maintainer_reviewed=True, tester='independent-tester', issue_number=43)
+        previews = [dict(prerelease=True, draft=False, tag_name='v2.0.1-rc.1',
+                         published_at='2026-10-03T00:00:00Z')]
+        release.check_stable(self.record, previews, dt.datetime(2026, 10, 11, tzinfo=dt.timezone.utc))
+
 
 if __name__ == '__main__':
     unittest.main()
