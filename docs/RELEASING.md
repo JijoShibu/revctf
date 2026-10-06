@@ -58,7 +58,7 @@ reviewed notes. Do not create a parallel manual release or overwrite an existing
 Download the published archive anonymously, verify the checksum, unpack it into a new
 directory, and check `--version`, file permissions, shell syntax, and a controlled scan.
 Record the release URL, tag commit, archive checksum and verification result. A failed
-published-artifact check blocks promotion; fix it in a new preview rather than moving a tag.
+published-artifact check blocks promotion; publish a corrected version rather than moving a tag.
 
 ## Install, upgrade and rollback
 

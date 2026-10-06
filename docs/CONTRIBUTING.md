@@ -6,8 +6,8 @@ dated context; check the current code and `README.md` before relying on them.
 
 Project author and maintainer: **Jijo Shibu <jijoshibu@gmail.com>**.
 
-For the 2.0 preview, follow [RELEASING.md](RELEASING.md) and the current
-[current validation record](preview-validation-status.md). The older milestone notes below explain
+For the 2.0 release, follow [RELEASING.md](RELEASING.md) and the
+[current validation record](stable-validation-status.md). The older milestone notes below explain
 previous decisions; they are not evidence that the current release passed its checks.
 
 `revctf` is a Bash CLI for Kali Linux. It takes a reverse-engineering CTF challenge file,
@@ -19,7 +19,7 @@ Directory scanning is planned for M7 and is not available in the current build.
 
 ## 1. Which document is authoritative
 
-For the 2.0 preview, the current README, command help, release notes and tested behavior
+For the 2.0 release, the current README, command help, release notes and tested behavior
 take precedence over the older design documents, especially for RAM requirements,
 exit codes, partial results and container cleanup. Update those public descriptions
 alongside any behavior change.

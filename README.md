@@ -16,7 +16,7 @@ Directory targets are M7 and are not in this build — a directory exits 1 with 
 > resource limits, cleanup, and the handling of incomplete results. It requires an
 > approximate 4 GB RAM check before scanning. All recovered candidates remain unverified.
 > Read the [release notes](docs/releases/2.0.0.md) and
-> [validation results](docs/reliability-validation.md) before upgrading.
+> [current validation results](docs/stable-validation-status.md) before upgrading.
 > Batch scanning, interactive solving, and persistent debug logging remain planned.
 
 ---
@@ -33,7 +33,7 @@ Ghidra, and builds the sandbox when Docker is available. Optional Java/.NET deco
 are attempted separately; an unavailable package is reported. A scan that needs a
 missing analysis tool reports the problem rather than claiming that step succeeded.
 
-The proposed 2.0 profile uses Ghidra 12.1.4 and verifies downloaded Ghidra and extractor
+The 2.0 dependency profile uses Ghidra 12.1.4 and verifies downloaded Ghidra and extractor
 files before installing them. Existing unrelated tools are preserved. See the
 [dependency profile](dependencies/README.md) for versions and remaining validation.
 The tested installation profile is Kali 2026.3 with Python 3.14 on Intel/AMD 64-bit
@@ -349,10 +349,10 @@ harness asserts that this list and that one agree — so neither can drift.
 The installer sets up system packages, FLOSS and uncompyle6 in an isolated Python
 environment, and Ghidra with its Java development kit. The current installation results
 and unavailable optional packages are recorded in [the validation report](docs/reliability-validation.md).
-It installs the **pinned, verified** Ghidra build rather than the newest release —
-`GHIDRA_LATEST=1` opts into newest, but Ghidra 12.x needs PyGhidra wiring that does not
-exist yet. `tools/bootstrap-kali.sh` remains as the alternative that also pulls the
-build-only dependencies the test corpus needs.
+It installs the **pinned, verified** Ghidra build. Dependency upgrades need a reviewed
+profile and fresh tests. The default Ghidra script uses Java; custom Python scripts need
+a compatible Python runtime. `tools/bootstrap-kali.sh` also installs the build tools
+needed to generate the test examples.
 
 ## Requirements
 

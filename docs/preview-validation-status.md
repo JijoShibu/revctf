@@ -1,6 +1,9 @@
 # Preview validation status
 
-Updated: 5 October 2026. The preview is not ready to publish.
+Historical preview checkpoint, updated 5 October 2026. The preview was not published.
+The maintainer subsequently approved direct stable 2.0.0 publication after controlled
+checks pass. Use [the stable validation record](stable-validation-status.md) for current
+results and remaining requirements; the preview conditions below are historical.
 
 The proposed dependency is Ghidra 12.1.4. Current focused tests have run on the
 real 4096 MB Kali VM, where Linux reported 3915 MiB. The final broad regression,

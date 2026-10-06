@@ -46,7 +46,7 @@ report. Follow [RELEASING.md](RELEASING.md) for the review and publication gates
 
 The earlier procedure below records previous installation investigations. Its old tag
 names, dates and host-socket example are historical; use the current procedure above for
-the preview. Do not mount a Docker socket merely to repeat that old setup.
+the release. Do not mount a Docker socket merely to repeat that old setup.
 
 **Golden rule.** Never trust an exit code. After every step check the *artifact the user
 keeps* — the tool on `PATH`, the file on disk, the flag in the report — not "the script
