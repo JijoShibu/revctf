@@ -4,7 +4,7 @@ Report vulnerabilities through [GitHub's private reporting form](https://github.
 Include the version, command, environment, and a small example that we may share with other maintainers.
 Remove passwords, personal information, and private challenge material. Do not publish an exploit against another person's service.
 
-Version 2.0.0 is under final validation. Stable 2.0 support begins when it is published;
+The supported release line is 2.0. Stable 2.0 support begins with publication of 2.0.0;
 1.x does not provide the same resource and incomplete-result safeguards.
 Confirmed problems affecting answers, installation, saved files, isolation, or resource limits
 block publication. Security fixes use a new release; published tags are never moved.

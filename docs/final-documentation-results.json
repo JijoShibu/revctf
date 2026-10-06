@@ -1,0 +1,88 @@
+{
+  "runtime_sha256": "196c1db600ae8f5afb1f9fa81d77a5d52b59bf624aad8620aeba380ad9e1442a",
+  "unchanged_application_input_files": [
+    "dependencies/profile.sh",
+    "dependencies/python-build-3.14-amd64.txt",
+    "dependencies/python-runtime-3.14-amd64.txt",
+    "docker/Dockerfile",
+    "install.sh",
+    "lib/config.sh",
+    "lib/errorlog.sh",
+    "lib/flagscan.sh",
+    "lib/memory.sh",
+    "lib/preflight.sh",
+    "lib/prompt.sh",
+    "lib/report.sh",
+    "lib/sandbox.sh",
+    "lib/spinner.sh",
+    "lib/stage.sh",
+    "lib/stage_binwalk.sh",
+    "lib/stage_checksec.sh",
+    "lib/stage_dynamic.sh",
+    "lib/stage_file.sh",
+    "lib/stage_floss.sh",
+    "lib/stage_ghidra.sh",
+    "lib/stage_hexdump.sh",
+    "lib/stage_ltrace.sh",
+    "lib/stage_managed.sh",
+    "lib/stage_objdump.sh",
+    "lib/stage_pydecomp.sh",
+    "lib/stage_radare2.sh",
+    "lib/stage_strace.sh",
+    "lib/stage_strings.sh",
+    "lib/stage_triage.sh",
+    "lib/tier.sh",
+    "lib/tui.sh",
+    "lib/watchdog.sh",
+    "revctf",
+    "scripts/RevctfDecompile.java",
+    "scripts/RevctfMemoryGuard.java",
+    "scripts/jython_decompile.py",
+    "scripts/le_decode.py",
+    "scripts/pyc_disasm.py",
+    "scripts/pyghidra_decompile.py"
+  ],
+  "checks": [
+    {
+      "check": "version",
+      "exit": 0,
+      "seconds": 0.138
+    },
+    {
+      "check": "docs",
+      "exit": 0,
+      "seconds": 0.757
+    },
+    {
+      "check": "reliability",
+      "exit": 0,
+      "seconds": 4.831
+    },
+    {
+      "check": "resources",
+      "exit": 0,
+      "seconds": 11.019
+    },
+    {
+      "check": "accuracy",
+      "exit": 0,
+      "seconds": 9.747
+    },
+    {
+      "check": "release",
+      "exit": 0,
+      "seconds": 0.402
+    },
+    {
+      "check": "publisher",
+      "exit": 0,
+      "seconds": 0.354
+    },
+    {
+      "check": "reader",
+      "exit": 0,
+      "seconds": 1.075
+    }
+  ],
+  "source_commit": "ce6aa4b998b4e9ade7060006b369118b6b29fc16"
+}

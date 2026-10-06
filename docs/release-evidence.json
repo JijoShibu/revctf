@@ -1,8 +1,8 @@
 {
   "version": "2.0.0",
-  "runtime_sha256": "31c076a48c9bccd3b9a84bba5e3a29b604727a494ce957efa46f93bbaa0f356b",
+  "runtime_sha256": "196c1db600ae8f5afb1f9fa81d77a5d52b59bf624aad8620aeba380ad9e1442a",
   "configured_ram_mib": 4096,
-  "vm_restored_16gb": false,
+  "vm_restored_16gb": true,
   "checks": {
     "kali_4gb": {
       "result": "passed",
@@ -49,9 +49,7 @@
       "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
     }
   },
-  "open_blockers": [
-    "Final documentation verification, evidence preservation, cleanup and normal VM shutdown/restoration pending"
-  ],
+  "open_blockers": [],
   "independent_test": null,
   "relayed_external_test": {
     "reported_on": "2026-10-04",
@@ -73,5 +71,18 @@
     "required_controlled_checks": true,
     "reason": "Maintainer authorized direct stable publication after the controlled checks pass. The earlier preview wait and independent report requirement were explicitly withdrawn."
   },
-  "functional_validation_snapshot_sha256": "e6e9cba526f461b8101fca04a49ef8dcc1df57d373a89e7ffa2f422e27f90edb"
+  "functional_validation_snapshot_sha256": "e6e9cba526f461b8101fca04a49ef8dcc1df57d373a89e7ffa2f422e27f90edb",
+  "final_documentation_checks": "docs/final-documentation-results.json",
+  "private_evidence_archive": {
+    "name": "revctf-2.0.0-validation-evidence.tar.gz",
+    "sha256": "5974f484432c9ee1542d3344c59258318fc320eac0608c9be58e075b56e8dece",
+    "published": false
+  },
+  "final_cleanup": {
+    "revctf_scan_containers_remaining": 0,
+    "test_install_containers_remaining": 0,
+    "unrelated_container_preserved": true,
+    "normal_shutdown_confirmed": true,
+    "restored_ram_mib": 16384
+  }
 }

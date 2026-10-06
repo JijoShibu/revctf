@@ -122,12 +122,23 @@ It does not establish that the published v1.0.0 tag has the newer safeguards.
 
 ## Cleanup and remaining limits
 
-Final evidence preservation, verified container absence, normal shutdown and
-16384 MB restoration are the remaining local release steps. Publication is blocked
-until those steps and final documentation checks are recorded as complete.
+Final documentation checks passed on Kali at 4 GB, including all 114 controlled
+checks and 20 documentation checks. The complete runtime fingerprint matches the
+Windows checkout. Executable inputs are unchanged from the full application test
+snapshot; the updated dependency README accounts for the fingerprint change.
+The measured results are in `final-documentation-results.json`.
+
+No RevCTF scan or installation-test containers remained after evidence preservation.
+The unrelated running container was preserved. Kali shut down normally and its
+allocation was restored to 16384 MB. These local release requirements are complete;
+GitHub checks still run against the exact final commit before publication.
 
 Detailed logs, captures, failed attempts and timing records are retained locally,
-outside the repository and release source archive. The final archive checksum is recorded after preservation.
+outside the repository and release source archive. The preserved private archive
+is `revctf-2.0.0-validation-evidence.tar.gz`, SHA-256
+`5974f484432c9ee1542d3344c59258318fc320eac0608c9be58e075b56e8dece`.
+Its checksum was verified after copying it out of Kali. This archive is not a public
+release asset; the source package has its own checksum and manifest.
 
 Actual operation at 2 GB remains unverified and requires the explicit
 `--allow-low-memory` override. Four gigabytes is a recommendation, not a guarantee
