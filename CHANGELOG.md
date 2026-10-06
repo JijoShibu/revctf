@@ -21,6 +21,8 @@ Changes after 2.0.0 will be recorded here.
 
 ### Reliability
 
+- Read complete mutation-test result streams so an early match cannot cause a false
+  missing-result failure. Retain execution evidence and reject unfinished result streams.
 - Reject the unimplemented `stages_disabled` configuration key with a warning, and
   remove the dry-run claim that it disables steps which actually still run.
 - Emit Java decompiler results as plain output so Ghidra's logger does not hide the

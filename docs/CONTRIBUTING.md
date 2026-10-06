@@ -148,6 +148,21 @@ execution masterplan §4 requires. Append to it whenever something non-obvious c
 - **Use your own Git identity for contributions.** Setup scripts must not change a
   contributor's name or email. Preserve published history; submit changes for review.
 
+Mutation checks print the folder containing their logs and results. Keep that evidence,
+including deliberately failing runs. Run them in a clean disposable checkout: the checks
+temporarily break tracked files and restore them after each case.
+
+`bash tools/verify-harness.sh --self-test` checks the result reader without running
+analysis or editing source. It includes long streams, repeated reads and incomplete output.
+Under `pipefail`, a reader that closes a pipe early can make an existing match appear
+missing, so the checker consumes the entire stream.
+
+After correcting only the result reader, `--verify-results DIR EXECUTION_LOG` can recheck
+retained executions. Confirm the application and fixture inputs are unchanged first.
+This mode requires completed baseline and restored runs, evidence that each defect was
+applied and removed, and the expected checks changing from pass to fail and back to pass.
+It does not validate a changed application; that requires fresh execution tests.
+
 ---
 
 ## 3. Recorded tool behavior

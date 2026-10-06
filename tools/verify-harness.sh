@@ -22,6 +22,8 @@
 #   ./tools/verify-harness.sh                    # every mutation
 #   ./tools/verify-harness.sh flag_tiers         # one
 #   ./tools/verify-harness.sh --list             # what is available
+#   ./tools/verify-harness.sh --self-test        # result reader, no source edits
+#   ./tools/verify-harness.sh --verify-results DIR LOG # recheck retained results
 #   VH_FAST=0 ./tools/verify-harness.sh          # include the 220MB checks (much slower)
 #
 # Per v5 §4.1 this file must not enable `set -e`: a mutation run that dies half way
@@ -30,7 +32,7 @@ set -uo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 HARNESS="$ROOT/tools/run-tests.sh"
-WORK="${TMPDIR:-/tmp}/revctf-verify-harness.$$"
+WORK=""
 
 # The 220MB stress checks contribute nothing to any mutation here and cost ~12 minutes
 # per harness invocation, and this script invokes the harness once per mutation plus
@@ -287,13 +289,11 @@ cleanup() {
         else
             printf '\n\033[31mRESTORE FAILED — A PLANTED DEFECT IS STILL IN THE TREE.\033[0m\n' >&2
             printf 'Do not commit. Run: git -C %s checkout -- %s\n' "$ROOT" "${MUTATED[*]}" >&2
-            rm -rf "$WORK"
+            printf 'Mutation test evidence retained: %s\n' "$WORK" >&2
             exit 1
         fi
     fi
-    if [[ $rc -eq 0 ]]; then
-        rm -rf "$WORK"
-    else
+    if [[ -n $WORK ]]; then
         printf 'Mutation test evidence retained: %s\n' "$WORK" >&2
     fi
     exit $rc
@@ -303,6 +303,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 # ======================================================================================
 # Running and parsing the harness
@@ -318,6 +319,9 @@ run_harness() {
         -e 's/^  PASS  /PASS\t/p' \
         -e 's/^  FAIL  /FAIL\t/p' \
         -e 's/^  SKIP  /SKIP\t/p' > "$out"
+    if ! record_is_complete "$out"; then
+        printf 'FAIL\tIncomplete harness result stream\n' >> "$out"
+    fi
     return 0
 }
 
@@ -325,7 +329,119 @@ count_of() { grep -c "^$1	" "$2" 2>/dev/null || true; }
 
 # has_result <status> <ere> <resultfile>
 has_result() {
-    sed -n "s/^$1	//p" "$3" 2>/dev/null | grep -qE -- "$2"
+    # Read the entire pipe. grep -q can close it after a match, killing sed
+    # with SIGPIPE; pipefail then falsely says the matching result is absent.
+    sed -n "s/^$1	//p" "$3" 2>/dev/null | grep -E -- "$2" >/dev/null
+}
+
+record_is_complete() {
+    local res="$1" passed failed skipped
+    [[ -f $res && -f $res.log ]] || return 1
+    passed=$(count_of PASS "$res"); failed=$(count_of FAIL "$res"); skipped=$(count_of SKIP "$res")
+    sed -e 's/\x1b\[[0-9;]*m//g' "$res.log" |
+        grep -Fx -- "$passed passed, $failed failed, $skipped skipped" >/dev/null
+}
+
+check_expectations() {
+    local m="$1" base="$2" res="$3" final="${4:-}" spec passre failre
+    for spec in "${M_EXPECT[@]}"; do
+        if [[ $spec == *"  =>  "* ]]; then
+            passre="${spec%%"  =>  "*}"; failre="${spec##*"  =>  "}"
+        else
+            passre="$spec"; failre="$spec"
+        fi
+        if ! has_result PASS "$passre" "$base"; then
+            if has_result SKIP "$passre" "$base"; then
+                vno "$m: /$passre/ was SKIPPED in the baseline" \
+                    "a skipped check detects nothing — it must not be counted as coverage"
+            else
+                vno "$m: /$passre/ is not in the baseline at all" \
+                    "no such check ran; the expectation names a check that does not exist"
+            fi
+            continue
+        fi
+        if has_result FAIL "$failre" "$res"; then
+            vok "$m: /$failre/ flipped PASS -> FAIL"
+        else
+            vno "$m: /$failre/ stayed green under the mutation" \
+                "this check does not detect the breakage it appears to cover — see $res.log"
+        fi
+        if [[ -n $final ]] && ! has_result PASS "$passre" "$final"; then
+            vno "$m: /$passre/ did not return to PASS" 'restored result missing'
+        fi
+    done
+}
+
+test_result_reader() {
+    local sample="$WORK/reader.res" i
+    {
+        printf 'PASS\tfirst match\nFAIL\twrong status\nSKIP\tskipped match\n'
+        for ((i=0; i<20000; i++)); do printf 'PASS\tfiller description %s\n' "$i"; done
+        printf 'PASS\tlast match\n'
+    } > "$sample"
+    if has_result PASS '^first match$' "$sample"; then vok 'match before a long result stream';
+    else vno 'early match' 'found result lost through pipefail'; fi
+    if has_result PASS '^last match$' "$sample"; then vok 'match after a long result stream';
+    else vno 'late match' 'result absent'; fi
+    if has_result PASS '^absent$' "$sample"; then vno 'missing result' 'false match';
+    else vok 'missing result rejected'; fi
+    if has_result PASS '^wrong status$' "$sample"; then vno 'status filter' 'FAIL accepted as PASS';
+    else vok 'failed result cannot count as passed'; fi
+    if has_result PASS '^skipped match$' "$sample"; then vno 'skip filter' 'SKIP accepted as PASS';
+    else vok 'skipped result cannot count as passed'; fi
+    if has_result SKIP '^skipped match$' "$sample"; then vok 'skipped result identified';
+    else vno 'skip detection' 'missing skip'; fi
+    local stable=1
+    for ((i=0; i<50; i++)); do
+        has_result PASS '^first match$' "$sample" || stable=0
+    done
+    if [[ $stable == 1 ]]; then vok 'early match remains correct through 50 reads';
+    else vno 'repeatability' 'intermittent false failure'; fi
+    printf '20002 passed, 1 failed, 1 skipped\n' > "$sample.log"
+    if record_is_complete "$sample"; then vok 'complete stream has matching final counts';
+    else vno 'completion check' 'valid final counts rejected'; fi
+    printf 'interrupted before the final summary\n' > "$sample.log"
+    if record_is_complete "$sample"; then vno 'completion check' 'interrupted stream accepted';
+    else vok 'interrupted stream cannot count as complete'; fi
+    printf '%s ok, %s bad\n' "$VPASS" "$VFAIL"
+    [[ $VFAIL == 0 ]]
+}
+
+verify_recorded_results() {
+    local evidence="$1" outer="$2" base="$1/baseline.res" final="$1/final.res" m res f
+    require_clean_tree || return 1
+    [[ -f $base && -f $final && -f $outer ]] || {
+        printf 'verify-harness: baseline, final results and execution log are required.\n' >&2
+        return 1
+    }
+    record_is_complete "$base" && record_is_complete "$final" || return 1
+    # This mode rechecks recorded executions after a reader-only correction.
+    # It cannot validate changed application code or replace new mutation runs.
+    [[ $(count_of PASS "$base") -gt 0 && $(count_of FAIL "$base") == 0 ]] || return 1
+    [[ $(count_of PASS "$final") -gt 0 && $(count_of FAIL "$final") == 0 ]] || return 1
+    vok 'recorded baseline and restored run are green'
+    for m in "${MUTATIONS[@]}"; do
+        mutation_meta "$m"
+        res="$evidence/$m.res"
+        record_is_complete "$res" || { vno "$m" 'recorded execution incomplete'; continue; }
+        if grep -F -- "$m: mutation applied and the files differ" "$outer" >/dev/null &&
+           grep -F -- "$m: tree restored byte-identical" "$outer" >/dev/null; then
+            vok "$m: application and restoration recorded"
+        else
+            vno "$m" 'execution log does not prove application and restoration'
+        fi
+        if [[ $(count_of FAIL "$res") -gt 0 ]]; then vok "$m: recorded mutation failed";
+        else vno "$m" 'recorded mutation stayed green'; fi
+        check_expectations "$m" "$base" "$res" "$final"
+        if [[ ${#M_GREEN[@]} -gt 0 ]]; then
+            f="$evidence/$m.green.res"
+            if record_is_complete "$f" && [[ $(count_of PASS "$f") -gt 0 && $(count_of FAIL "$f") == 0 ]]; then
+                vok "$m: unaffected sections stayed green"
+            else vno "$m" 'unaffected sections missing or failed'; fi
+        fi
+    done
+    printf '%s ok, %s bad\n' "$VPASS" "$VFAIL"
+    [[ $VFAIL == 0 ]]
 }
 
 # ======================================================================================
@@ -337,6 +453,12 @@ main() {
             printf '  %-16s %s\n' "$m" "$M_DESC"
         done
         return 0
+    fi
+    WORK=$(mktemp -d "${TMPDIR:-/tmp}/revctf-verify-harness.XXXXXX") || return 1
+    if [[ ${1:-} == --self-test ]]; then test_result_reader; return $?; fi
+    if [[ ${1:-} == --verify-results ]]; then
+        [[ $# == 3 ]] || { printf 'Use --verify-results DIR EXECUTION_LOG\n' >&2; return 1; }
+        verify_recorded_results "$2" "$3"; return $?
     fi
 
     local -a want=("$@")
@@ -426,31 +548,7 @@ main() {
                 "a product this broken produced no failure in ${M_SECTIONS[*]}"
         fi
 
-        # The mechanical part: named checks, both halves.
-        local spec passre failre
-        for spec in "${M_EXPECT[@]}"; do
-            if [[ $spec == *"  =>  "* ]]; then
-                passre="${spec%%"  =>  "*}"; failre="${spec##*"  =>  "}"
-            else
-                passre="$spec"; failre="$spec"
-            fi
-            if ! has_result PASS "$passre" "$base"; then
-                if has_result SKIP "$passre" "$base"; then
-                    vno "$m: /$passre/ was SKIPPED in the baseline" \
-                        "a skipped check detects nothing — it must not be counted as coverage"
-                else
-                    vno "$m: /$passre/ is not in the baseline at all" \
-                        "no such check ran; the expectation names a check that does not exist"
-                fi
-                continue
-            fi
-            if has_result FAIL "$failre" "$res"; then
-                vok "$m: /$failre/ flipped PASS -> FAIL"
-            else
-                vno "$m: /$failre/ stayed green under the mutation" \
-                    "this check does not detect the breakage it appears to cover — see $res.log"
-            fi
-        done
+        check_expectations "$m" "$base" "$res"
 
         # Sections that must be UNAFFECTED. Run separately so attribution is unambiguous.
         if [[ ${#M_GREEN[@]} -gt 0 ]]; then
