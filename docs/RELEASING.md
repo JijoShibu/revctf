@@ -2,9 +2,11 @@
 
 Maintainer: Jijo Shibu <jijoshibu@gmail.com>
 
-The next proposed version is **v2.0.0-rc.1**. Its code is being reviewed in pull request
-#2. Preparing files or an archive does not publish a release. The pull request remains
-unmerged until the maintainer explicitly authorizes merging and publication.
+The release target is **v2.0.0**, reviewed in pull request #2. On 5 October 2026,
+the maintainer approved direct stable publication after the controlled checks pass.
+The earlier seven-day preview and independent-report requirements were withdrawn.
+That decision is recorded for this release in `release-evidence.json`; it does not
+bypass accuracy, resource, installation, cleanup or archive checks.
 
 ## Before publication
 
@@ -23,7 +25,7 @@ unmerged until the maintainer explicitly authorizes merging and publication.
 6. Present the pull request, validation record, archive, and checksum for review. Do not
    merge, create a remote tag, publish a release, or post feedback requests at this step.
 
-## Publish an approved preview
+## Publish an approved release
 
 Use **Actions → Publish reviewed release → Run workflow** on `main`. Supply the full
 reviewed commit and version without `v`. The workflow reruns the basic checks, requires
@@ -50,9 +52,8 @@ run version, documentation, syntax, and smoke checks on that final commit. If me
 introduced other code, repeat the affected tests before tagging.
 
 Run the approved workflow at that exact commit. It creates the annotated
-`v2.0.0-rc.1` tag, archive and checksum, then publishes the **pre-release** with the
-reviewed notes. Do not create a parallel manual release or designate a preview as the
-latest stable release.
+`v2.0.0` tag, archive and checksum, then publishes the stable release with the
+reviewed notes. Do not create a parallel manual release or overwrite an existing tag.
 
 Download the published archive anonymously, verify the checksum, unpack it into a new
 directory, and check `--version`, file permissions, shell syntax, and a controlled scan.
@@ -65,8 +66,8 @@ The commands below apply **after the named tag has been published**. They delibe
 use a new directory so an existing checkout and its reports stay available.
 
 ```bash
-git clone --branch v2.0.0-rc.1 --depth 1 https://github.com/JijoShibu/revctf.git revctf-2.0-preview
-cd revctf-2.0-preview
+git clone --branch v2.0.0 --depth 1 https://github.com/JijoShibu/revctf.git revctf-2.0.0
+cd revctf-2.0.0
 sudo ./install.sh
 revctf --version
 ```
@@ -79,7 +80,7 @@ Upgrading from 1.x changes failure reporting and adds the RAM startup check. Exi
 scripts must handle exit code 2; `--yes` and saved configuration cannot bypass the RAM
 check. `--allow-low-memory` accepts the risk explicitly and leaves warnings in the report.
 
-For rollback, keep the prior checkout and record its commit before installing the preview.
+For rollback, keep the prior checkout and record its commit before installing 2.0.0.
 Use its executable by absolute path and select the tools that were verified with that
 copy. An absolute executable path alone does not undo changes to `GHIDRA_HOME` or tool
 links made by installation. Record those paths before upgrading and keep the old Ghidra,
@@ -97,26 +98,20 @@ If that checkout is unavailable, clone the previously verified tag into another 
 and use its executable there. `v1.0.0` was the last published release when this plan was
 prepared, but contains older reliability behavior. Rollback does not repair those defects.
 If the older tools were removed, restore them in a separate environment before scanning;
-do not point an older release at the preview tools and assume compatibility.
+do not point an older release at the new tools and assume compatibility.
 Do not reset a working checkout, delete reports, remove shared tools, or retag history.
 
-## Preview feedback and stable 2.0
+## Feedback and future releases
 
-Prepare the [feedback request](releases/2.0-preview-feedback.md) for GitHub. Post it only
-when publication/community posting has been authorized. The issue form asks for the
-version, Kali version, RAM, command, expected result and relevant redacted output.
+The GitHub bug-report form asks for the version, Kali version, RAM, command, expected
+result and relevant output. Remove passwords and private challenge material before
+sharing a report. Independent tests remain useful even though they are not a
+publication condition for 2.0.0. Give testers [these instructions](INDEPENDENT-TEST.md).
+No community posts or background monitoring are scheduled by this procedure.
 
-Stable 2.0.0 requires at least seven days since preview publication, one independent Kali
-test report, all required checks passing, no unresolved release-blocking defects, and
-maintainer review. No scheduled monitoring is created by these instructions.
-
-Give independent testers [these instructions](INDEPENDENT-TEST.md). The automatic stable
-gate requires seven days since the latest published preview and a maintainer-reviewed
-GitHub issue written by the independent tester. Update that record when another preview
-needs retesting. Keep the original evidence and release history.
-
-Substantive fixes produce `rc.2`, `rc.3`, and so on, with affected checks repeated. Keep
-the stable gate open until the revised behavior has adequate review. For stable 2.0.0,
-update the program version, README, changelog, release notes, installer Python-environment
-name and both default sandbox tags. The consistency check refuses mismatched defaults;
-verify the final commit and obtain a separate publication instruction.
+For future releases, agree the publication policy before preparing the version. The
+usual stable gate still requires a reviewed independent report and seven days of
+preview availability. The recorded direct-release decision applies only to 2.0.0.
+Fixes get new versions; never move a published tag. Update the program, README,
+changelog, release notes, Python environment name and sandbox defaults together.
+Recheck the final commit and repeat checks affected by each change.

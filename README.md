@@ -12,10 +12,10 @@ Docker they skip rather than running the binary on your machine.
 
 Directory targets are M7 and are not in this build — a directory exits 1 with a message.
 
-> **Status: v2.0.0-rc.1 — preview preparation, not yet published.** This version improves
+> **Status: v2.0.0 — prepared for final release checks.** This version improves
 > resource limits, cleanup, and the handling of incomplete results. It requires an
 > approximate 4 GB RAM check before scanning. All recovered candidates remain unverified.
-> Read the [preview notes](docs/releases/2.0.0-rc.1.md) and
+> Read the [release notes](docs/releases/2.0.0.md) and
 > [validation results](docs/reliability-validation.md) before upgrading.
 > Batch scanning, interactive solving, and persistent debug logging remain planned.
 
@@ -52,7 +52,7 @@ This is the whole deployment path: clone, install, done. `docs/REHEARSAL.md` is 
 procedure for proving it from zero.
 
 For a published release, use its exact tag instead of following the development branch.
-The proposed `v2.0.0-rc.1` tag is not available until the preview is published. See
+The `v2.0.0` tag becomes available when the reviewed release is published. See
 [installation, upgrade and rollback](docs/RELEASING.md#install-upgrade-and-rollback)
 for the commands and the release checks.
 

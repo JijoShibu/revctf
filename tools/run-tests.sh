@@ -2206,6 +2206,8 @@ test_docs() {
     else
         ok "install.sh does not use the pip method known to fail"
     fi
+    # Match the literal variable name in the installer, without expanding it here.
+    # shellcheck disable=SC2016
     if grep -q 'python3 -m venv' "$ROOT/install.sh" &&
        grep -Fq '"$FLOSS_VENV/bin/python" -m pip install' "$ROOT/install.sh"; then
         ok "install.sh installs FLOSS via a venv"

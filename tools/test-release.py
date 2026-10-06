@@ -63,6 +63,27 @@ class PublicationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'independent Kali report'):
             release.check_stable(self.record, previews, dt.datetime(2026, 10, 11, tzinfo=dt.timezone.utc))
 
+    def test_direct_stable_decision(self):
+        self.record['stable_release_decision'] = dict(version='2.0.0',
+            maintainer='Jijo Shibu <jijoshibu@gmail.com>', approved_on='2026-10-05',
+            preview_wait_waived=True, independent_report_waived=True,
+            required_controlled_checks=True)
+        self.assertTrue(release.direct_stable_approved(self.record, '2.0.0'))
+        self.assertFalse(release.direct_stable_approved(self.record, '2.0.1'))
+        for name in ('preview_wait_waived', 'independent_report_waived',
+                     'required_controlled_checks'):
+            changed = copy.deepcopy(self.record)
+            changed['stable_release_decision'][name] = False
+            self.assertFalse(release.direct_stable_approved(changed, '2.0.0'))
+        # The decision changes the feedback policy, never the technical gates.
+        self.record['version'] = '2.0.0'
+        self.record['checks']['installation']['result'] = 'failed'
+        with self.assertRaises(ValueError):
+            release.validate_evidence(self.record, '2.0.0', 'a' * 64)
+
+    def test_missing_direct_stable_decision(self):
+        self.assertFalse(release.direct_stable_approved(self.record, '2.0.0'))
+
 
 if __name__ == '__main__':
     unittest.main()

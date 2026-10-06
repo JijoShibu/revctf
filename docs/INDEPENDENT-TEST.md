@@ -10,8 +10,8 @@ asks you to test a newer preview. Keep the installation folder for rollback.
 ```bash
 sudo apt update
 sudo apt install git
-git clone --branch v2.0.0-rc.1 --depth 1 https://github.com/JijoShibu/revctf.git revctf-preview
-cd revctf-preview
+git clone --branch v2.0.0 --depth 1 https://github.com/JijoShibu/revctf.git revctf-2.0-test
+cd revctf-2.0-test
 sudo ./install.sh
 revctf --version
 ```
@@ -25,7 +25,7 @@ For a full controlled Linux scan, install the test compiler, build the samples, 
 ```bash
 sudo apt install build-essential
 bash tools/build-test-corpus.sh
-revctf scan test-corpus/crackme --no-tui --output "$HOME/revctf-preview-check"
+revctf scan test-corpus/crackme --no-tui --output "$HOME/revctf-2.0-test-check"
 test-corpus/crackme sw0rdf1sh
 test-corpus/crackme deliberately-wrong
 ```

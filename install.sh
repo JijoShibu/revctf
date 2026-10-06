@@ -46,9 +46,9 @@ REVCTF_HOME="${REVCTF_HOME:-$INSTALL_HOME/.revctf}"
 # flare-floss cannot be pip-installed system-wide on modern Debian/Ubuntu — its `halo`
 # dependency dies with `AttributeError: install_layout` (docs/CONTRIBUTING.md §3). A venv is the
 # working route; uncompyle6 rides along in the same venv as the Python-decompile fallback.
-FLOSS_VENV="${FLOSS_VENV:-/opt/revctf-tools-2.0.0-rc.1}"
+FLOSS_VENV="${FLOSS_VENV:-/opt/revctf-tools-2.0.0}"
 # Must match lib/sandbox.sh's default, or install.sh builds an image revctf never looks for.
-SBX_IMAGE="${REVCTF_SBX_IMAGE:-revctf-sandbox:2.0.0-rc.1}"
+SBX_IMAGE="${REVCTF_SBX_IMAGE:-revctf-sandbox:2.0.0}"
 PYINSTX_URL="https://raw.githubusercontent.com/extremecoders-re/pyinstxtractor/$PYINSTX_COMMIT/pyinstxtractor.py"
 
 # Ghidra is not in apt. Resolved from the GitHub releases API, with a fallback to a build

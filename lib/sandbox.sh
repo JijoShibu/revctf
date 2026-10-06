@@ -21,7 +21,7 @@
 # machine and not another — with the user believing they were isolated either way — is
 # exactly that. --no-sandbox is the deliberate, stated override.
 
-declare -g SBX_IMAGE="${REVCTF_SBX_IMAGE:-revctf-sandbox:2.0.0-rc.1}"
+declare -g SBX_IMAGE="${REVCTF_SBX_IMAGE:-revctf-sandbox:2.0.0}"
 # shellcheck disable=SC2034  # read by lib/stage_dynamic.sh and the entry script, separate files
 declare -g SBX_WHY=""
 declare -g SBX_OK=-1          # -1 = not yet probed, 0 = unavailable, 1 = available

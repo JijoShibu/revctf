@@ -4,7 +4,7 @@
 
 Author: Jijo Shibu <jijoshibu@gmail.com>
 
-The current release target is 2.0.0-rc.1. Follow [RELEASING.md](RELEASING.md),
+The current release target is 2.0.0. Follow [RELEASING.md](RELEASING.md),
 [CONTRIBUTING.md](CONTRIBUTING.md), and [the validation record](reliability-validation.md).
 The fixes pull request remains unmerged; a prepared archive is not a published release.
 
