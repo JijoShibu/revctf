@@ -1,6 +1,6 @@
 # Maintainer handoff
 
-## Current work: 2.0 preview
+## Current work: 2.0.0 release
 
 Author: Jijo Shibu <jijoshibu@gmail.com>
 
