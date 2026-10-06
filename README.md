@@ -88,6 +88,10 @@ revctf --help                      # every flag
 Your original file is never modified. Packed and archived targets are unwrapped to copies
 in a temporary working directory.
 
+Use the documented `--skip-ghidra`, `--skip-ltrace` and `--skip-strace` options to omit
+those steps. A general `stages_disabled` setting is not implemented and is reported as
+an unknown configuration key; it cannot silently change the scan plan.
+
 ## What it runs
 
 Stage 0 is a **triage/unwrap** pass: it detects packed binaries (UPX), Java/.NET

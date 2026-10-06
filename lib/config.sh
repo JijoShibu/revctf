@@ -23,7 +23,7 @@
 CONFIG_ALLOWED="output_dir timeout flag_scan flag_format full_hexdump skip_ltrace \
 skip_strace skip_ghidra no_unwrap unwrap_depth light_decompile force_full_decompile \
 ghidra_script jobs_light jobs_ghidra maxmem_ghidra sandbox tui strict \
-stages_disabled summary_only"
+summary_only"
 
 # Keys consumed in arithmetic context. These MUST be coerced to 0/1 before they can reach
 # `[[ $x -eq 1 ]]`. See QA-1 above.

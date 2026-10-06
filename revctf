@@ -77,7 +77,6 @@ declare -A OPT=(
     [verbose]=0
     [debug]=0
     [strict]=0                      # stop at the first failed stage (v6 §11 D8)
-    [stages_disabled]=""            # comma-separated stage names (v6 §8)
 )
 declare -A CLI_SET=()
 
@@ -662,9 +661,6 @@ dry_run_isolation() {
 
 dry_run_skip_reason() {
     local st="$1"
-    if [[ -n ${OPT[stages_disabled]} && ",${OPT[stages_disabled]}," == *",$st,"* ]]; then
-        printf 'disabled by --disable-stages'; return 0
-    fi
     case "$st" in
         triage)  [[ ${OPT[no_unwrap]} -eq 1 ]] && printf 'unwrapping disabled (--no-unwrap)' ;;
         ltrace)  if [[ ${OPT[skip_ltrace]} -eq 1 ]]; then printf 'skipped by --skip-ltrace'

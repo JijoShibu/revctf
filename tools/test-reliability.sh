@@ -329,6 +329,23 @@ test_python_profile_refusal() {
     [[ $rc -ne 0 && ${#FAILED[@]} -eq 1 && ! -e $attempted ]]
 }
 
+test_unsupported_stage_filter() {
+    source "$ROOT/lib/config.sh"
+    declare -A CLI_SET=()
+    CONFIG_PATH="$WORK/unsupported-stage-filter.config"
+    printf 'stages_disabled = strings\n' > "$CONFIG_PATH"
+    warn() { printf '%s\n' "$*" >&2; }
+    config_load 2> "$WORK/unsupported-stage-filter.err" || return 1
+    grep -q "unknown key 'stages_disabled'" "$WORK/unsupported-stage-filter.err" || return 1
+    [[ ! -v OPT[stages_disabled] ]] || return 1
+    setup_stage unsupported-filter
+    benign_analysis() { printf 'flag{stage_still_ran}\n' > "$RUN_OUTDIR/strings.txt"; }
+    stage_run strings 'controlled text analysis' benign_analysis || return 1
+    [[ ${STAGE_STATUS[strings]} == ok ]] &&
+        grep -Fxq 'flag{stage_still_ran}' "$RUN_OUTDIR/strings.txt"
+}
+
+check 'unsupported stage filter warns and does not claim to disable real analysis' test_unsupported_stage_filter
 check 'untested Python version refuses installation before changing tools' test_python_profile_refusal version
 check 'unsupported processor refuses Python tool installation' test_python_profile_refusal architecture
 check 'missing Python records an installation failure' test_python_profile_refusal missing
