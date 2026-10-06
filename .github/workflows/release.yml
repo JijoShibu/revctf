@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version without v, such as 2.0.0-rc.1
+        description: Version without v, such as 2.0.0
         required: true
         type: string
       commit:

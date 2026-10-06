@@ -8,12 +8,12 @@ installed or tested but quietly do nothing*, before a release.
 code and controlled regressions. They supplement the real installation and Kali checks
 below; they do not publish releases or replace integration testing.
 
-## Current preview procedure
+## Current release procedure
 
-Use the exact commit proposed for 2.0.0-rc.1 and record its hash. Before publication,
+Use the exact commit proposed for 2.0.0 and record its hash. Before publication,
 transfer a `git archive` of that commit into the disposable installation environment;
 after publication, fetch the exact tag anonymously. Do not test an unrelated `main`
-checkout and call it preview validation.
+checkout and call it release validation.
 
 Test at a real 4096 MB VM allocation and record Linux total RAM separately. Preserve
 the existing swap configuration and disclose it. Simulated tier values are branch tests,
@@ -90,7 +90,7 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
 ```
 
 > **The socket mount gives the container root-equivalent control of the host daemon.** That
-> is why install.sh can build the current preview sandbox from inside. Run it only on a machine you
+> is why install.sh can build the current sandbox from inside. Run it only on a machine you
 > own, from a throwaway `--rm` container. Some agent sandboxes refuse this mount; if yours
 > does, run A-1 by hand and let A-2 carry the automated result.
 
@@ -142,7 +142,7 @@ revctf --version
 dpkg -l curl ca-certificates python3-venv      # the 2026-08-28 bootstrap fix
 ```
 
-**Gate A:** every core tool resolves; FLOSS runs from the preview venv; Ghidra is 12.1.4;
+**Gate A:** every core tool resolves; FLOSS runs from the versioned venv; Ghidra is 12.1.4;
 `pyinstxtractor.py` exists; A-1 built the sandbox image; and A-2's missing-Docker behaviour
 is recorded exactly as observed.
 

@@ -7,9 +7,9 @@ section references (v3 §8, v5 §4.1, v6 §11) point at the design documents.
 
 ## [Unreleased]
 
-Changes after the 2.0 preview will be recorded here.
+Changes after 2.0.0 will be recorded here.
 
-## [2.0.0-rc.1] — preview preparation; not published
+## [2.0.0] — release preparation
 
 ### Upgrade notes
 
@@ -32,11 +32,11 @@ Changes after the 2.0 preview will be recorded here.
   Python success/failure and unprocessed files as partial, retaining each file's output.
 - Bound the final candidate worker, preserve byte boundaries during hex decoding, and
   stream stack-string input. Removed token and byte cutoffs no longer hide later answers.
-- Propose Ghidra 12.1.4 with verified downloads and a Java output script; final Kali
-  validation is required before publication. Pin the extractor, Python tool versions,
-  and sandbox base; use a separate preview sandbox image and bound container logs.
-- Add reviewed publication with evidence checks, a seven-day preview gate, an independent
-  test requirement, security guidance, and repository protection settings.
+- Use Ghidra 12.1.4 with verified downloads and a Java output script. Pin the extractor,
+  Python tool versions and sandbox base; use a versioned sandbox image and bound logs.
+- Add reviewed publication with evidence checks, security guidance and repository
+  protections. The maintainer approved direct 2.0.0 publication after controlled checks,
+  withdrawing the earlier preview wait and independent-report requirement.
 
 - Install Java 21 explicitly for Ghidra, even when optional Java decompilers are unavailable.
   Retry interrupted Ghidra downloads within a time limit and remove failed partial downloads.
@@ -56,7 +56,7 @@ See [validation results](docs/reliability-validation.md) for measured outcomes, 
 and outstanding release gates. No general speed improvement or automatic solving of
 every challenge is claimed.
 
-### Earlier changes included in this preview
+### Earlier changes included in 2.0.0
 
 Includes release preparation and the first reliability fixes from the September audit.
 
@@ -129,7 +129,7 @@ Includes release preparation and the first reliability fixes from the September 
 
 The heading below was recorded during development, while the program still reported
 1.0.0. GitHub tags and releases checked on 2026-10-02 contain only v1.0.0 for this
-series. These changes are included in the 2.0 preview; no retrospective 1.0.1 tag is made.
+series. These changes are included in 2.0.0; no retrospective 1.0.1 tag is made.
 
 `install.sh` had only ever run on machines that already had the toolchain, so it could not
 detect a dependency it was missing. A throwaway `kalilinux/kali-rolling` container gave a

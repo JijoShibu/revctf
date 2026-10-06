@@ -1,5 +1,5 @@
 {
-  "version": "2.0.0-rc.1",
+  "version": "2.0.0",
   "runtime_sha256": "31c076a48c9bccd3b9a84bba5e3a29b604727a494ce957efa46f93bbaa0f356b",
   "configured_ram_mib": 4096,
   "vm_restored_16gb": false,
@@ -42,5 +42,14 @@
     "evidence_status": "Second-hand feedback; tester's details, saved report and exact tested commit pending inspection"
   },
   "validation_source_commit": "8e3dc56f846cc0000bdd6ca94f0d88ff171c66c5",
-  "linux_total_ram_mib": 3915
+  "linux_total_ram_mib": 3915,
+  "stable_release_decision": {
+    "version": "2.0.0",
+    "maintainer": "Jijo Shibu <jijoshibu@gmail.com>",
+    "approved_on": "2026-10-05",
+    "preview_wait_waived": true,
+    "independent_report_waived": true,
+    "required_controlled_checks": true,
+    "reason": "Maintainer authorized direct stable publication after the controlled checks pass. The earlier preview wait and independent report requirement were explicitly withdrawn."
+  }
 }

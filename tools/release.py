@@ -63,6 +63,17 @@ def api(path):
         return json.load(response)
 
 
+def direct_stable_approved(record, expected_version):
+    """Recognize the maintainer's recorded decision for this release only."""
+    decision = record.get('stable_release_decision') or {}
+    return (expected_version == '2.0.0' and decision.get('version') == expected_version and
+            decision.get('maintainer') == 'Jijo Shibu <jijoshibu@gmail.com>' and
+            decision.get('preview_wait_waived') is True and
+            decision.get('independent_report_waived') is True and
+            decision.get('required_controlled_checks') is True and
+            decision.get('approved_on') == '2026-10-05')
+
+
 def check_stable(record, releases, now):
     previews = [r for r in releases if r.get('prerelease') and not r.get('draft') and
                 re.fullmatch(r'v2\.0\.0-rc\.[1-9]\d*', r.get('tag_name', ''))]
@@ -89,7 +100,7 @@ def gate(expected_version, source):
         raise ValueError('Build from a clean committed checkout')
     record = json.loads((ROOT / 'docs/release-evidence.json').read_text())
     validate_evidence(record, expected_version, runtime_digest())
-    if '-rc.' not in expected_version:
+    if '-rc.' not in expected_version and not direct_stable_approved(record, expected_version):
         report = check_stable(record, api('releases?per_page=100'), dt.datetime.now(dt.timezone.utc))
         issue = api('issues/' + str(int(report['issue_number'])))
         if issue.get('user', {}).get('login', '').lower() != report['tester'].lower():
