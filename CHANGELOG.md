@@ -5,6 +5,18 @@ section references (v3 §8, v5 §4.1, v6 §11) point at the design documents.
 
 ---
 
+## [2.1.0-rc.1] - Unreleased
+
+- Add bounded static reversal, single-byte XOR, and prefix-constrained repeating-key XOR recovery.
+- Preserve additive candidate provenance and distinguish unfamiliar flags from hash-like metadata.
+- Fix next-step advice when no high-confidence candidates exist.
+- Recognize Python source and WASM; skip inapplicable native analysis and add safe source hints.
+- Reject unsafe archive members; bound extraction and disclose selected-payload coverage.
+- Prefer Ghidra import failures over secondary heap-verification errors.
+- Bound regex validation and Docker availability probes; restrict container IPC.
+- Clarify execution warnings, inactive switches, output permissions and release limitations.
+- Add controlled recovery, routing, provenance and archive-safety regression tests.
+
 ## [Unreleased]
 
 Changes after 2.0.0 will be recorded here.

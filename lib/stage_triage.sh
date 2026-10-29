@@ -29,7 +29,7 @@ TRIAGE_MAX_EXPAND_KB="${TRIAGE_MAX_EXPAND_KB:-2097152}"
 # Read by lib/report.sh and the orchestrator; shellcheck cannot see across sourced files.
 # shellcheck disable=SC2034
 declare -g TRIAGE_UNWRAPPED=0        # 1 when RUN_TARGET != RUN_ORIGINAL
-declare -g TRIAGE_METHOD=""          # upx | archive | pyinstaller | ""
+declare -g TRIAGE_METHOD="" TRIAGE_LIMIT_NOTE=""  # unwrap method and explicit omissions
 declare -ga TRIAGE_MEMBERS=()        # extracted members worth analysing separately
 
 # ======================================================================================
@@ -48,6 +48,7 @@ _triage_classify() {
     magic=$(head -c 4 -- "$t" 2>/dev/null | od -An -tx1 | tr -d ' \n')
 
     case "$magic" in
+        0061736d) printf 'wasm'; return 0 ;;
         7f454c46)  # ELF — a Go or Rust binary is still ELF, so no further branching.
                    printf 'elf';   return 0 ;;
         cafebabe)
@@ -63,7 +64,11 @@ _triage_classify() {
             printf 'macho'; return 0 ;;
     esac
 
+    if [[ $t == *.py && $desc == *text* ]]; then
+        printf 'python-source'; return 0
+    fi
     case "$desc" in
+        *"Python script"*|*"Python executable"*) printf 'python-source' ;;
         *"ELF "*)                     printf 'elf' ;;
         *"Mach-O"*)                   printf 'macho' ;;
         *"Java archive"*|*"Java class"*) printf 'java' ;;
@@ -175,55 +180,36 @@ _triage_unwrap_upx() {
 }
 
 _triage_unwrap_archive() {
-    pf_require_tool 7z >/dev/null 2>&1 || {
-        TRIAGE_FAIL_REASON="7z is required to extract archives but is not installed"; return 1; }
-
-    local dir="$RUN_WORKDIR/extracted"
-    mkdir -p "$dir" || { TRIAGE_FAIL_REASON="could not create the extraction directory"; return 1; }
-
-    # Decompression-bomb guard. A 1MB zip expanding to 1GB is a standard CTF trick and was
-    # extracted here unbounded: measured, a 1,043,752-byte input wrote 1,048,584 KB into
-    # the work directory with no check of either the expansion or the free space.
-    #
-    # 7z reports the uncompressed total in its listing, so the cost is known before a byte
-    # is written. Two bounds apply: an absolute cap, and available disk with headroom.
-    local declared_kb avail_kb
-    declared_kb=$(timeout -k 2 "$ST_T_LIGHT" 7z l -ba -slt -- "$RUN_TARGET" 2>/dev/null \
-        | awk -F' = ' '/^Size = [0-9]+$/ { total += $2 } END { printf "%d", total/1024 }')
-    [[ $declared_kb =~ ^[0-9]+$ ]] || declared_kb=0
-
-    if [[ $declared_kb -gt $TRIAGE_MAX_EXPAND_KB ]]; then
-        TRIAGE_FAIL_REASON="container expands to $(( declared_kb / 1024 ))MB, over the $(( TRIAGE_MAX_EXPAND_KB / 1024 ))MB limit (raise TRIAGE_MAX_EXPAND_KB to override)"
+    local dir="$RUN_WORKDIR/extracted.${TRIAGE_DEPTH:-0}" rc=0
+    local manifest="$RUN_WORKDIR/extract-manifest.json" raw="$RUN_WORKDIR/extract.stdout"
+    local err="$RUN_WORKDIR/extract.stderr"
+    if [[ ! $TRIAGE_MAX_EXPAND_KB =~ ^[1-9][0-9]{0,8}$ ]]; then
+        TRIAGE_FAIL_REASON="invalid TRIAGE_MAX_EXPAND_KB"; return 1
+    fi
+    local remaining=$((TRIAGE_MAX_EXPAND_KB * 1024 - ${TRIAGE_EXTRACTED_BYTES:-0}))
+    local members_left=$((1000 - ${TRIAGE_MEMBER_TOTAL:-0}))
+    st_run_bounded "$ST_T_UNWRAP" "$raw" "$err" -- python3 \
+        "$REVCTF_SCRIPTS/safe_extract.py" "$RUN_TARGET" "$dir" \
+        --max-bytes "$remaining" --max-members "$members_left" --manifest "$manifest" || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        TRIAGE_FAIL_REASON="$(tail -c 240 "$err")"
+        [[ -n $TRIAGE_FAIL_REASON ]] || TRIAGE_FAIL_REASON="safe extraction failed (exit $rc)"
         return 1
     fi
-
-    avail_kb=$(df -Pk "$RUN_WORKDIR" 2>/dev/null | awk 'NR==2 {print $4}')
-    if [[ $avail_kb =~ ^[0-9]+$ ]] && [[ $declared_kb -gt $(( avail_kb / 2 )) ]]; then
-        TRIAGE_FAIL_REASON="container expands to $(( declared_kb / 1024 ))MB but only $(( avail_kb / 1024 ))MB is free on $(dirname "$RUN_WORKDIR")"
-        return 1
+    local expanded count
+    read -r expanded count < "$raw"
+    if [[ ! $expanded =~ ^[0-9]+$ || ! $count =~ ^[0-9]+$ ]]; then
+        TRIAGE_FAIL_REASON="extractor did not provide valid budget accounting"; return 1
     fi
-
-    if ! timeout -k 5 "$ST_T_UNWRAP" 7z x -y -o"$dir" -- "$RUN_TARGET" >/dev/null 2>&1; then
-        TRIAGE_FAIL_REASON="7z could not extract this container"
-        return 1
-    fi
-
-    # Collect the members worth analysing: executables and other binaries, biggest first,
-    # so a report on a firmware image leads with the substantial payload rather than a
-    # stray config file.
+    TRIAGE_EXTRACTED_BYTES=$(( ${TRIAGE_EXTRACTED_BYTES:-0} + expanded ))
+    TRIAGE_MEMBER_TOTAL=$(( ${TRIAGE_MEMBER_TOTAL:-0} + count ))
+    TRIAGE_MEMBERS=()
     local f
-    while IFS= read -r f; do
-        TRIAGE_MEMBERS+=("$f")
-    done < <(find "$dir" -type f -size +0 -printf '%s\t%p\n' 2>/dev/null \
-             | sort -rn | cut -f2- | head -50)
-
+    while IFS= read -r -d '' f; do TRIAGE_MEMBERS+=("$f"); done \
+        < <(find "$dir" -type f -size +0 -print0)
     [[ ${#TRIAGE_MEMBERS[@]} -gt 0 ]] || {
-        TRIAGE_FAIL_REASON="the container extracted but held no files"; return 1; }
-
-    TRIAGE_METHOD="archive"
-    TRIAGE_UNWRAPPED=1
-    # The container itself stays RUN_TARGET; members are analysed as their own targets by
-    # the orchestrator, which is what keeps recursion depth explicit.
+        TRIAGE_FAIL_REASON="the container extracted but held no nonempty regular files"; return 1; }
+    TRIAGE_METHOD="archive"; TRIAGE_UNWRAPPED=1
     return 0
 }
 
@@ -286,6 +272,7 @@ stage_triage() {
     TRIAGE_METHOD=""
     TRIAGE_MEMBERS=()
     TRIAGE_FAIL_REASON=""
+    TRIAGE_LIMIT_NOTE=""
 
     size=$(st_file_size "$RUN_ORIGINAL")
     desc=$(file -b "$RUN_ORIGINAL" 2>/dev/null)
@@ -337,21 +324,41 @@ stage_triage() {
     # --- containers and managed/bytecode formats ---
     case "$RUN_FORMAT" in
         archive)
-            if _triage_unwrap_archive; then
-                {
-                    printf 'Unwrap       : extracted %d member(s), depth cap %d\n' \
-                        "${#TRIAGE_MEMBERS[@]}" "$TRIAGE_MAX_DEPTH"
-                    printf 'Members      :\n'
-                    printf '  %s\n' "${TRIAGE_MEMBERS[@]:0:20}"
-                    if [[ ${#TRIAGE_MEMBERS[@]} -gt 20 ]]; then
-                        printf '  ... and %d more\n' $(( ${#TRIAGE_MEMBERS[@]} - 20 ))
-                    fi
-                } >> "$out"
+            local TRIAGE_DEPTH=0 TRIAGE_EXTRACTED_BYTES=0 TRIAGE_MEMBER_TOTAL=0
+            if [[ ! $TRIAGE_MAX_DEPTH =~ ^[1-9][0-9]?$ ]]; then
+                stage_set_status "$name" failed "invalid TRIAGE_MAX_DEPTH (1-99 required)"; return 0
+            fi
+            while [[ $RUN_FORMAT == archive && $TRIAGE_DEPTH -lt $TRIAGE_MAX_DEPTH ]]; do
+                if ! _triage_unwrap_archive; then
+                    printf 'Unwrap       : FAILED — %s\n' "$TRIAGE_FAIL_REASON" >> "$out"
+                    stage_set_status "$name" failed "container not extracted: $TRIAGE_FAIL_REASON"
+                    return 0
+                fi
+                printf 'Unwrap       : safely extracted %d member(s), depth %d\n' \
+                    "${#TRIAGE_MEMBERS[@]}" "$((TRIAGE_DEPTH + 1))" >> "$out"
+                if [[ ${#TRIAGE_MEMBERS[@]} -gt 1 ]]; then
+                    TRIAGE_LIMIT_NOTE="archive has multiple members; only the selected payload is analyzed"
+                fi
+                # Preserve all member paths in triage, but never claim full batch analysis.
+                printf 'Members      :\n' >> "$out"
+                printf '  %s\n' "${TRIAGE_MEMBERS[@]}" >> "$out"
+                RUN_TARGET=${TRIAGE_MEMBERS[0]}
+                RUN_FORMAT=$(_triage_classify "$RUN_TARGET")
+                TRIAGE_DEPTH=$((TRIAGE_DEPTH + 1))
+                printf 'Selected     : %s (%s)\n' "$RUN_TARGET" "$RUN_FORMAT" >> "$out"
+            done
+            if [[ $RUN_FORMAT == archive ]]; then
+                TRIAGE_LIMIT_NOTE="archive recursion depth reached; nested payload was not analyzed"
             else
-                printf 'Unwrap       : FAILED — %s\n' "$TRIAGE_FAIL_REASON" >> "$out"
-                stage_write "$name" failed
-                stage_set_status "$name" failed "container not extracted: $TRIAGE_FAIL_REASON"
-                return 0
+                packer=$(_triage_packer "$RUN_TARGET" "$RUN_FORMAT")
+                if [[ -n $packer ]]; then
+                    if _triage_unwrap_upx; then
+                        RUN_FORMAT=$(_triage_classify "$RUN_TARGET")
+                        printf 'Selected UPX : unpacked (%s)\n' "$RUN_FORMAT" >> "$out"
+                    else
+                        TRIAGE_LIMIT_NOTE="selected member remains packed: $TRIAGE_FAIL_REASON"
+                    fi
+                fi
             fi
             ;;
         pe|dotnet|elf)
@@ -396,12 +403,26 @@ stage_triage() {
             java)   printf '  Java bytecode — routed to managed decompilation; native disassembly is not useful\n' ;;
             pyc)    printf '  Python bytecode — routed to Python decompilation\n' ;;
             pyinstaller) printf '  PyInstaller bundle — extracted bytecode routed to Python decompilation\n' ;;
-            archive) printf '  container — members analysed individually\n' ;;
+            archive) printf '  container — nested payload analysis omitted at the declared limit\n' ;;
+            python-source) printf '  Python source — text captures and source-aware review; no native disassembly\n' ;;
+            wasm) printf '  WebAssembly — generic captures only; native import is not established\n' ;;
             macho)  printf '  Mach-O — static stages only; ltrace and strace do not apply\n' ;;
             *)      printf '  unrecognised format — running the format-agnostic stages only\n' ;;
         esac
     } >> "$out"
 
-    stage_write "$name" ok
+    if [[ $RUN_FORMAT == python-source ]]; then
+        local source_rc=0
+        st_run_bounded 10 "$RUN_OUTDIR/source-review.txt" "$RUN_OUTDIR/source-review.stderr" \
+            -- python3 "$REVCTF_SCRIPTS/source_review.py" "$RUN_TARGET" || source_rc=$?
+        if [[ $source_rc -ne 0 ]]; then TRIAGE_LIMIT_NOTE="source-aware review did not finish"; fi
+        printf '\nSource hints : %s/source-review.txt\n' "$RUN_OUTDIR" >> "$out"
+    fi
+    if [[ -n $TRIAGE_LIMIT_NOTE ]]; then
+        printf '\nCoverage     : %s\n' "$TRIAGE_LIMIT_NOTE" >> "$out"
+        stage_set_status "$name" partial "$TRIAGE_LIMIT_NOTE"
+    else
+        stage_write "$name" ok
+    fi
     return 0
 }

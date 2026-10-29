@@ -12,10 +12,10 @@ Docker they skip rather than running the binary on your machine.
 
 Directory targets are M7 and are not in this build — a directory exits 1 with a message.
 
-> **Status: v2.0.0 — reliability and reporting improvements.** This version improves
+> **Status: v2.1.0-rc.1 — release candidate, not yet published.** This version improves
 > resource limits, cleanup, and the handling of incomplete results. It requires an
 > approximate 4 GB RAM check before scanning. All recovered candidates remain unverified.
-> Read the [release notes](docs/releases/2.0.0.md) and
+> Read the [release notes](docs/releases/2.1.0-rc.1.md) and
 > [current validation results](docs/stable-validation-status.md) before upgrading.
 > Batch scanning, interactive solving, and persistent debug logging remain planned.
 
@@ -24,8 +24,8 @@ Directory targets are M7 and are not in this build — a directory exits 1 with 
 ## Install
 
 ```bash
-git clone --branch v2.0.0 --depth 1 https://github.com/JijoShibu/revctf.git revctf-2.0.0
-cd revctf-2.0.0
+git clone --branch v2.1.0-rc.1 --depth 1 https://github.com/JijoShibu/revctf.git revctf-2.1.0-rc.1
+cd revctf-2.1.0-rc.1
 sudo ./install.sh
 ```
 
@@ -197,8 +197,8 @@ Candidates recovered from partial captures remain **UNVERIFIED**. Finding no can
 in an incomplete scan does not establish that no flag exists.
 
 On interruption, revctf saves available captures and an incomplete report, then removes
-only containers bearing this scan's unique ownership label. Docker cleanup has a ten-second
-deadline. If removal cannot be verified, `cleanup-warning.txt` identifies the container
+only containers bearing this scan's unique ownership label. Docker cleanup has a ten-second request budget and at most one second of
+termination grace. If removal cannot be verified, `cleanup-warning.txt` identifies the container
 and recovery command, and further challenge execution is blocked. SIGKILL and host crashes
 can prevent cleanup entirely. Original challenge files are never modified.
 
@@ -230,7 +230,7 @@ a total disk budget, and a large or complicated challenge can still exceed avail
 | Other stage timeouts | 120–1800s by stage | `ST_T_*` env vars |
 | Per raw output or trace file | 2 GiB | `ST_MAX_OUT_KB` (1024-byte units) |
 | Archive expansion | 2GB, and never more than half the free disk | `TRIAGE_MAX_EXPAND_KB` |
-| Container recursion depth | 2 | `TRIAGE_MAX_DEPTH` |
+| Selected archive payload recursion depth | 2 | `TRIAGE_MAX_DEPTH` |
 
 ## Output
 
@@ -433,3 +433,55 @@ it would not exist without them.
 
 Each is used as a separate process under its own licence. The picoCTF challenges used for
 acceptance testing are the work of the picoCTF team at Carnegie Mellon University.
+
+## 2.1 recovery and routing changes
+
+This candidate adds bounded static single-byte XOR, byte reversal, and repeating-key
+XOR recovery. It never executes a sample for these transformations. Repeating-key
+recovery uses recognizable wrapper prefixes (periods 2–8); a literal wrapper in
+`--flag-format` supplies an additional hint. It is not a general cipher solver.
+The recovery pass examines at most 16 MiB, runs for at most 20 seconds, and keeps at
+most 1024 occurrences. Reaching a budget marks the candidate search partial. The
+outer 384 MiB/300-second flag worker remains in force.
+
+Unfamiliar decoded wrappers remain low-confidence leads. Known flag-like text is
+shown first, followed by unfamiliar flag-like text, then hash/metadata leads. All
+candidates remain UNVERIFIED. `candidate-evidence.json` (schema version 1) records
+supporting stages and known locations. A capture offset is not a binary offset;
+unknown locations are null. `recovery-evidence.jsonl` records XOR key bytes and true
+source-byte offsets. Existing four-field `flagscan.txt` records remain compatible.
+
+Python source and WebAssembly are recognized explicitly. Native-binary stages skip
+these inputs; Python source receives static AST hints in `source-review.txt` without
+importing or executing it. External file contents and remote flags are not available
+to static scanning. WASM-specific decompilation remains outside this release.
+
+Automatic archive extraction supports ZIP and tar (including supported compressed
+tar streams), rejects links/special files/unsafe paths, and enforces cumulative byte
+and member-count limits. Nested extraction follows ONE selected payload up to the
+depth limit. Multiple members and depth omissions are explicitly partial; full
+archive-member batch analysis is not implemented. Other container formats receive a
+clear safe-extraction limitation. Your original input is never modified.
+
+Commands still have per-file output limits, not a total run disk quota. New report
+directories use mode 700 and files use 600; pre-existing empty output directories
+retain their permissions. Review reports before sharing them.
+
+`--flag-format` accepts at most 4096 characters; syntax validation is bounded.
+`--interactive`, `--yes`, and `--debug` explicitly warn that their planned features
+are inactive. `--no-sandbox` warns before execution. Containers share the kernel and
+have writable scratch access; use a disposable Kali VM for untrusted inputs.
+
+See [the QA disposition](docs/qa-2.1-disposition.md) for implemented, validated, and
+deferred work. This release does not claim symbolic solving, batch scheduling,
+persistent logging, caching, or redesign of the beginner Ghost Core challenge.
+
+Provenance locations distinguish the original input from a derived/unpacked payload.
+A derived payload offset never claims a location inside the original archive.
+Custom flag-pattern matching also has a ten-second budget per transformed capture;
+a reached budget marks the search partial while built-in matching continues.
+
+Decompiler capture recovery also recognizes bounded byte-array initializers and
+adjacent Ghidra stack stores, including non-printable encoded bytes. It inspects up
+to 1 MiB and 128 reconstructed runs per supported capture within three seconds;
+limits are disclosed as partial work. This remains heuristic static reconstruction.

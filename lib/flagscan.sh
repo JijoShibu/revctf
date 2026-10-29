@@ -91,17 +91,39 @@ _fs_scan_file() {
     local src="$3"
     local -a patterns=("${OPT[flag_format]:-}" "$_FLAG_BRACED") levels=(high high)
     if [[ $enc == plain ]]; then
-        patterns+=("$_FLAG_HASHLIKE" "$_FLAG_GENERIC"); levels+=(medium low)
+        patterns+=("$_FLAG_HASHLIKE"); levels+=(medium)
     fi
+    patterns+=("$_FLAG_GENERIC"); levels+=(low)
     local i
     for i in "${!patterns[@]}"; do
         pattern=${patterns[$i]}; conf=${levels[$i]}
         [[ -n $pattern ]] || continue
-        grep --line-buffered -aoE -- "$pattern" "$src" | while IFS= read -r line; do
+        local -a match_cmd=(grep --line-buffered -aoE -- "$pattern" "$src")
+        if [[ $i -eq 0 && -n ${OPT[flag_format]:-} ]]; then
+            match_cmd=(timeout -k 1 10 "${match_cmd[@]}")
+        fi
+        "${match_cmd[@]}" | while IFS= read -r line; do
             if [[ $conf == low ]] && grep -qaE -- "$_FLAG_BRACED" <<< "$line"; then continue; fi
+            # Suppress a ROT mirror of an already recognizable cleartext flag.
+            if [[ $conf == low && ( $enc == rot13 || $enc == rot47 ) ]]; then
+                local original
+                if [[ $enc == rot13 ]]; then
+                    original=$(tr 'A-Za-z' 'N-ZA-Mn-za-m' <<< "$line")
+                else
+                    original=$(tr '!-~' 'P-~!-O' <<< "$line")
+                fi
+                if grep -qaE -- "$_FLAG_BRACED" <<< "$original"; then continue; fi
+                if [[ -n ${OPT[flag_format]:-} ]] && grep -qaE -- "${OPT[flag_format]}" <<< "$original"; then continue; fi
+            fi
             _fs_add "$conf" "$stage" "$enc" "$line" || return $?
         done
         local -a results=("${PIPESTATUS[@]}")
+        if [[ ${results[0]} -eq 124 || ${results[0]} -eq 137 ]]; then
+            # shellcheck disable=SC2034  # Read by the generated worker's final completeness check.
+            FS_INCOMPLETE=1
+            printf 'Custom pattern matching reached its per-capture budget; other searches continue.\n' >&2
+            continue
+        fi
         [[ ${results[0]} -le 1 && ${results[1]} -eq 0 ]] || return 2
     done
     return 0
@@ -198,6 +220,22 @@ _fs_sweep_encodings() {
         fi
     fi
 
+    if [[ -r ${REVCTF_SCRIPTS:-}/recover_candidates.py &&
+          ( $stage == ghidra || $stage == radare2* || $stage == objdump || $stage == managed* ) ]]; then
+        local reconstruction_rc=0
+        python3 "$REVCTF_SCRIPTS/recover_candidates.py" --source "$src" \
+            --capture-mode --stage "$stage" --seconds 3 --text "$dec.reconstructed" \
+            --evidence "$RUN_OUTDIR/recovery-evidence.jsonl" --append-evidence \
+            --flag-format "${OPT[flag_format]:-}" || reconstruction_rc=$?
+        [[ $reconstruction_rc -eq 0 || $reconstruction_rc -eq 3 ]] || return "$reconstruction_rc"
+        _fs_scan_file "$stage" reconstructed "$dec.reconstructed" || return $?
+        if [[ $reconstruction_rc -eq 3 ]]; then
+            # shellcheck disable=SC2034  # Read by the generated worker's final check.
+            FS_INCOMPLETE=1
+        fi
+        rm -f "$dec.reconstructed"
+    fi
+
     rm -f "$dec"
     return 0
 }
@@ -224,8 +262,9 @@ flagscan_run() {
     {
         printf 'set -o pipefail\n'
         printf 'source %q\n' "$FLAGSCAN_LIBRARY"
-        declare -p OPT RUN_WORKDIR FLAG_MAX_LEN
+        declare -p OPT RUN_WORKDIR RUN_OUTDIR FLAG_MAX_LEN
         printf 'REVCTF_SCRIPTS=%q\nFS_WORKER=1\n' "${REVCTF_SCRIPTS:-}"
+        printf ': > %q\n' "$RUN_OUTDIR/recovery-evidence.jsonl"
         for s in "${STAGE_ORDER[@]}"; do
             case "$s" in
                 managed) [[ -f $RUN_OUTDIR/managed-full.txt ]] && continue ;;
@@ -245,6 +284,23 @@ flagscan_run() {
             printf '_fs_scan_file %q plain %q || exit $?\n' "$s" "$cap"
             printf '_fs_sweep_encodings %q %q || exit $?\n' "$s" "$cap"
         done
+        if [[ -f ${RUN_TARGET:-} && -r ${REVCTF_SCRIPTS:-}/recover_candidates.py ]]; then
+            printf 'recovery_rc=0\n'
+            printf 'python3 %q --append-evidence --source %q --text %q --evidence %q --flag-format %q --original %q || recovery_rc=$?\n' \
+                "$REVCTF_SCRIPTS/recover_candidates.py" "$RUN_TARGET" \
+                "$RUN_WORKDIR/fs.recovery.txt" "$RUN_OUTDIR/recovery-evidence.jsonl" "${OPT[flag_format]:-}" \
+                "${RUN_ORIGINAL:-$RUN_TARGET}"
+            # shellcheck disable=SC2016  # Expanded by the generated worker, not this shell.
+            printf '[[ $recovery_rc -eq 0 || $recovery_rc -eq 3 ]] || exit "$recovery_rc"\n'
+            printf '_fs_scan_file binary-recovery recovered %q || exit $?\n' "$RUN_WORKDIR/fs.recovery.txt"
+            # shellcheck disable=SC2016  # Expanded by the generated worker.
+            printf '[[ $recovery_rc -eq 0 ]] || exit 3\n'
+        fi
+        # shellcheck disable=SC2016  # Worker state is evaluated by the generated shell.
+        printf '[[ ${FS_INCOMPLETE:-0} -eq 0 ]] || exit 3\n'
+        # The sidecar is additive: the raw four-field hit contract remains unchanged.
+        # It is written by a separately bounded parent command below, including after
+        # a worker timeout, so early newline-terminated records remain useful.
     } > "$worker"
     ST_MEM_CEIL_MB=384; ST_MEM_IS_JVM=0; ST_LIMIT_NOTE=""
     ST_ACTIVE_STAGE=flagscan
@@ -252,6 +308,32 @@ flagscan_run() {
     stage_record_exec flagscan 'bounded candidate search (384 MiB, 300 seconds by default)' 0
     : > "$out"; : > "$err"
     st_run_bounded "${ST_T_FLAGSCAN:-300}" "$out" "$err" -- bash "$worker" || rc=$?
+    if [[ -r ${REVCTF_SCRIPTS:-}/candidate_evidence.py ]]; then
+        local evidence_rc=0 evidence_note=$ST_LIMIT_NOTE
+        local -a evidence_cmd=(python3 "$REVCTF_SCRIPTS/candidate_evidence.py"
+            --records "$out" --output "$RUN_OUTDIR/candidate-evidence.json"
+            --recovery "$RUN_OUTDIR/recovery-evidence.jsonl")
+        if [[ $rc -ne 0 || -n $ST_LIMIT_NOTE ]]; then
+            evidence_cmd+=(--search-incomplete)
+        fi
+        for s in "${STAGE_ORDER[@]}"; do
+            cap=${STAGE_OUT[$s]:-}
+            [[ -n $cap ]] && evidence_cmd+=(--capture "$s" "$cap")
+        done
+        for cap in "$RUN_OUTDIR/managed-full.txt" "$RUN_OUTDIR/radare2-analysis.txt" \
+                   "$RUN_OUTDIR/radare2-disassembly.txt" "$RUN_OUTDIR"/pydecomp-[0-9]*.txt; do
+            [[ -f $cap ]] && evidence_cmd+=(--capture "$(basename "$cap" .txt)" "$cap")
+        done
+        st_run_bounded 30 "$RUN_WORKDIR/evidence.stdout" "$RUN_WORKDIR/evidence.stderr" \
+            -- "${evidence_cmd[@]}" || evidence_rc=$?
+        cat "$RUN_WORKDIR/evidence.stderr" >> "$err"
+        if [[ $evidence_rc -ne 0 ]]; then
+            [[ $rc -ne 0 ]] || rc=$evidence_rc
+            ST_LIMIT_NOTE="candidate provenance incomplete; raw records retained"
+        else
+            ST_LIMIT_NOTE=$evidence_note
+        fi
+    fi
     # read only newline-terminated records: a killed write cannot invent a complete hit.
     local conf stage enc val records=0
     while IFS=$'\t' read -r conf stage enc val; do
@@ -308,7 +390,7 @@ flagscan_run() {
         mapfile -t FLAG_HITS < <(
             for rec in "${deduped[@]}"; do
                 case "${rec%%	*}" in high) printf '1\t%s\n' "$rec" ;;
-                                      medium) printf '2\t%s\n' "$rec" ;;
+                                      low) printf '2\t%s\n' "$rec" ;;
                                       *) printf '3\t%s\n' "$rec" ;; esac
             done | sort -t$'\t' -k1,1n -k5,5 | cut -f2-)
     fi
@@ -324,6 +406,8 @@ flagscan_report() {
     printf 'All candidates are UNVERIFIED. Confidence describes the text pattern,\n'
     printf 'not proof that the challenge accepts the answer. Decoys can rank high.\n'
     printf 'Search limits apply; this is not an exhaustive search (see README).\n\n'
+    [[ -f ${RUN_OUTDIR:-}/candidate-evidence.json ]] && \
+        printf 'Candidate locations and all supporting stages: %s/candidate-evidence.json\n\n' "${RUN_OUTDIR:-}"
     if [[ ${#FLAG_HITS[@]} -eq 0 ]]; then
         if declare -F stage_incomplete >/dev/null && stage_incomplete; then
             printf 'No candidate found in the available results; analysis was incomplete.\n'

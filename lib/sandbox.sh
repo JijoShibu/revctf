@@ -21,7 +21,7 @@
 # machine and not another — with the user believing they were isolated either way — is
 # exactly that. --no-sandbox is the deliberate, stated override.
 
-declare -g SBX_IMAGE="${REVCTF_SBX_IMAGE:-revctf-sandbox:2.0.0}"
+declare -g SBX_IMAGE="${REVCTF_SBX_IMAGE:-revctf-sandbox:2.1.0-rc.1}"
 # shellcheck disable=SC2034  # read by lib/stage_dynamic.sh and the entry script, separate files
 declare -g SBX_WHY=""
 declare -g SBX_OK=-1          # -1 = not yet probed, 0 = unavailable, 1 = available
@@ -48,7 +48,7 @@ sbx_available() {
         SBX_WHY="Docker is not installed"
         return 1
     fi
-    if ! docker info >/dev/null 2>&1; then
+    if ! timeout -k 1 10 docker info >/dev/null 2>&1; then
         # A STALE DOCKER_HOST LOOKS EXACTLY LIKE A DEAD DAEMON, and cost real time on this
         # very host: DOCKER_HOST pointed at a podman socket that no longer existed, so every
         # docker call failed while `systemctl status docker` said active. Naming the variable
@@ -63,7 +63,7 @@ sbx_available() {
         fi
         return 1
     fi
-    if ! docker image inspect "$SBX_IMAGE" >/dev/null 2>&1; then
+    if ! timeout -k 1 10 docker image inspect "$SBX_IMAGE" >/dev/null 2>&1; then
         # shellcheck disable=SC2034  # SBX_WHY is read by lib/stage_dynamic.sh, a separate file
         SBX_WHY="the sandbox image $SBX_IMAGE is not built (run install.sh, or: docker build -t $SBX_IMAGE docker/)"
         return 1
@@ -115,6 +115,7 @@ sbx_wrap() {
         --label "revctf.owner=$SBX_OWNER"
         --ulimit "fsize=$((ST_MAX_OUT_KB * 1024)):$((ST_MAX_OUT_KB * 1024))"
         --network=none
+        --ipc=none
         --log-driver local --log-opt max-size=1m --log-opt max-file=2
         --read-only
         --cap-drop=ALL
@@ -163,7 +164,9 @@ sbx_cleanup_all() {
     done
     while [[ $SECONDS -lt $deadline ]]; do
         left=$((deadline - SECONDS))
-        ids=$(timeout -s KILL "${left}s" docker ps -aq --filter "label=revctf.owner=$SBX_OWNER") || { rc=1; break; }
+        # TERM first leaves timeout alive to reap/kill descendants holding its pipe.
+        # An immediate KILL can strand that pipe and defeat command-substitution's deadline.
+        ids=$(timeout -k 1 "${left}s" docker ps -aq --filter "label=revctf.owner=$SBX_OWNER") || { rc=1; break; }
         if [[ -z $ids ]]; then
             if [[ $pending -eq 0 ]]; then SBX_OWNED=(); break; fi
             sleep 0.1
@@ -172,7 +175,7 @@ sbx_cleanup_all() {
         for id in $ids; do
             left=$((deadline - SECONDS))
             [[ $left -gt 0 ]] || { rc=1; break; }
-            timeout -s KILL "${left}s" docker rm -f "$id" >/dev/null 2>&1 || { rc=1; break; }
+            timeout -k 1 "${left}s" docker rm -f "$id" >/dev/null 2>&1 || { rc=1; break; }
         done
         # This run issues only one creation at a time. Once its labelled container
         # has been observed and removed, the next empty listing confirms cleanup.

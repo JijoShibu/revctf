@@ -1,0 +1,68 @@
+# RevCTF 2.1 release-candidate validation
+
+Status: implementation and controlled validation complete; Kali integration and publication pending.
+
+Base: v2.0.0, a4460e6e87b6933b9d2b57a52623317321aa7d78.
+The candidate uses a separate worktree and never moves existing release tags.
+
+## Actual local observations
+
+- Ubuntu WSL, Python 3.14.4; controlled test environment, not the supported Kali profile.
+- Recovery helper initially failed an XOR-padding case; recognized-wrapper suffixes
+  now retain correct source offsets. The focused regression passes.
+- Ubuntu initially lacked C runtime start objects. The static compiled fixture uses
+  a freestanding ELF link; build dependencies were then installed for broader checks.
+- 17 helper tests passed, then 22 tests including real flag-worker, provenance,
+  routing, advice and shell-syntax integration passed.
+- Existing reliability: 42 passed. Existing accuracy: 8 passed.
+- First resource run: 32 passed, 1 failed in unresponsive-Docker cleanup simulation.
+  Investigation is required; this failure is retained, not counted as passed.
+- ShellCheck first flagged generated-worker quoting; targeted comments explain the
+  intentional delayed expansion. The final style rerun is pending.
+
+## Required before publication
+
+Final exact-runtime controlled checks and CI; real 4096 MiB Kali operation; Docker
+isolation/lifecycle; Ghidra memory/known answers; installation/reinstallation;
+offline scan; upgrade/rollback; timing; retained failed attempts and skips; verified
+cleanup; normal VM shutdown and restoration to its original 16384 MiB allocation.
+
+The Kali VM booted at 4096 MiB. SSH was unavailable at its newly assigned address;
+maintainer assistance was requested. No submitted challenge was executed there.
+Original report fixtures are absent; synthetic regressions must be labeled as such.
+
+The release evidence file deliberately remains pending until these checks actually
+complete. Earlier 2.0.0 evidence is preserved as historical evidence only.
+
+## Final controlled matrix
+
+All shell syntax checks, ShellCheck 0.11.0 style checks, and release-version
+consistency passed in a native Linux snapshot of the candidate source.
+
+| Suite | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: |
+| Reliability | 42 | 0 | 0 |
+| Resources | 33 | 0 | 0 |
+| Existing accuracy | 8 | 0 | 0 |
+| New QA recovery/routing/safety | 33 | 0 | 0 |
+| Release gates | 14 | 0 | 0 |
+| Publisher | 8 | 0 | 0 |
+| Mutation-reader assertions | 9 | 0 | 0 |
+| Total | 147 | 0 | 0 |
+
+Runtime fingerprint: `2da3fbf48becb0149603497777c79ff94a2f340478cc60455d4e06a378d57b2c`.
+Private local controlled-evidence archive SHA-256: `f94eb8640e2a194cd5a0e3b640e1b252cd4d3cd9f47e1d118cb69b05c01301c4`.
+The archive retains the final matrix and earlier failed attempts; it is not a
+public source-release asset and does not contain the original missing report fixtures.
+
+The cleanup simulation exposed a real command-pipe deadline problem. TERM with a
+one-second forced-stop fallback fixed it; all 33 resource checks then passed.
+Ghidra mock tests initially lacked required option/tier setup and an optional-note
+default. Correcting those fixtures allowed import-cause and challenge-text negative
+controls to execute; both pass. This is not claimed as real Ghidra validation.
+The generated-worker quoting diagnostics are also resolved; final style checks pass.
+
+New regressions cover contiguous and reconstructed XOR bytes, literal special-character
+paths, unknown wrappers, preserved early records after interruption, source parsing
+without execution, real archive depth/member omissions, and regex budget exhaustion.
+No submitted challenge or remote challenge service was executed by these tests.

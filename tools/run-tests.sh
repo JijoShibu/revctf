@@ -923,7 +923,7 @@ with z.open('big', 'w', force_zip64=True) as dest:
 z.close()" 2>/dev/null
     if [[ -f $o/bomb.zip ]]; then
         "$RC" scan "$o/bomb.zip" --skip-ghidra --output "$o/bomb" >/dev/null 2>&1
-        if grep -q 'over the .*MB limit' "$o/bomb/triage.txt" 2>/dev/null; then
+        if grep -q 'archive expansion exceeds byte limit' "$o/bomb/triage.txt" 2>/dev/null; then
             ok "a decompression bomb is refused before extraction"
         else
             no "bomb guard" "3GB expansion was not refused"

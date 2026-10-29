@@ -32,8 +32,8 @@ dyn_banner() {
     if [[ ${DYN_SANDBOXED:-0} -eq 1 ]]; then
         printf 'Isolation : Docker container (%s) — no network, read-only filesystem,\n' "$SBX_IMAGE"
         printf '            all capabilities dropped, running as an unprivileged user.\n'
-        printf '            The target was copied in read-only; nothing it does can reach\n'
-        printf '            this machine or the network.\n'
+        printf '            The target is read-only; /work is writable host scratch space.\n'
+        printf '            Containers share the kernel; use a disposable analysis VM.\n'
         # THE CONTRACT IS PRINTED, NOT SUMMARISED. stage_record_exec's command line only
         # reaches the report for a stage that FAILED, so on every successful run the claim
         # above would be an assertion with no evidence under it — and the m6 checks would

@@ -64,6 +64,7 @@ PF_CORE_TOOLS=(
 # ALWAYS — added by v6 deviation D2, needed on every run regardless of target format.
 # Per D7 these are install.sh's responsibility and a miss is a hard error.
 PF_ALWAYS_TOOLS=(
+    "python3|python3|apt install python3|bounded recovery, evidence and safe source/archive helpers"
     "rabin2|rabin2|apt install radare2|stage 5 (binary metadata)"
     "checksec|checksec|apt install checksec|stage 5 (exploit mitigations)"
     "objdump|objdump|apt install binutils|stage 6"

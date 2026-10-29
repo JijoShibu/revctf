@@ -295,9 +295,15 @@ _rp_next() {
     printf ' WHAT TO TRY NEXT\n'
     _rp_rule
 
-    if [[ ${#FLAG_HITS[@]} -gt 0 ]]; then
+    if [[ ${FLAG_HIGH:-0} -gt 0 ]]; then
         printf '%d. Submit the high-confidence candidates above first. If one is rejected,\n' $(( ++n ))
         printf '   check it is complete — a flag cut off at a buffer boundary looks valid.\n'
+    elif [[ ${FLAG_LOW:-0} -gt 0 ]]; then
+        printf '%d. Review the unfamiliar flag-like candidates and their evidence. They are\n' $(( ++n ))
+        printf '   unverified; use --flag-format to specify the event wrapper.\n'
+    elif [[ ${FLAG_MED:-0} -gt 0 ]]; then
+        printf '%d. Only hash-like leads were found. These may be build metadata, not answers.\n' $(( ++n ))
+        printf '   Review the available analysis and specify --flag-format if appropriate.\n'
     else
         printf '%d. Nothing matched a flag pattern. If this event uses its own wrapper,\n' $(( ++n ))
         printf '   re-run with --flag-format '\''NAME\\{.*\\}'\'' to teach revctf the shape.\n'
@@ -340,8 +346,18 @@ _rp_next() {
         printf '   in %s, for the full detail.\n' "$RUN_OUTDIR"
     fi
 
-    printf '%d. Read the ghidra and radare2 sections together: pseudocode tells you what\n' $(( ++n ))
-    printf '   the program decides, the disassembly tells you exactly how.\n'
+    if [[ ${RUN_FORMAT:-other} == python-source ]]; then
+        printf '%d. Read source-review.txt and the Python source. Runtime files or remote\n' $(( ++n ))
+        printf '   secrets are unavailable to this static scan; no remote service was contacted.\n'
+    elif [[ ${RUN_FORMAT:-other} == wasm || ${RUN_FORMAT:-other} == other ]]; then
+        printf '%d. Native decompilation is not established for this format. Use a compatible\n' $(( ++n ))
+        printf '   format-aware tool and review the preserved generic captures.\n'
+    elif [[ ${STAGE_STATUS[ghidra]:-} == ok && ${STAGE_STATUS[radare2]:-} == ok ]]; then
+        printf '%d. Read the ghidra and radare2 sections together: pseudocode tells you what\n' $(( ++n ))
+        printf '   the program decides, the disassembly tells you exactly how.\n'
+    else
+        printf '%d. Review the stages that completed and their preserved captures.\n' $(( ++n ))
+    fi
     printf '\nCaptures kept in: %s\n' "$RUN_OUTDIR"
     return 0
 }
