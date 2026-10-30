@@ -118,3 +118,18 @@ test copy with only its source-root lookup redirected to the same checkout. This
 changes test synchronization, not the application or its resource limits; the
 runtime digest stays unchanged. The broader run and remaining release gates are
 still pending, and earlier failures/skips must not be counted as passed runs.
+
+The broad run also exposed an outdated QA-3 assertion: it required `triage ok` for
+a tar with two members, whereas 2.1 intentionally marks selected-member coverage
+partial. The retained capture confirms archive classification, extraction of both
+members, selection of an ELF and native routing; it was not an outer-UPX detection
+failure. The test now directly requires those behaviors and preserves its original
+UPX regression intent. It additionally requires explicit partial coverage/exit 2,
+candidate recovery from the selected payload and an unchanged archive hash.
+
+All five corrected archive assertions passed on Kali in a separate harness copy
+whose only infrastructure change redirects its source-root lookup to the same
+checkout. `qa-archive` is an additive developer-test section, also called by the
+existing `qa` section; application interfaces and the runtime digest are unchanged.
+The original broad-run failure is retained. Its final summary and the remaining
+release gates are still required before publication.
