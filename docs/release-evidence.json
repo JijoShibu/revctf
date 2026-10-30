@@ -1,6 +1,6 @@
 {
   "version": "2.1.0-rc.1",
-  "runtime_sha256": "2da3fbf48becb0149603497777c79ff94a2f340478cc60455d4e06a378d57b2c",
+  "runtime_sha256": "c0bd4245773977b6c5831dddeaea6cedfa4bbb210f3649e6895880fe84bf0d27",
   "configured_ram_mib": 4096,
   "vm_restored_16gb": false,
   "checks": {

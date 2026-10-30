@@ -30,6 +30,37 @@ def capture_runs(data):
                     return runs
         except ValueError:
             continue
+    # Ghidra may render a stack array as one literal byte assignment per line.
+    # Only consecutive stores starting at index zero form a run: never combine
+    # across another statement, an index gap, another array or a control block.
+    literal = rb'(0[xX][0-9a-fA-F]+|[0-9]+)'
+    indexed = re.compile(rb'\b(local_[0-9a-fA-F]+)\s*\[\s*' + literal +
+                         rb'\s*\]\s*=\s*' + literal + rb'\s*;')
+    current, anchor, name, next_index, previous_end = b'', 0, None, 0, 0
+    for match in indexed.finditer(data):
+        index, value = (int(token, 16 if token.lower().startswith(b'0x') else 10)
+                        for token in (match[2], match[3]))
+        adjacent = (match[1] == name and index == next_index and
+                    not data[previous_end:match.start()].strip())
+        if not adjacent or not 0 <= value <= 255:
+            if len(current) >= 6:
+                runs.append((current, anchor))
+            current, name, next_index = b'', None, 0
+        if len(runs) >= 128:
+            return runs[:128]
+        if 0 <= value <= 255 and (adjacent or index == 0):
+            if not current:
+                anchor, name = match.start(), match[1]
+            current += bytes([value])
+            next_index = index + 1
+            if len(current) >= 4096:
+                runs.append((current, anchor))
+                current, name, next_index = b'', None, 0
+        previous_end = match.end()
+    if len(current) >= 6:
+        runs.append((current, anchor))
+    if len(runs) >= 128:
+        return runs[:128]
     store = re.compile(rb'\blocal_([0-9a-fA-F]+)\s*=\s*0x([0-9a-fA-F]{1,16})\s*;')
     current, anchor, previous_offset, previous_width, previous_end = b'', 0, None, 0, 0
     for match in store.finditer(data):

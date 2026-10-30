@@ -93,6 +93,29 @@ class RecoveryTests(unittest.TestCase):
         hits, _ = self.recover(b'flag{a\0fragmented_value}')
         self.assertFalse(any(h['value'] == 'flag{afragmented_value}' for h in hits))
 
+    def test_indexed_ghidra_stores_with_decimal_and_hex_literals(self):
+        value = b'SPECTRONA{qa_stack_encoded_fixture}'
+        encoded = bytes(b ^ 0x5a for b in value)
+        capture = b'void main(void) {\n' + b''.join(
+            f'  local_48[{index if index < 11 else hex(index)}] = '
+            f'{byte if index % 2 else hex(byte)};\n'.encode()
+            for index, byte in enumerate(encoded)) + b'}\n'
+        runs = recovery.capture_runs(capture)
+        self.assertEqual(runs, [(encoded, capture.index(b'local_48[0]'))])
+        hits, notes = self.recover(runs[0][0])
+        self.assertFalse(notes)
+        self.assertTrue(any(hit['value'] == value.decode() for hit in hits))
+
+    def test_indexed_stores_do_not_join_unrelated_writes(self):
+        prefix = b''.join(f'local_48[{i}] = {i+1};\n'.encode() for i in range(3))
+        suffix = b''.join(f'local_48[{i}] = {i+1};\n'.encode() for i in range(3,6))
+        for boundary in (b'call();\n', b'}\n{\n', b'local_40[0] = 7;\n'):
+            with self.subTest(boundary=boundary):
+                self.assertEqual(recovery.capture_runs(prefix + boundary + suffix), [])
+        for capture in (prefix + suffix.replace(b'[3]',b'[9]'),
+                        prefix + suffix.replace(b'= 4;',b'= 256;')):
+            self.assertEqual(recovery.capture_runs(capture), [])
+
     @unittest.skipUnless(shutil.which('gcc'), 'GCC unavailable')
     def test_compiled_elf_without_plaintext_answer(self):
         value, key = b'flag{compiled_recovery_fixture}', 0x5a

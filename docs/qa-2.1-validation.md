@@ -66,3 +66,26 @@ New regressions cover contiguous and reconstructed XOR bytes, literal special-ch
 paths, unknown wrappers, preserved early records after interruption, source parsing
 without execution, real archive depth/member omissions, and regex budget exhaustion.
 No submitted challenge or remote challenge service was executed by these tests.
+
+## Real Kali integration: first attempt
+
+The isolated candidate at commit `0d158e18380f18b7ef3a00d0501cb8cc79ca2508`
+passed the same 147 controlled assertions on Kali, with the VM allocated 4096 MiB.
+The measured guest memory was 3915 MiB. A new known-answer native suite then
+recovered plaintext, single-byte XOR, reversed and repeating-key XOR flags. Each
+answer was independently accepted by its generated program in a restricted Docker
+container; deliberately wrong answers were rejected and input hashes were unchanged.
+
+The fifth, stack-encoded fixture failed exact recovery despite scan exit 0. Its
+preserved Ghidra capture used consecutive `local_48[index] = literal;` assignments,
+where the reconstruction parser only recognized initializer lists and packed local
+stores. The runner stopped at this failure. This attempt is retained as a failure;
+the original report binaries remain unavailable.
+
+The parser now recognizes consecutive literal byte stores starting at index zero,
+without crossing intervening statements, array names, index gaps or control blocks.
+New positive and negative regressions cover the observed decimal/hexadecimal form.
+The runtime fingerprint is now
+`c0bd4245773977b6c5831dddeaea6cedfa4bbb210f3649e6895880fe84bf0d27`;
+the earlier matrix/archive identifies the previous runtime. Final controlled and
+real integration validation of the corrected runtime remain required before release.
