@@ -89,3 +89,32 @@ The runtime fingerprint is now
 `c0bd4245773977b6c5831dddeaea6cedfa4bbb210f3649e6895880fe84bf0d27`;
 the earlier matrix/archive identifies the previous runtime. Final controlled and
 real integration validation of the corrected runtime remain required before release.
+
+## Corrected-runtime Kali checks completed so far
+
+The corrected runtime above passed 149 controlled assertions (35 in the QA suite),
+shell syntax, style and release consistency on the real 4096 MiB Kali allocation.
+All five generated native recovery fixtures now pass exact-candidate, independent
+acceptance, wrong-answer rejection, unchanged-input and provenance checks.
+
+Seven real Ghidra checks passed: 512/768/1024 MiB heap requests with measured heaps
+below each request and exact enforced process limits, a custom script in a path
+with spaces, preserved partial output from a deliberately failing custom script,
+and independent correct/wrong password checks. The first shared-corpus invocation
+had skipped because the corpus was not built; that preparation failure is retained.
+The generator then built 18 artifacts (211 MiB) before real corpus/Ghidra checks.
+
+The first nine Docker lifecycle checks passed. Their broad-suite repeat found an
+intermittent OOM-status assertion failure: the cgroup limit was 67108864 bytes and
+the retained Docker exit event was 137, but the immediately read OOM status was
+false. Three focused probes enforced the same limit, exited 137 and confirmed OOM;
+one delivered its OOM event after the container-exit event. The failing original
+container had already been destroyed before an OOM event was recorded.
+
+The test now waits at most five seconds for that metadata while still requiring
+the exact measured cap, exit 137 and confirmed OOM status. It also preserves the
+exit code and final state. All nine corrected lifecycle checks passed in a separate
+test copy with only its source-root lookup redirected to the same checkout. This
+changes test synchronization, not the application or its resource limits; the
+runtime digest stays unchanged. The broader run and remaining release gates are
+still pending, and earlier failures/skips must not be counted as passed runs.
