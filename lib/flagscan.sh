@@ -118,10 +118,17 @@ _fs_scan_file() {
             _fs_add "$conf" "$stage" "$enc" "$line" || return $?
         done
         local -a results=("${PIPESTATUS[@]}")
-        if [[ ${results[0]} -eq 124 || ${results[0]} -eq 137 ]]; then
+        if [[ ${results[0]} -eq 124 ]]; then
             # shellcheck disable=SC2034  # Read by the generated worker's final completeness check.
             FS_INCOMPLETE=1
-            printf 'Custom pattern matching reached its per-capture budget; other searches continue.\n' >&2
+            printf 'Custom pattern matching timed out after 10s; other searches continue.\n' >&2
+            continue
+        elif [[ ${results[0]} -eq 137 ]]; then
+            # SIGKILL alone cannot establish whether memory pressure, timeout
+            # escalation or another forced stop ended the matcher.
+            # shellcheck disable=SC2034  # Read by the generated worker's final completeness check.
+            FS_INCOMPLETE=1
+            printf 'Custom pattern matching was killed (SIGKILL); cause unconfirmed: memory pressure, timeout escalation or another forced stop; other searches continue.\n' >&2
             continue
         fi
         [[ ${results[0]} -le 1 && ${results[1]} -eq 0 ]] || return 2

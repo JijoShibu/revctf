@@ -127,9 +127,33 @@ failure. The test now directly requires those behaviors and preserves its origin
 UPX regression intent. It additionally requires explicit partial coverage/exit 2,
 candidate recovery from the selected payload and an unchanged archive hash.
 
-All five corrected archive assertions passed on Kali in a separate harness copy
-whose only infrastructure change redirects its source-root lookup to the same
-checkout. `qa-archive` is an additive developer-test section, also called by the
+All five corrected archive assertions passed on Kali in a separate harness copy.
+The first copy also had unintended Windows-decoding differences in unrelated
+Unicode text, and its standalone style check failed. The committed source passed
+CI; the actual tracked `qa-archive` section still needs a real Kali rerun to remove
+the copy's whole-file correspondence uncertainty. `qa-archive` is an additive developer-test section, also called by the
 existing `qa` section; application interfaces and the runtime digest are unchanged.
 The original broad-run failure is retained. Its final summary and the remaining
 release gates are still required before publication.
+
+## Resumed broad-result review and matcher diagnostic correction
+
+The preserved full Kali run completed at the prior runtime with **343 passed,
+3 failed, 2 skipped**. Its failures were the Docker OOM-metadata race, the outdated
+archive assertion, and a newly inspected shared 124/137 matcher branch. The two
+1 MiB Docker scenarios remain unsupported skips, not successful executions.
+
+The matcher branch reported a per-capture budget for both timeout and SIGKILL.
+SIGKILL alone does not identify its cause. Separate branches now name an actual
+10-second timeout or an unconfirmed SIGKILL cause, while preserving completed
+candidates, continuing other searches and marking coverage incomplete. A controlled
+injected-137 regression checks both preserved candidates and the honest diagnostic;
+the existing actual-timeout regression remains in place. Both focused checks and
+the complete **36-test QA suite** pass in Ubuntu WSL; ShellCheck style passes for
+the changed library. These are controlled checks, not renewed Kali evidence.
+
+The new application fingerprint is
+`4f6ba2724db11d193288629b704597dd438b1e6d94fd467a291b9e709d6bd64d`.
+Current-runtime Kali validation, mutation verification, timing, installation,
+offline/upgrade/rollback and restoration remain pending. The original broad log
+and failed exit remain retained. No tag or release has been published.

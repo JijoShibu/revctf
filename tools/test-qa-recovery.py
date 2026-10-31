@@ -350,6 +350,30 @@ flagscan_report | /usr/bin/grep -q 'flag{builtin_survives_pattern_timeout}'
         sidecar = json.loads((self.work / 'out/candidate-evidence.json').read_text())
         self.assertFalse(sidecar['search_complete'])
 
+    def test_custom_pattern_sigkill_preserves_candidates_and_honest_diagnostic(self):
+        (self.work / 'capture').write_text('flag{builtin_survives_pattern_kill}\n')
+        bindir = self.work / 'bin'
+        bindir.mkdir()
+        wrapper = bindir / 'grep'
+        wrapper.write_text('#!/bin/bash\nfor arg in "$@"; do\n'
+                           'if [[ $arg == KILLED_CUSTOM ]]; then\n'
+                           'echo "flag{emitted_before_sigkill}"; exit 137; fi\ndone\n'
+                           'exec /usr/bin/grep "$@"\n')
+        wrapper.chmod(0o755)
+        self.bash(r'''
+PATH="$WORK/bin:$PATH"
+OPT[flag_format]=KILLED_CUSTOM
+flagscan_run
+[[ ${STAGE_STATUS[flagscan]} == partial ]] || exit 5
+flagscan_report | /usr/bin/grep -q 'flag{builtin_survives_pattern_kill}'
+flagscan_report | /usr/bin/grep -q 'flag{emitted_before_sigkill}'
+''')
+        sidecar = json.loads((self.work / 'out/candidate-evidence.json').read_text())
+        self.assertFalse(sidecar['search_complete'])
+        diagnostic = (self.work / 'out/flagscan.stderr').read_text()
+        self.assertIn('killed (SIGKILL); cause unconfirmed', diagnostic)
+        self.assertNotIn('timed out after 10s', diagnostic)
+
     def test_python_and_wasm_native_stages_skip(self):
         (self.work / 'target').write_text('#!/usr/bin/env python3\nprint("source only")\n')
         self.bash(r'''
