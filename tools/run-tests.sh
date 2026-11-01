@@ -799,6 +799,47 @@ STACKC
 
 # Regression guards for the QA review. Every check here corresponds to a defect that was
 # reproduced against a real build — they exist so none of them can come back.
+test_qa_archive() {
+    section "QA archive routing and coverage"
+    if ! have_corpus; then
+        skip "QA archive routing" "run ./tools/build-test-corpus.sh first"; return
+    fi
+    local o="${1:-$FIXTURES/qa-archive}" out archive_rc=0 before after
+    mkdir -p "$o"
+    # A tar holding a packed member must be extracted as an archive, never sent
+    # directly to UPX. Multiple-member coverage is intentionally partial in 2.1.
+    tar cf "$o/container.tar" -C "$CORPUS" packed_upx planted_flag 2>/dev/null
+    before=$(sha256sum "$o/container.tar" | awk '{print $1}')
+    out=$("$RC" scan "$o/container.tar" --skip-ghidra --output "$o/tar" 2>&1) || archive_rc=$?
+    if grep -q '^Classified as: archive$' "$o/tar/triage.txt" &&
+       grep -qE '^Unwrap +: safely extracted 2 member\(s\), depth 1$' "$o/tar/triage.txt" &&
+       grep -qE '^Selected +: .* \(elf\)$' "$o/tar/triage.txt"; then
+        ok "a tar containing a UPX member is not mistaken for a packed binary"
+    else
+        no "UPX over-detection" "archive classification, extraction or native-member selection missing"
+    fi
+    if grep -q '^Routing$' "$o/tar/triage.txt" &&
+       grep -q '^  native ELF' "$o/tar/triage.txt"; then
+        ok "the triage Routing section is still written for a container"
+    else
+        no "missing Routing section" "triage.txt has no native Routing block"
+    fi
+    if [[ $archive_rc -eq 2 ]] && grep -qE '^triage +partial' <<< "$out" &&
+       grep -q '^Coverage .*archive has multiple members; only the selected payload is analyzed$' "$o/tar/triage.txt"; then
+        ok "multiple archive members produce explicit partial coverage and exit 2"
+    else
+        no "archive coverage status" "exit $archive_rc or missing partial-coverage evidence"
+    fi
+    assert_match "the selected archive payload reaches candidate detection" \
+        'flag\{(pl41nt3xt_1n_r0d4t4|cr4ckm3_s0lv3d)\}' flag_section "$o/tar/report.txt"
+    after=$(sha256sum "$o/container.tar" | awk '{print $1}')
+    if [[ -n $before && $before == "$after" ]]; then
+        ok "archive analysis leaves the original bytes unchanged"
+    else
+        no "archive input changed" "archive hash differs after analysis"
+    fi
+}
+
 test_qa() {
     section "QA regressions"
 
@@ -836,20 +877,8 @@ test_qa() {
         rm -rf "$TMPDIR"/revctf-work.* 2>/dev/null
     fi
 
-    # --- QA-3 (high): a container holding a UPX-packed member was itself declared packed,
-    # which aborted extraction and reported a plain tar as an unreadable packed binary.
-    tar cf "$o/container.tar" -C "$CORPUS" packed_upx planted_flag 2>/dev/null
-    out=$("$RC" scan "$o/container.tar" --skip-ghidra --output "$o/tar" 2>&1)
-    if grep -qE '^triage +ok' <<< "$out"; then
-        ok "a tar containing a UPX member is not mistaken for a packed binary"
-    else
-        no "UPX over-detection" "$(grep -m1 '^triage' <<< "$out")"
-    fi
-    if grep -q 'Routing' "$o/tar/triage.txt" 2>/dev/null; then
-        ok "the triage Routing section is still written for a container"
-    else
-        no "missing Routing section" "triage.txt has no Routing block"
-    fi
+    # --- QA-3: packed archive members must not confuse outer-file classification.
+    test_qa_archive "$o"
 
     # --- QA-4 (medium): Mach-O universal binaries share magic 0xCAFEBABE with Java
     # .class, and were being routed to the Java decompiler.
@@ -923,7 +952,7 @@ with z.open('big', 'w', force_zip64=True) as dest:
 z.close()" 2>/dev/null
     if [[ -f $o/bomb.zip ]]; then
         "$RC" scan "$o/bomb.zip" --skip-ghidra --output "$o/bomb" >/dev/null 2>&1
-        if grep -q 'over the .*MB limit' "$o/bomb/triage.txt" 2>/dev/null; then
+        if grep -q 'archive expansion exceeds byte limit' "$o/bomb/triage.txt" 2>/dev/null; then
             ok "a decompression bomb is refused before extraction"
         else
             no "bomb guard" "3GB expansion was not refused"
@@ -2368,6 +2397,7 @@ main() {
             m5enforce) test_m5enforce ;;
             m6)     test_m6     ;;
             qa)     test_qa     ;;
+            qa-archive) test_qa_archive ;;
             docs)   test_docs   ;;
             ghidra) test_ghidra ;;
             *)      printf 'unknown section: %s\n' "$s" >&2 ;;

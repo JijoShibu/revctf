@@ -34,7 +34,7 @@ stage_objdump() {
     : > "$err"
 
     case "$RUN_FORMAT" in
-        java|pyc|pyinstaller|archive)
+        java|pyc|pyinstaller|archive|python-source|wasm|other)
             stage_skip "$name" "not applicable to a $RUN_FORMAT target"
             return 0 ;;
     esac

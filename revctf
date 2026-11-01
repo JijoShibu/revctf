@@ -12,7 +12,7 @@
 # allowed to abort the run. Error handling is done per-stage via ERR traps in lib/.
 set -uo pipefail
 
-REVCTF_VERSION="2.0.0"
+REVCTF_VERSION="2.1.0-rc.1"
 REVCTF_AUTHOR="Jijo Shibu <jijoshibu@gmail.com>"
 REVCTF_URL="https://github.com/JijoShibu/revctf"
 
@@ -376,14 +376,22 @@ validate_opts() {
     fi
 
     if [[ -n ${OPT[flag_format]} ]]; then
-        printf '' | grep -Eq -- "${OPT[flag_format]}" 2>/dev/null
-        [[ $? -le 1 ]] || die "--flag-format is not a valid ERE: ${OPT[flag_format]}"
+        [[ ${#OPT[flag_format]} -le 4096 ]] || die "--flag-format exceeds the 4096-character limit"
+        printf '' | timeout -k 1 2 grep -Eq -- "${OPT[flag_format]}" 2>/dev/null
+        [[ $? -le 1 ]] || die "--flag-format is invalid or validation exceeded its time budget"
     fi
 
     # --- documented conflicts (v5 §3.3, §3.4) ---
     if [[ ${OPT[interactive]} -eq 1 && ${OPT[assume_yes]} -eq 1 ]]; then
         warn "--interactive and --yes are mutually exclusive; --yes wins, continuing non-interactively"
         OPT[interactive]=0
+    fi
+    if [[ ${OPT[interactive]} -eq 1 || ${OPT[assume_yes]} -eq 1 ]]; then
+        warn "interactive prompts are not implemented; --interactive/--yes do not change scan execution"
+    fi
+    [[ ${OPT[debug]} -eq 1 ]] && warn "--debug is not implemented; per-run diagnostic captures remain available"
+    if [[ ${OPT[sandbox]} -eq 0 ]]; then
+        warn "--no-sandbox: eligible challenge binaries will execute on this machine with access to your files and network"
     fi
     # This warning predated the strace stage and said the sandbox "only ever wraps ltrace",
     # which deviation D9 made false: it wraps every stage that executes the target. It is

@@ -59,6 +59,9 @@ jobs:
       - name: Check candidate accuracy and preserved evidence
         if: ${{ !cancelled() }}
         run: bash tools/test-accuracy.sh
+      - name: Check QA recovery, routing and safe extraction
+        if: ${{ !cancelled() }}
+        run: python3 tools/test-qa-recovery.py
       - name: Check publication gates
         if: ${{ !cancelled() }}
         run: |

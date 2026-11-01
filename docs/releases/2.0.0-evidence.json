@@ -1,0 +1,88 @@
+{
+  "version": "2.0.0",
+  "runtime_sha256": "196c1db600ae8f5afb1f9fa81d77a5d52b59bf624aad8620aeba380ad9e1442a",
+  "configured_ram_mib": 4096,
+  "vm_restored_16gb": true,
+  "checks": {
+    "kali_4gb": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "ram": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "container_cleanup": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "output_limits": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "known_answers": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "ghidra": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "regression": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "installation": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "offline": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "upgrade_rollback": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    },
+    "timing": {
+      "result": "passed",
+      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+    }
+  },
+  "open_blockers": [],
+  "independent_test": null,
+  "relayed_external_test": {
+    "reported_on": "2026-10-04",
+    "source_reported": "Latest fixes branch / pull request #2",
+    "configured_ram_mib_reported": 4096,
+    "challenge_count": 1,
+    "tester": "Maintainer's friend; identity not recorded",
+    "feedback_reported": "Everything works fine",
+    "evidence_status": "Second-hand feedback; tester's details, saved report and exact tested commit pending inspection"
+  },
+  "validation_source_commit": "55302d625cda6eb6600269cc92e34ae97c6aef6c",
+  "linux_total_ram_mib": 3915,
+  "stable_release_decision": {
+    "version": "2.0.0",
+    "maintainer": "Jijo Shibu <jijoshibu@gmail.com>",
+    "approved_on": "2026-10-05",
+    "preview_wait_waived": true,
+    "independent_report_waived": true,
+    "required_controlled_checks": true,
+    "reason": "Maintainer authorized direct stable publication after the controlled checks pass. The earlier preview wait and independent report requirement were explicitly withdrawn."
+  },
+  "functional_validation_snapshot_sha256": "e6e9cba526f461b8101fca04a49ef8dcc1df57d373a89e7ffa2f422e27f90edb",
+  "final_documentation_checks": "docs/final-documentation-results.json",
+  "private_evidence_archive": {
+    "name": "revctf-2.0.0-validation-evidence.tar.gz",
+    "sha256": "5974f484432c9ee1542d3344c59258318fc320eac0608c9be58e075b56e8dece",
+    "published": false
+  },
+  "final_cleanup": {
+    "revctf_scan_containers_remaining": 0,
+    "test_install_containers_remaining": 0,
+    "unrelated_container_preserved": true,
+    "normal_shutdown_confirmed": true,
+    "restored_ram_mib": 16384
+  }
+}

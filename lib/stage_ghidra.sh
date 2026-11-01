@@ -38,7 +38,7 @@ stage_ghidra() {
         return 0
     fi
     case "$RUN_FORMAT" in
-        java|pyc|pyinstaller|archive)
+        java|pyc|pyinstaller|archive|python-source|wasm|other)
             stage_skip "$name" "not a native binary (this one is $RUN_FORMAT); decompiled elsewhere"
             return 0 ;;
     esac
@@ -160,7 +160,11 @@ _ghidra_attempt() {
     local rawout="$RUN_OUTDIR/ghidra-attempt.$light.stdout" rawerr="$RUN_OUTDIR/ghidra-attempt.$light.stderr"
     st_run_bounded "$ST_T_GHIDRA" "$rawout" "$rawerr" -- "${cmd[@]}" || rc=$?
     # Preserve each attempt, including startup failures and memory verification.
-    if [[ $rc -eq 0 ]] && ! grep -qx 'verified=1' "$guard" 2>/dev/null; then
+    sed '/^=== REVCTF-GHIDRA-BEGIN ===$/,/^=== REVCTF-GHIDRA-END ===$/d' "$rawout" > "$out.log"
+    if grep -qiE 'No load spec found|Failed to import|Unable to import' "$out.log" "$rawerr"; then
+        printf 'REVCTF-ERROR: import failed; no compatible loader was established for this target.\n' >> "$rawerr"
+        rc=1
+    elif [[ $rc -eq 0 ]] && ! grep -qx 'verified=1' "$guard" 2>/dev/null; then
         printf 'REVCTF-ERROR: actual Ghidra heap could not be verified within its allowance.\n' >> "$rawerr"
         rc=1
     fi
@@ -174,7 +178,6 @@ _ghidra_attempt() {
     # attempt's files, not accumulated diagnostics from a failed first attempt.
     # Decompiled strings may themselves contain words such as SyntaxError; search the
     # launcher's diagnostics outside the result block for those broad error patterns.
-    sed '/^=== REVCTF-GHIDRA-BEGIN ===$/,/^=== REVCTF-GHIDRA-END ===$/d' "$rawout" > "$out.log"
     if [[ $rc -eq 0 ]]; then
         if _ghidra_saw_script_error "$rawerr" || _ghidra_saw_script_error "$out.log" ||
                 grep -qa '^REVCTF-ERROR:' "$rawout"; then

@@ -1,123 +1,45 @@
 # Releasing RevCTF
 
-Maintainer: Jijo Shibu <jijoshibu@gmail.com>
+The current target is **v2.1.0-rc.1**. The maintainer authorized stabilization and
+flag recovery first, followed by a release candidate. Stable 2.1.0 is a separate
+promotion; the 2.0.0 direct-stable exception does not apply.
 
-The release target is **v2.0.0**, reviewed in pull request #2. On 5 October 2026,
-the maintainer approved direct stable publication after the controlled checks pass.
-The earlier seven-day preview and independent-report requirements were withdrawn.
-That decision is recorded for this release in `release-evidence.json`; it does not
-bypass accuracy, resource, installation, cleanup or archive checks.
+## Required sequence
 
-## Before publication
+1. Work on a new branch; never move a published version tag or replace release assets.
+2. Run syntax, ShellCheck, workflow/version consistency, all controlled suites and
+   the QA recovery suite. Save failures and skips as well as the final results.
+3. Validate the exact runtime on Kali amd64 at a real 4096 MiB VM allocation: known
+   answers, resource/output limits, Ghidra, real Docker cleanup/isolation, broad
+   regression, installation/reinstallation, offline scan, timing and upgrade/rollback.
+   Original independent report fixtures remain unavailable; label synthetic fixtures.
+4. Keep `docs/release-evidence.json` pending until each check really completes.
+   Compute the runtime digest after adding/committing runtime files. Historical
+   evidence in `docs/releases/2.0.0-evidence.json` cannot satisfy the new gate.
+5. Preserve evidence; confirm all owned processes/containers have stopped. Shut the
+   test VM down normally and restore its original 16384 MiB allocation.
+6. Push a reviewed PR and require the protected `controlled-tests` check. The user's
+   request authorizes release preparation, merging once gates pass, and publication.
+   Do not bypass branch protection, a failed check, or release-environment approval.
+7. Merge, recheck the final source identity, and run **Publish reviewed release** on
+   main with the exact full commit and version `2.1.0-rc.1`.
+8. The existing workflow builds/verifies the deterministic archive, checks current
+   Kali evidence, uses the protected release environment, creates an annotated tag,
+   verifies uploaded checksums and publishes the prerelease. It does not replace tags.
+9. Independently download the public archive, verify its SHA-256, unpack in a fresh
+   directory, inspect executable modes and run a controlled installed scan on Kali.
+   Record the public URL, tag commit, archive checksum and actual verification result.
 
-1. Check live tags, releases, and the pull request head. Never replace a published tag.
-2. Run the basic checks and the real Kali tests described in [REHEARSAL.md](REHEARSAL.md).
-   Record the exact source commit, environment, results, failures and skips in the
-   validation record. An earlier green run does not validate changed behavior.
-3. Resolve incorrect answers, surviving challenge processes, file damage, installation
-   failures, and ineffective resource limits before publication. Required checks must
-   pass; unsupported optional scenarios must be named rather than counted as passes.
-4. Review the upgrade notes and prepare a source archive from the reviewed commit.
-   Use `git archive`, which includes tracked files only, and record its SHA-256 checksum.
-   Inspect the archive for local captures, credentials, test binaries, and obsolete files.
-5. Verify all test challenges have stopped. Shut the test VM down normally and restore
-   its original memory allocation. Record both the configured memory and powered-off state.
-6. Present the pull request, validation record, archive, and checksum for review. Do not
-   merge, create a remote tag, publish a release, or post feedback requests at this step.
+Do not mark evidence passed merely to enable publication. Ubuntu and hosted checks
+are controlled coverage; they do not replace the real Kali/Ghidra/Docker profile.
 
-## Publish an approved release
+## Rollback and promotion
 
-Use **Actions → Publish reviewed release → Run workflow** on `main`. Supply the full
-reviewed commit and version without `v`. The workflow reruns the basic checks, requires
-the current runtime digest in `docs/release-evidence.json`, and stops on unfinished Kali
-checks. It builds a deterministic source archive in a read-only job. A separate job
-rebuilds that exact archive, compares its checksum, and waits for the `release`
-environment's maintainer approval before receiving write access.
+Preserve the verified v2.0.0 checkout and its Ghidra, Python environment and sandbox
+image before installation. Invoke that executable and tool profile explicitly, with
+new report directories. Do not reset another working checkout or delete reports.
+The new installer uses a versioned Python environment and sandbox image.
 
-The publisher creates an annotated tag with the project author's identity, uploads assets
-to a draft, verifies the uploaded hashes, and then publishes. An interrupted draft can be
-resumed if its tag and assets still match. Conflicting assets require manual review;
-published tags and assets must never be replaced. The workflow downloads the public
-archive without sign-in and verifies its checksum. The Kali installation and controlled
-scan from that public download are a separate final check.
-
-Complete the evidence file from actual results before publication. Do not mark
-checks passed merely to enable publication. Generate its runtime identity with
-`python3 tools/release.py digest` after committing runtime changes; record actual logs,
-failed attempts, and skips alongside successful final checks.
-
-After explicit authorization, merge the reviewed changes and verify the resulting tree.
-Set the published status/date in the README and release notes, commit those edits, and
-run version, documentation, syntax, and smoke checks on that final commit. If merging
-introduced other code, repeat the affected tests before tagging.
-
-Run the approved workflow at that exact commit. It creates the annotated
-`v2.0.0` tag, archive and checksum, then publishes the stable release with the
-reviewed notes. Do not create a parallel manual release or overwrite an existing tag.
-
-Download the published archive anonymously, verify the checksum, unpack it into a new
-directory, and check `--version`, file permissions, shell syntax, and a controlled scan.
-Record the release URL, tag commit, archive checksum and verification result. A failed
-published-artifact check blocks promotion; publish a corrected version rather than moving a tag.
-
-## Install, upgrade and rollback
-
-The commands below apply **after the named tag has been published**. They deliberately
-use a new directory so an existing checkout and its reports stay available.
-
-```bash
-git clone --branch v2.0.0 --depth 1 https://github.com/JijoShibu/revctf.git revctf-2.0.0
-cd revctf-2.0.0
-sudo ./install.sh
-revctf --version
-```
-
-Run installation while online. Subsequent scans can run offline with the installed
-dependencies. Allocate 4096 MB to Kali; Linux may report slightly less. Use a new output
-directory for each scan. Review exit code 2 and partial stages before accepting any result.
-
-Upgrading from 1.x changes failure reporting and adds the RAM startup check. Existing
-scripts must handle exit code 2; `--yes` and saved configuration cannot bypass the RAM
-check. `--allow-low-memory` accepts the risk explicitly and leaves warnings in the report.
-
-For rollback, keep the prior checkout and record its commit before installing 2.0.0.
-Use its executable by absolute path and select the tools that were verified with that
-copy. An absolute executable path alone does not undo changes to `GHIDRA_HOME` or tool
-links made by installation. Record those paths before upgrading and keep the old Ghidra,
-Python environment and sandbox image available.
-
-```bash
-/absolute/path/to/previous-revctf/revctf --version
-GHIDRA_HOME=/absolute/path/to/previous-ghidra \
-PATH="/absolute/path/to/previous-python-tools/bin:$PATH" \
-REVCTF_SBX_IMAGE=previous-verified-sandbox-tag \
-/absolute/path/to/previous-revctf/revctf scan ./challenge --output ./new-rollback-report
-```
-
-The 2.0.0 rollback rehearsal used the retained verified snapshot
-`2270dc290b5d2394aa3fcade67bcadf53042e22f` (version 2.0.0-rc.1) with Ghidra 11.2.1
-and its original Python environment. Its source and an existing report were unchanged.
-That snapshot was not published as a preview. Rollback to the older published v1.0.0
-tag was not validated by this rehearsal.
-
-If that checkout is unavailable, clone the previously verified tag into another directory
-and use its executable there. `v1.0.0` was the last published release when this plan was
-prepared, but contains older reliability behavior. Rollback does not repair those defects.
-If the older tools were removed, restore them in a separate environment before scanning;
-do not point an older release at the new tools and assume compatibility.
-Do not reset a working checkout, delete reports, remove shared tools, or retag history.
-
-## Feedback and future releases
-
-The GitHub bug-report form asks for the version, Kali version, RAM, command, expected
-result and relevant output. Remove passwords and private challenge material before
-sharing a report. Independent tests remain useful even though they are not a
-publication condition for 2.0.0. Give testers [these instructions](INDEPENDENT-TEST.md).
-No community posts or background monitoring are scheduled by this procedure.
-
-For future releases, agree the publication policy before preparing the version. The
-usual stable gate still requires a reviewed independent report and seven days of
-preview availability. The recorded direct-release decision applies only to 2.0.0.
-Fixes get new versions; never move a published tag. Update the program, README,
-changelog, release notes, Python environment name and sandbox defaults together.
-Recheck the final commit and repeat checks affected by each change.
+Stable promotion requires the normal matching-preview availability and independent
+report gates enforced by the publisher. A failed public-artifact check requires a
+new candidate; never retag the existing candidate or reuse a stale evidence digest.

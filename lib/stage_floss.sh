@@ -53,7 +53,7 @@ stage_floss() {
         return 0
     fi
     case "$RUN_FORMAT" in
-        java|pyc|pyinstaller|archive)
+        java|pyc|pyinstaller|archive|python-source|wasm|other)
             stage_skip "$name" "not a native binary (this one is $RUN_FORMAT)"
             return 0 ;;
     esac

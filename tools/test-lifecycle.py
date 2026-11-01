@@ -201,11 +201,21 @@ timeout 10 "${args[@]}" /target > "$EVIDENCE/container-id" || exit 1
 SBX_OWNED[$SBX_NAME]=created
 rc=0
 timeout 15 docker start --attach "$SBX_NAME" > "$EVIDENCE/measured-limit.txt" 2> "$EVIDENCE/start.err" || rc=$?
-docker inspect --format '{{.State.OOMKilled}}' "$SBX_NAME" > "$EVIDENCE/oom.txt"
+printf '%s\n' "$rc" > "$EVIDENCE/exit-code.txt"
+# The daemon can deliver its OOM event after the container's die/attach event.
+# Retain the strict OOM assertion, but allow that metadata to settle briefly.
+deadline=$((SECONDS + 5))
+while :; do
+    timeout 2 docker inspect --format '{{.State.OOMKilled}}' "$SBX_NAME" > "$EVIDENCE/oom.txt" || exit 1
+    grep -qx true "$EVIDENCE/oom.txt" && break
+    (( SECONDS < deadline )) || break
+    sleep .1
+done
+timeout 2 docker inspect --format '{{json .State}}' "$SBX_NAME" > "$EVIDENCE/state.json" || exit 1
 [[ $rc -eq 137 ]] && grep -qx 67108864 "$EVIDENCE/measured-limit.txt" && grep -qx true "$EVIDENCE/oom.txt"
 '''
     run = sp.run(['bash', '-c', script], env=dict(env, ROOT=str(ROOT), EVIDENCE=str(out)),
-                 capture_output=True, text=True, timeout=40)
+                 capture_output=True, text=True, timeout=50)
     (out/'test.log').write_text(run.stdout + run.stderr)
     assert run.returncode == 0, run.stderr + (out/'start.err').read_text()
     names = (out/'container-ownership.txt').read_text().splitlines()

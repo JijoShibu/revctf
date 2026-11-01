@@ -1,88 +1,76 @@
 {
-  "version": "2.0.0",
-  "runtime_sha256": "196c1db600ae8f5afb1f9fa81d77a5d52b59bf624aad8620aeba380ad9e1442a",
+  "version": "2.1.0-rc.1",
+  "runtime_sha256": "4f6ba2724db11d193288629b704597dd438b1e6d94fd467a291b9e709d6bd64d",
   "configured_ram_mib": 4096,
   "vm_restored_16gb": true,
   "checks": {
     "kali_4gb": {
       "result": "passed",
-      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+      "evidence": "docs/qa-2.1-validation.md#current-release-gate-results — Actual VirtualBox 4096 MiB; Kali 2026.3 amd64/Python 3.14.8; guest MemTotal 4009288 KiB; eight sequential phases exit 0."
     },
     "ram": {
       "result": "passed",
-      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+      "evidence": "docs/qa-2.1-validation.md#current-release-gate-results — Full broad 220 MB scan peak RSS 108808 KiB below 256 MiB; valid exact 64 MiB Docker OOM enforcement passed."
     },
     "container_cleanup": {
       "result": "passed",
-      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+      "evidence": "docs/qa-2.1-validation.md#current-release-gate-results — Real lifecycle/interruption checks passed; final audit no owned processes/containers or changed baseline containers; temporary tag removed, old images preserved."
     },
     "output_limits": {
       "result": "passed",
-      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
-    },
-    "known_answers": {
-      "result": "passed",
-      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+      "evidence": "docs/qa-2.1-validation.md#current-release-gate-results — Exact 16 KiB Docker file cap enforced; invalid/unapplied caps refuse execution; output, deadline, partial-result/resource regressions passed. Per-file cap is not an aggregate disk quota."
     },
     "ghidra": {
       "result": "passed",
-      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+      "evidence": "docs/qa-2.1-validation.md#current-release-gate-results — Seven real checks passed: measured 512/768/1024 MiB heaps and exact process limits, custom path, intentional failure partial/exit 2, independent right/wrong answers."
+    },
+    "known_answers": {
+      "result": "passed",
+      "evidence": "docs/qa-2.1-validation.md#current-release-gate-results — Five generated native fixtures passed exact recovery, independent acceptance, wrong rejection, unchanged input and provenance. Original QA binaries unavailable."
     },
     "regression": {
       "result": "passed",
-      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+      "evidence": "docs/qa-2.1-validation.md#current-release-gate-results — 150 controlled assertions; all 50 controlled commands exit 0; tracked archive 5/0/0; full broad 349/0/2 known unsupported Docker skips; mutation 43 OK/0 BAD, restored 217/0/3; retained audit 36 OK/0 BAD."
     },
     "installation": {
       "result": "passed",
-      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+      "evidence": "docs/qa-2.1-validation.md#current-release-gate-results — Clean and repeat installations both exit 0; evidence ownership restored and disposable container removed."
     },
     "offline": {
       "result": "passed",
-      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+      "evidence": "docs/qa-2.1-validation.md#current-release-gate-results — Installed offline scan exit 0; exact flag and Ghidra password independently accepted; wrong answer rejected."
     },
     "upgrade_rollback": {
       "result": "passed",
-      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+      "evidence": "docs/qa-2.1-validation.md#current-release-gate-results — Baseline install, candidate upgrade and explicit baseline rollback scans exit 0; original baseline source/report hashes unchanged."
     },
     "timing": {
       "result": "passed",
-      "evidence": "docs/stable-validation-status.md; docs/stable-test-results.json"
+      "evidence": "docs/qa-2.1-validation.md#current-release-gate-results — Three paired runs each versus exact v2.0.0; all answers exact/input unchanged. Ordinary median 11.335 to 12.581 s (+10.99%); Ghidra 34.836 to 37.911 s (+8.83%). Fixture-specific overhead disclosed."
     }
   },
   "open_blockers": [],
-  "independent_test": null,
-  "relayed_external_test": {
-    "reported_on": "2026-10-04",
-    "source_reported": "Latest fixes branch / pull request #2",
-    "configured_ram_mib_reported": 4096,
-    "challenge_count": 1,
-    "tester": "Maintainer's friend; identity not recorded",
-    "feedback_reported": "Everything works fine",
-    "evidence_status": "Second-hand feedback; tester's details, saved report and exact tested commit pending inspection"
+  "controlled_ubuntu": {
+    "result": "passed",
+    "checks": 147,
+    "environment": "Ubuntu WSL; Python 3.14.4; ShellCheck 0.11.0",
+    "evidence": "docs/qa-2.1-validation.md",
+    "retained_local_archive_sha256": "f94eb8640e2a194cd5a0e3b640e1b252cd4d3cd9f47e1d118cb69b05c01301c4",
+    "scope": "Controlled tests only; does not satisfy Kali/Docker/Ghidra/installation gates."
   },
-  "validation_source_commit": "55302d625cda6eb6600269cc92e34ae97c6aef6c",
-  "linux_total_ram_mib": 3915,
-  "stable_release_decision": {
-    "version": "2.0.0",
-    "maintainer": "Jijo Shibu <jijoshibu@gmail.com>",
-    "approved_on": "2026-10-05",
-    "preview_wait_waived": true,
-    "independent_report_waived": true,
-    "required_controlled_checks": true,
-    "reason": "Maintainer authorized direct stable publication after the controlled checks pass. The earlier preview wait and independent report requirement were explicitly withdrawn."
+  "validated_source_commit": "4129767a9338cb56ae284e5fedca79f79eafed67",
+  "retained_private_evidence_sha256": "e2fcbf7869c81128b0c2d427aa6088ab6280a3478f8d6ae31c66272fa79d07a4",
+  "validation_summary": "docs/qa-2.1-validation.md#current-release-gate-results",
+  "restoration": {
+    "memory_mib": 16384,
+    "state": "poweroff",
+    "normal_shutdown": true,
+    "temporary_access": "Retained only for authorized post-publication package check; final removal pending."
   },
-  "functional_validation_snapshot_sha256": "e6e9cba526f461b8101fca04a49ef8dcc1df57d373a89e7ffa2f422e27f90edb",
-  "final_documentation_checks": "docs/final-documentation-results.json",
-  "private_evidence_archive": {
-    "name": "revctf-2.0.0-validation-evidence.tar.gz",
-    "sha256": "5974f484432c9ee1542d3344c59258318fc320eac0608c9be58e075b56e8dece",
-    "published": false
-  },
-  "final_cleanup": {
-    "revctf_scan_containers_remaining": 0,
-    "test_install_containers_remaining": 0,
-    "unrelated_container_preserved": true,
-    "normal_shutdown_confirmed": true,
-    "restored_ram_mib": 16384
-  }
+  "known_limits": [
+    "Two unsupported 1 MiB Docker tracing probes skipped; real 64 MiB enforcement tested.",
+    "Original independent-report binaries unavailable; generated fixtures only.",
+    "Measured fixture timing slower by 10.99% ordinary and 8.83% Ghidra.",
+    "Independent installed-public-package check follows publication; optional capabilities and Ghost Core backlog deferred."
+  ]
 }
