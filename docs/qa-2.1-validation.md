@@ -1,6 +1,57 @@
 # RevCTF 2.1 release-candidate validation
 
-Status: implementation and controlled validation complete; Kali integration and publication pending.
+Status (1 November 2026): current-runtime Kali release gates passed; protected
+publication and the post-publication installed-package check remain pending.
+
+## Current release-gate results
+
+Validated source: `4129767a9338cb56ae284e5fedca79f79eafed67`.
+Runtime: `4f6ba2724db11d193288629b704597dd438b1e6d94fd467a291b9e709d6bd64d`.
+Kali amd64 2026.3, Python 3.14.8, Docker 28.5.2, Ghidra 12.1.4;
+VirtualBox configured at 4096 MiB, guest MemTotal 4009288 KiB, eight CPUs.
+The existing sequential runner completed all eight phases with exit 0.
+
+| Check | Actual result |
+| --- | --- |
+| Controlled matrix | 150 assertions passed; all 50 commands, including syntax/style/version checks, exited 0 |
+| Actual tracked archive section | 5 passed, 0 failed, 0 skipped; closes the earlier temporary-copy uncertainty |
+| Generated native known answers | 5/5: plaintext, single-byte XOR, reversal, repeating-key XOR, reconstructed stack stores; exact answers independently accepted, wrong answers rejected, inputs unchanged, provenance retained |
+| Real Ghidra | 7/7: measured 512/768/1024 MiB heaps and exact process caps, custom path with spaces, deliberate script failure with partial output/exit 2, independent correct/wrong password checks |
+| Full broad suite | 349 passed, 0 failed, 2 skips: unsupported 1 MiB Docker tracing probes; a valid measured 64 MiB OOM test passed |
+| Streaming/resource/isolation | 220 MB input peak RSS 108808 KiB, below 256 MiB; exact 16 KiB file cap, real Docker lifecycle/interruption cleanup, network-none denial with bridge positive control, loopback-only inspection passed |
+| Six mutations | 43 OK, 0 BAD; every required fault detected; edited files restored byte-identical; baseline and restored final each 217 passed, 0 failed, 3 skips |
+| Retained mutation-result audit | 36 OK, 0 BAD; independently reread saved results without repeating application tests |
+| Clean/repeat install and offline scan | All commands exit 0; exact flag/password recovered, independently accepted, wrong answer rejected |
+| Upgrade/explicit rollback | Both profiles passed; preserved baseline source/report hashes unchanged; disposable installation container removed |
+| Prepublication restoration | No owned processes/containers remained; temporary sandbox tag removed; pre-existing images/containers preserved; normal desktop shutdown, verified powered off at 16384 MiB |
+
+Mutation fast-mode skips are the repeated large-file probe and the same two
+unsupported 1 MiB probes. The full broad run did execute the large-file check.
+Counts overlap and must not be summed into unique coverage or a recovery rate.
+The original independent-report binaries remain unavailable. These generated
+fixtures do not prove recovery of the four screenshot-supported missing flags.
+
+Timing used three paired runs per case against unchanged v2.0.0
+`a4460e6e87b6933b9d2b57a52623317321aa7d78`, identical explicit defaults and input.
+Every run recovered the known answer and the input hash stayed unchanged.
+Ordinary medians: 11.335 s to 12.581 s (+10.99%, +1.246 s).
+Ghidra medians: 34.836 s to 37.911 s (+8.83%, +3.075 s).
+This measured slowdown is disclosed for the additional recovery work; no general
+performance improvement is claimed. Broader workload profiling is later work.
+
+Private evidence archive SHA-256:
+`e2fcbf7869c81128b0c2d427aa6088ab6280a3478f8d6ae31c66272fa79d07a4`.
+Its checksum was verified after copying to Windows, before resource cleanup.
+It retains failed attempts, full logs, exact timing rows, and source identity.
+Git objects/generated corpus, links/special files and unreadable sandbox-user-owned
+crash dumps are explicitly recorded in an omission manifest. The first incomplete
+export is retained with its PermissionError; no elevated guest access was used.
+Cleanup proof and host poweroff/memory verification are retained separately.
+Temporary restricted SSH access and task files are retained only for the required
+public-package check and must be removed after its evidence is exported.
+
+The sections below are chronological historical attempts, including failures and
+superseded pending statements. They do not override the current results above.
 
 Base: v2.0.0, a4460e6e87b6933b9d2b57a52623317321aa7d78.
 The candidate uses a separate worktree and never moves existing release tags.
