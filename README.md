@@ -1,5 +1,7 @@
 # revctf
 
+**Status: v2.1.0-rc.1 (published prerelease).**
+
 **Created by Jijo Shibu <jijoshibu@gmail.com>** · MIT licence ([LICENSE](LICENSE)) · <https://github.com/JijoShibu/revctf>
 
 Automated reverse-engineering CTF analysis pipeline for Kali Linux.
@@ -12,14 +14,24 @@ Docker they skip rather than running the binary on your machine.
 
 Directory targets are M7 and are not in this build — a directory exits 1 with a message.
 
-> **Status: v2.1.0-rc.1 — release candidate, not yet published.** This version improves
+> **Releases:** [v2.0.0 (stable)](https://github.com/JijoShibu/revctf/releases/tag/v2.0.0) · [v2.1.0-rc.1 (published prerelease)](https://github.com/JijoShibu/revctf/releases/tag/v2.1.0-rc.1). This version improves
 > resource limits, cleanup, and the handling of incomplete results. It requires an
 > approximate 4 GB RAM check before scanning. All recovered candidates remain unverified.
 > Read the [release notes](docs/releases/2.1.0-rc.1.md) and
-> [current validation results](docs/stable-validation-status.md) before upgrading.
+> [release candidate validation](docs/qa-2.1-validation.md) before upgrading.
 > Batch scanning, interactive solving, and persistent debug logging remain planned.
 
 ---
+
+## Reading a result
+
+A generated CTF fixture in the [validation report](docs/qa-2.1-validation.md) illustrates why the scan result needs a second check. In an early run, the scan finished successfully but missed the fixture's known answer. After the fix, the independent checker accepted the recovered answer and rejected a deliberately wrong one. A successful scan alone tells you that the pipeline ran.
+
+Excerpt from the validation report for the clean-install and offline-scan check:
+
+> All commands exit 0; exact flag/password recovered, independently accepted, wrong answer rejected
+
+My contribution included planning the tool, AI-assisted development, test coordination, and documentation.
 
 ## Install
 
