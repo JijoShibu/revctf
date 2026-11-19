@@ -1,5 +1,7 @@
 # revctf
 
+**Status: v2.1.0-rc.1 (published prerelease).**
+
 **Created by Jijo Shibu <jijoshibu@gmail.com>** · MIT licence ([LICENSE](LICENSE)) · <https://github.com/JijoShibu/revctf>
 
 Automated reverse-engineering CTF analysis pipeline for Kali Linux.
